@@ -11,6 +11,11 @@ export interface ILedgerRepository {
   saveTransactions(transactions: CharacterTransaction[]): { inserted: number; updated: number };
   getTransactions(filters: LedgerQueryFilters): PaginatedLedgerResult<CharacterTransaction>;
   getTransactionById(characterId: number, transactionId: number): CharacterTransaction | null;
+  getJournalEntriesForTransaction(
+    characterId: number,
+    transactionId: number,
+    journalRefId?: number
+  ): { tax: number; brokerFee: number; entries: CharacterWalletJournalEntry[] };
   countTransactions(characterId: number): number;
   saveJournalEntries(entries: CharacterWalletJournalEntry[]): { inserted: number; updated: number };
   getJournalEntries(characterId?: number, page?: number, pageSize?: number): { items: CharacterWalletJournalEntry[]; total: number };
@@ -66,11 +71,84 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
   }
 
   /**
-   * Returns single transaction by ID for a specific character
+   * Returns single transaction by ID for a specific character enriched with tax and fees
    */
   public getTransactionById(characterId: number, transactionId: number): CharacterTransaction | null {
     const key = this.makeTxKey(characterId, transactionId);
-    return this.transactions.get(key) || null;
+    const tx = this.transactions.get(key);
+    if (!tx) return null;
+    return this.enrichTransaction(tx);
+  }
+
+  /**
+   * Directly resolves linked tax and broker fee journal entries for a given transaction
+   */
+  public getJournalEntriesForTransaction(
+    characterId: number,
+    transactionId: number,
+    journalRefId?: number
+  ): { tax: number; brokerFee: number; entries: CharacterWalletJournalEntry[] } {
+    let tax = 0;
+    let brokerFee = 0;
+    let dedicatedTaxFound = false;
+    let fallbackTax = 0;
+    const entries: CharacterWalletJournalEntry[] = [];
+
+    for (const jn of this.journalEntries.values()) {
+      if (jn.characterId !== characterId) continue;
+
+      const matchesTxId = jn.contextId === transactionId;
+      const matchesRefId = journalRefId !== undefined && jn.journalId === journalRefId;
+      const isTaxRef = jn.refType === 'transaction_tax' || jn.contextIdType === 'transaction_tax';
+      const isBrokerRef = jn.refType === 'brokers_fee' || jn.contextIdType === 'broker_fee';
+
+      if (matchesTxId || matchesRefId) {
+        if (isTaxRef) {
+          const taxAmt = jn.tax !== undefined && jn.tax > 0 ? jn.tax : Math.abs(jn.amount || 0);
+          tax += taxAmt;
+          dedicatedTaxFound = true;
+          entries.push(jn);
+        } else if (isBrokerRef) {
+          const feeAmt = Math.abs(jn.amount || 0);
+          brokerFee += feeAmt;
+          entries.push(jn);
+        } else if (jn.refType === 'market_transaction') {
+          if (jn.tax !== undefined && jn.tax > 0) {
+            fallbackTax = jn.tax;
+          }
+          entries.push(jn);
+        } else if (jn.tax !== undefined && jn.tax > 0) {
+          fallbackTax = jn.tax;
+          entries.push(jn);
+        }
+      }
+    }
+
+    if (!dedicatedTaxFound && fallbackTax > 0) {
+      tax += fallbackTax;
+    }
+
+    tax = Math.round((tax + Number.EPSILON) * 100) / 100;
+    brokerFee = Math.round((brokerFee + Number.EPSILON) * 100) / 100;
+
+    return { tax, brokerFee, entries };
+  }
+
+  /**
+   * Enriches a transaction with resolved tax, brokerFee, and netValue
+   */
+  private enrichTransaction(tx: CharacterTransaction): CharacterTransaction {
+    const { tax, brokerFee } = this.getJournalEntriesForTransaction(tx.characterId, tx.transactionId, tx.journalRefId);
+    const netValue = tx.isBuy
+      ? Math.round(((tx.totalValue + brokerFee) + Number.EPSILON) * 100) / 100
+      : Math.round(((tx.totalValue - tax - brokerFee) + Number.EPSILON) * 100) / 100;
+
+    return {
+      ...tx,
+      tax,
+      brokerFee,
+      netValue,
+    };
   }
 
   /**
@@ -170,13 +248,13 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
       return sortOrder === 'asc' ? comparison : -comparison;
     });
 
-    // 3. Paginate
+    // 3. Paginate & Enrich
     const total = matched.length;
     const validPage = Math.max(1, page);
     const validPageSize = Math.max(1, Math.min(500, pageSize));
     const totalPages = Math.max(1, Math.ceil(total / validPageSize));
     const offset = (validPage - 1) * validPageSize;
-    const paginatedItems = matched.slice(offset, offset + validPageSize);
+    const paginatedItems = matched.slice(offset, offset + validPageSize).map((tx) => this.enrichTransaction(tx));
 
     // 4. Calculate Summary
     const summary = this.getSummary(characterId);
@@ -263,6 +341,9 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
     let totalBuyVolume = 0;
     let totalGrossSalesIsk = 0;
     let totalBuySpendIsk = 0;
+    let totalTaxesIsk = 0;
+    let totalBrokerFeesIsk = 0;
+    let totalNetSalesIsk = 0;
     const distinctTypes = new Set<number>();
     const distinctLocations = new Set<number>();
 
@@ -273,6 +354,10 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
       distinctTypes.add(tx.typeId);
       distinctLocations.add(tx.locationId);
 
+      const { tax, brokerFee } = this.getJournalEntriesForTransaction(tx.characterId, tx.transactionId, tx.journalRefId);
+      totalTaxesIsk += tax;
+      totalBrokerFeesIsk += brokerFee;
+
       if (tx.isBuy) {
         buyTransactionsCount++;
         totalBuyVolume += tx.quantity;
@@ -281,8 +366,15 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
         sellTransactionsCount++;
         totalSellVolume += tx.quantity;
         totalGrossSalesIsk += tx.totalValue;
+        totalNetSalesIsk += (tx.totalValue - tax - brokerFee);
       }
     }
+
+    totalGrossSalesIsk = Math.round((totalGrossSalesIsk + Number.EPSILON) * 100) / 100;
+    totalBuySpendIsk = Math.round((totalBuySpendIsk + Number.EPSILON) * 100) / 100;
+    totalTaxesIsk = Math.round((totalTaxesIsk + Number.EPSILON) * 100) / 100;
+    totalBrokerFeesIsk = Math.round((totalBrokerFeesIsk + Number.EPSILON) * 100) / 100;
+    totalNetSalesIsk = Math.round((totalNetSalesIsk + Number.EPSILON) * 100) / 100;
 
     const completeness = totalTransactionsCount > 0 ? 'COMPLETE' : 'ABSENT';
 
@@ -296,6 +388,9 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
       totalBuyVolume,
       totalGrossSalesIsk,
       totalBuySpendIsk,
+      totalTaxesIsk,
+      totalBrokerFeesIsk,
+      totalNetSalesIsk,
       distinctItemsCount: distinctTypes.size,
       distinctLocationsCount: distinctLocations.size,
       completeness,

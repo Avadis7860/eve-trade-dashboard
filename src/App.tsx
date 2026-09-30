@@ -97,6 +97,9 @@ export interface CharacterTransaction {
   clientName?: string;
   source: string;
   observedAt: number;
+  tax?: number;
+  brokerFee?: number;
+  netValue?: number;
 }
 
 export interface CharacterWalletJournalEntry {
@@ -287,6 +290,9 @@ interface LedgerSummary {
   totalBuyVolume: number;
   totalGrossSalesIsk: number;
   totalBuySpendIsk: number;
+  totalTaxesIsk?: number;
+  totalBrokerFeesIsk?: number;
+  totalNetSalesIsk?: number;
   distinctItemsCount: number;
   distinctLocationsCount: number;
   completeness: 'COMPLETE' | 'PARTIAL' | 'ERROR' | 'UNKNOWN' | 'ABSENT';
@@ -468,10 +474,14 @@ export default function App() {
   const fetchRoiAndHubsData = useCallback(async () => {
     if (!session) return;
     try {
+      const charIdsQuery = linkedCharacters.length > 1
+        ? `?character_ids=${linkedCharacters.map((c) => c.characterId).join(',')}`
+        : '';
+
       const [summaryRes, allocRes, invRes, hubsRes, mapRes] = await Promise.all([
-        fetch('/api/roi/summary').then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/roi/allocations').then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/roi/unsold-inventory').then((r) => (r.ok ? r.json() : null)),
+        fetch(`/api/roi/summary${charIdsQuery}`).then((r) => (r.ok ? r.json() : null)),
+        fetch(`/api/roi/allocations${charIdsQuery}`).then((r) => (r.ok ? r.json() : null)),
+        fetch(`/api/roi/unsold-inventory${charIdsQuery}`).then((r) => (r.ok ? r.json() : null)),
         fetch('/api/hubs').then((r) => (r.ok ? r.json() : null)),
         fetch('/api/hubs/mappings').then((r) => (r.ok ? r.json() : null)),
       ]);
@@ -484,7 +494,7 @@ export default function App() {
     } catch (err) {
       console.error('Failed to load ROI and Hubs data:', err);
     }
-  }, [session]);
+  }, [session, linkedCharacters]);
 
   const handleSync = async () => {
     if (isSyncing || !session) return;
@@ -601,8 +611,14 @@ export default function App() {
     ]).then(([healthData, authStatusData, sessionData, esiData]) => {
       if (healthData) setHealth(healthData);
       if (authStatusData) setAuthConfigured((authStatusData as AuthStatusResponse).configured);
-      if (sessionData && (sessionData as AuthSessionResponse).authenticated && (sessionData as AuthSessionResponse).character) {
-        setSession((sessionData as AuthSessionResponse).character || null);
+      if (sessionData && (sessionData as AuthSessionResponse).authenticated) {
+        const authData = sessionData as AuthSessionResponse;
+        if (authData.character) {
+          setSession(authData.character);
+        }
+        if (authData.characters) {
+          setLinkedCharacters(authData.characters);
+        }
       }
       if (esiData) setEsiStatus(esiData as EsiStatusResponse);
       setLoading(false);
@@ -707,15 +723,22 @@ export default function App() {
     setIsReconciling(true);
     setReconcileMessage(null);
     try {
+      const payload = linkedCharacters.length > 1
+        ? { character_ids: linkedCharacters.map((c) => c.characterId) }
+        : { character_id: session.characterId };
+
       const res = await fetch('/api/roi/reconcile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ character_id: session.characterId }),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
         const data = await res.json();
+        const scopeLabel = linkedCharacters.length > 1
+          ? `écosystème multi-personnages (${linkedCharacters.length} persos)`
+          : session.characterName;
         setReconcileMessage(
-          `${data.result.allocations_created} allocations créées (${data.result.total_quantity_reconciled} unités rapprochées en FIFO)`
+          `${data.result.allocations_created} allocations créées (${data.result.total_quantity_reconciled} unités rapprochées en FIFO pour ${scopeLabel})`
         );
         await fetchRoiAndHubsData();
       }
@@ -797,9 +820,7 @@ export default function App() {
   // Listen for window focus / visibility change to auto-detect session after OAuth login in new tab
   useEffect(() => {
     const onFocus = () => {
-      if (!session) {
-        checkSession();
-      }
+      checkSession();
     };
     window.addEventListener('focus', onFocus);
     window.addEventListener('visibilitychange', onFocus);
@@ -807,7 +828,7 @@ export default function App() {
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('visibilitychange', onFocus);
     };
-  }, [session, checkSession]);
+  }, [checkSession]);
 
   const handleLogout = async () => {
     try {
@@ -1186,56 +1207,69 @@ export default function App() {
               <div className="space-y-6">
                 {/* Summary Metrics Cards */}
                 {summary && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
                     <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-1">
                       <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
                         <ArrowUpRight className="w-4 h-4 text-emerald-400" />
-                        Chiffre d&apos;Affaires Brut (Ventes)
+                        Chiffre d&apos;Affaires Brut
                       </span>
                       <div className="text-xl font-bold text-emerald-400">
                         {formatIsk(summary.totalGrossSalesIsk)}
                       </div>
                       <div className="text-xs text-slate-400 font-mono">
-                        {summary.sellTransactionsCount} transactions ({summary.totalSellVolume.toLocaleString()} unités)
+                        {summary.sellTransactionsCount} ventes ({summary.totalSellVolume.toLocaleString()} unités)
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl border border-rose-500/20 bg-rose-500/5 space-y-1">
+                      <span className="text-xs font-mono uppercase text-rose-400 flex items-center gap-1.5">
+                        <Percent className="w-4 h-4 text-rose-400" />
+                        Taxes &amp; Frais ESI
+                      </span>
+                      <div className="text-xl font-bold text-rose-400">
+                        {formatIsk((summary.totalTaxesIsk || 0) + (summary.totalBrokerFeesIsk || 0))}
+                      </div>
+                      <div className="text-xs text-slate-400 font-mono">
+                        Taxes: {formatIsk(summary.totalTaxesIsk || 0)} | Frais: {formatIsk(summary.totalBrokerFeesIsk || 0)}
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 space-y-1">
+                      <span className="text-xs font-mono uppercase text-emerald-300 flex items-center gap-1.5">
+                        <Coins className="w-4 h-4 text-emerald-300" />
+                        Ventes Nettes (TTC)
+                      </span>
+                      <div className="text-xl font-bold text-emerald-300">
+                        {formatIsk(summary.totalNetSalesIsk !== undefined ? summary.totalNetSalesIsk : summary.totalGrossSalesIsk)}
+                      </div>
+                      <div className="text-xs text-slate-400 font-mono">
+                        Net encaissé après taxes
                       </div>
                     </div>
 
                     <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-1">
                       <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
                         <ArrowDownLeft className="w-4 h-4 text-sky-400" />
-                        Dépenses d&apos;Approvisionnement (Achats)
+                        Dépenses d&apos;Achats
                       </span>
                       <div className="text-xl font-bold text-sky-400">
                         {formatIsk(summary.totalBuySpendIsk)}
                       </div>
                       <div className="text-xs text-slate-400 font-mono">
-                        {summary.buyTransactionsCount} transactions ({summary.totalBuyVolume.toLocaleString()} unités)
+                        {summary.buyTransactionsCount} achats ({summary.totalBuyVolume.toLocaleString()} unités)
                       </div>
                     </div>
 
                     <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-1">
                       <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
                         <PackageCheck className="w-4 h-4 text-amber-400" />
-                        Objets &amp; Types Distincts
+                        Objets &amp; Hubs
                       </span>
                       <div className="text-xl font-bold text-slate-100">
-                        {summary.distinctItemsCount}
+                        {summary.distinctItemsCount} types
                       </div>
                       <div className="text-xs text-slate-400 font-mono">
-                        Catalogue d&apos;articles observés
-                      </div>
-                    </div>
-
-                    <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-1">
-                      <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
-                        <Building2 className="w-4 h-4 text-purple-400" />
-                        Stations &amp; Emplacements
-                      </span>
-                      <div className="text-xl font-bold text-slate-100">
-                        {summary.distinctLocationsCount}
-                      </div>
-                      <div className="text-xs text-slate-400 font-mono">
-                        Hubs &amp; stations de transaction
+                        {summary.distinctLocationsCount} stations observées
                       </div>
                     </div>
                   </div>
@@ -1313,7 +1347,9 @@ export default function App() {
                           <th className="py-3 px-4">Objet</th>
                           <th className="py-3 px-4 text-right">Quantité</th>
                           <th className="py-3 px-4 text-right">Prix Unitaire</th>
-                          <th className="py-3 px-4 text-right">Montant Total</th>
+                          <th className="py-3 px-4 text-right">Montant Brut</th>
+                          <th className="py-3 px-4 text-right">Taxes &amp; Frais</th>
+                          <th className="py-3 px-4 text-right">Net (TTC)</th>
                           <th className="py-3 px-4">Emplacement / Station</th>
                           <th className="py-3 px-4 text-center">Détail</th>
                         </tr>
@@ -1321,13 +1357,13 @@ export default function App() {
                       <tbody className="divide-y divide-slate-800/60">
                         {ledgerLoading ? (
                           <tr>
-                            <td colSpan={8} className="py-8 text-center text-slate-500 font-mono">
+                            <td colSpan={10} className="py-8 text-center text-slate-500 font-mono">
                               Chargement des transactions...
                             </td>
                           </tr>
                         ) : transactions.length === 0 ? (
                           <tr>
-                            <td colSpan={8} className="py-12 text-center text-slate-400 space-y-2">
+                            <td colSpan={10} className="py-12 text-center text-slate-400 space-y-2">
                               <Info className="w-8 h-8 text-slate-600 mx-auto" />
                               <div className="text-sm font-medium">Aucune transaction trouvée</div>
                               <div className="text-xs text-slate-500">
@@ -1338,57 +1374,77 @@ export default function App() {
                             </td>
                           </tr>
                         ) : (
-                          transactions.map((tx) => (
-                            <tr
-                              key={tx.id}
-                              className="hover:bg-slate-800/40 transition-colors cursor-pointer"
-                              onClick={() => handleInspectTransaction(tx)}
-                            >
-                              <td className="py-3 px-4 font-mono text-slate-400 whitespace-nowrap">
-                                {new Date(tx.date).toLocaleDateString('fr-FR')} {new Date(tx.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-                              </td>
-                              <td className="py-3 px-4 whitespace-nowrap">
-                                <span
-                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-mono text-[11px] font-semibold border ${
-                                    tx.isBuy
-                                      ? 'bg-sky-950/60 text-sky-400 border-sky-800/60'
-                                      : 'bg-emerald-950/60 text-emerald-400 border-emerald-800/60'
+                          transactions.map((tx) => {
+                            const totalFees = (tx.tax || 0) + (tx.brokerFee || 0);
+                            return (
+                              <tr
+                                key={tx.id}
+                                className="hover:bg-slate-800/40 transition-colors cursor-pointer"
+                                onClick={() => handleInspectTransaction(tx)}
+                              >
+                                <td className="py-3 px-4 font-mono text-slate-400 whitespace-nowrap">
+                                  {new Date(tx.date).toLocaleDateString('fr-FR')} {new Date(tx.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                                </td>
+                                <td className="py-3 px-4 whitespace-nowrap">
+                                  <span
+                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-mono text-[11px] font-semibold border ${
+                                      tx.isBuy
+                                        ? 'bg-sky-950/60 text-sky-400 border-sky-800/60'
+                                        : 'bg-emerald-950/60 text-emerald-400 border-emerald-800/60'
+                                    }`}
+                                  >
+                                    {tx.isBuy ? <ArrowDownLeft className="w-3 h-3" /> : <ArrowUpRight className="w-3 h-3" />}
+                                    {tx.isBuy ? 'ACHAT' : 'VENTE'}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-4 font-medium text-slate-200">
+                                  {tx.typeName || `Type #${tx.typeId}`}
+                                </td>
+                                <td className="py-3 px-4 text-right font-mono text-slate-300">
+                                  {tx.quantity.toLocaleString()}
+                                </td>
+                                <td className="py-3 px-4 text-right font-mono text-slate-400">
+                                  {formatIsk(tx.unitPrice)}
+                                </td>
+                                <td
+                                  className={`py-3 px-4 text-right font-mono font-semibold ${
+                                    tx.isBuy ? 'text-sky-400' : 'text-slate-200'
                                   }`}
                                 >
-                                  {tx.isBuy ? <ArrowDownLeft className="w-3 h-3" /> : <ArrowUpRight className="w-3 h-3" />}
-                                  {tx.isBuy ? 'ACHAT' : 'VENTE'}
-                                </span>
-                              </td>
-                              <td className="py-3 px-4 font-medium text-slate-200">
-                                {tx.typeName || `Type #${tx.typeId}`}
-                              </td>
-                              <td className="py-3 px-4 text-right font-mono text-slate-300">
-                                {tx.quantity.toLocaleString()}
-                              </td>
-                              <td className="py-3 px-4 text-right font-mono text-slate-400">
-                                {formatIsk(tx.unitPrice)}
-                              </td>
-                              <td
-                                className={`py-3 px-4 text-right font-mono font-semibold ${
-                                  tx.isBuy ? 'text-sky-400' : 'text-emerald-400'
-                                }`}
-                              >
-                                {formatIsk(tx.totalValue)}
-                              </td>
-                              <td className="py-3 px-4 text-slate-400 truncate max-w-[220px]" title={tx.locationName}>
-                                {tx.locationName || `Location #${tx.locationId}`}
-                              </td>
-                              <td className="py-3 px-4 text-center">
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); handleInspectTransaction(tx); }}
-                                  className="p-1 rounded bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-300 transition-colors"
-                                  title="Inspecter preuves ESI"
-                                >
-                                  <FileText className="w-3.5 h-3.5" />
-                                </button>
-                              </td>
-                            </tr>
-                          ))
+                                  {formatIsk(tx.totalValue)}
+                                </td>
+                                <td className="py-3 px-4 text-right font-mono whitespace-nowrap">
+                                  {totalFees > 0 ? (
+                                    <div>
+                                      <span className="text-rose-400 font-medium">-{formatIsk(totalFees)}</span>
+                                      {tx.tax !== undefined && tx.tax > 0 && (
+                                        <div className="text-[10px] text-slate-500">Taxe: {formatIsk(tx.tax)}</div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="text-slate-600">—</span>
+                                  )}
+                                </td>
+                                <td className="py-3 px-4 text-right font-mono font-bold whitespace-nowrap">
+                                  <span className={tx.isBuy ? 'text-sky-400' : 'text-emerald-400'}>
+                                    {formatIsk(tx.netValue !== undefined ? tx.netValue : tx.totalValue)}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-4 text-slate-400 truncate max-w-[200px]" title={tx.locationName}>
+                                  {tx.locationName || `Location #${tx.locationId}`}
+                                </td>
+                                <td className="py-3 px-4 text-center">
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); handleInspectTransaction(tx); }}
+                                    className="p-1 rounded bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-300 transition-colors"
+                                    title="Inspecter preuves ESI"
+                                  >
+                                    <FileText className="w-3.5 h-3.5" />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })
                         )}
                       </tbody>
                     </table>
@@ -2420,30 +2476,56 @@ export default function App() {
               <div className="grid grid-cols-2 gap-3 p-3 bg-slate-950 rounded-lg border border-slate-800 font-mono">
                 <div>
                   <span className="text-slate-500 block">Transaction ID ESI :</span>
-                  <span className="text-slate-200 font-semibold">{selectedTx.transactionId}</span>
+                  <span className="text-slate-200 font-semibold">#{selectedTx.transactionId}</span>
                 </div>
                 <div>
                   <span className="text-slate-500 block">Date &amp; Heure (UTC) :</span>
                   <span className="text-slate-200">{selectedTx.date}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block">Type :</span>
-                  <span className={selectedTx.isBuy ? 'text-sky-400' : 'text-emerald-400'}>
-                    {selectedTx.isBuy ? 'Achat (Buy)' : 'Vente (Sell)'}
+                  <span className="text-slate-500 block">Sens du flux :</span>
+                  <span className={selectedTx.isBuy ? 'text-sky-400 font-semibold' : 'text-emerald-400 font-semibold'}>
+                    {selectedTx.isBuy ? 'ACHAT (Dépense)' : 'VENTE (Encaissement)'}
                   </span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block">Montant Total :</span>
+                  <span className="text-slate-500 block">Montant Brut :</span>
                   <span className="text-slate-200 font-semibold">{formatIsk(selectedTx.totalValue)}</span>
                 </div>
                 <div>
                   <span className="text-slate-500 block">Quantité :</span>
-                  <span className="text-slate-200">{selectedTx.quantity.toLocaleString()}</span>
+                  <span className="text-slate-200">{selectedTx.quantity.toLocaleString()} unités</span>
                 </div>
                 <div>
                   <span className="text-slate-500 block">Prix Unitaire :</span>
                   <span className="text-slate-200">{formatIsk(selectedTx.unitPrice)}</span>
                 </div>
+
+                {/* Tax & Fee Details */}
+                <div className="p-2 rounded bg-slate-900 border border-slate-800">
+                  <span className="text-rose-400 block text-[11px]">Taxe de Transaction (CCP) :</span>
+                  <span className="text-slate-200 font-semibold">
+                    {selectedTx.tax !== undefined && selectedTx.tax > 0 ? formatIsk(selectedTx.tax) : '0.00 ISK'}
+                  </span>
+                </div>
+
+                <div className="p-2 rounded bg-slate-900 border border-slate-800">
+                  <span className="text-rose-400 block text-[11px]">Frais de Courtage (Brokers Fee) :</span>
+                  <span className="text-slate-200 font-semibold">
+                    {selectedTx.brokerFee !== undefined && selectedTx.brokerFee > 0 ? formatIsk(selectedTx.brokerFee) : '0.00 ISK'}
+                  </span>
+                </div>
+
+                <div className="col-span-2 p-2.5 rounded bg-amber-500/10 border border-amber-500/30 flex justify-between items-center">
+                  <div>
+                    <span className="text-amber-300 block text-[11px] font-sans font-semibold">Montant Net Encaissé / Décaissé (TTC) :</span>
+                    <span className="text-[10px] text-slate-400">Après déduction des taxes et commissions de courtage ESI</span>
+                  </div>
+                  <span className={`text-base font-bold ${selectedTx.isBuy ? 'text-sky-400' : 'text-emerald-400'}`}>
+                    {formatIsk(selectedTx.netValue !== undefined ? selectedTx.netValue : selectedTx.totalValue)}
+                  </span>
+                </div>
+
                 <div className="col-span-2">
                   <span className="text-slate-500 block">Article :</span>
                   <span className="text-slate-200 font-medium">{selectedTx.typeName} (Type ID #{selectedTx.typeId})</span>

@@ -183,16 +183,36 @@ describe('Ledger Module (Phase 03 - Sales Ledger)', () => {
     expect(summary.completeness).toBe('COMPLETE');
   });
 
-  it('retrieves transaction detail linked to matching journal entry', () => {
+  it('retrieves transaction detail linked to matching journal entry and enriches transaction with taxes and net value', () => {
+    const taxJournal: CharacterWalletJournalEntry = {
+      id: '1001:90003',
+      characterId: 1001,
+      journalId: 90003,
+      date: '2026-09-21T14:30:00Z',
+      refType: 'transaction_tax',
+      amount: -12960,
+      balance: 10000000,
+      contextId: 50002,
+      contextIdType: 'transaction_tax',
+      tax: 12960,
+      description: 'Transaction Tax 3.6%',
+      source: '/characters/1001/wallet/journal/',
+      observedAt: 1758465000000,
+    };
+
     repo.saveTransactions([sampleSellTx]);
-    repo.saveJournalEntries([sampleJournalEntry]);
+    repo.saveJournalEntries([sampleJournalEntry, taxJournal]);
 
     const detail = service.getTransactionDetail(1001, 50002);
     expect(detail).not.toBeNull();
     expect(detail?.transaction.transactionId).toBe(50002);
-    expect(detail?.relatedJournalEntries).toHaveLength(1);
-    expect(detail?.relatedJournalEntries[0].journalId).toBe(90002);
-    expect(detail?.relatedJournalEntries[0].tax).toBe(12960);
+    expect(detail?.relatedJournalEntries).toHaveLength(2);
+    expect(detail?.transaction.tax).toBe(12960);
+    expect(detail?.transaction.netValue).toBe(360000 - 12960); // 347,040 ISK
+
+    const summary = service.getSummary(1001);
+    expect(summary.totalTaxesIsk).toBe(12960);
+    expect(summary.totalNetSalesIsk).toBe(347040);
   });
 
   it('extracts distinct filter options (types and locations)', () => {

@@ -18,14 +18,8 @@ export class RoiService {
    * Helper to retrieve linked fees for a transaction from wallet journal entries
    */
   private getTransactionFees(characterId: number, transactionId: number, journalRefId?: number, isBuy?: boolean): number {
-    const { items: journal } = ledgerRepository.getJournalEntries(characterId, 1, 1000);
-    const matched = journal.filter((j) =>
-      (j.contextId === transactionId || (journalRefId && j.journalId === journalRefId)) &&
-      (isBuy
-        ? (j.refType === 'brokers_fee' || j.contextIdType === 'broker_fee' || j.contextIdType === 'market_transaction_id')
-        : (j.refType === 'transaction_tax' || j.refType === 'brokers_fee' || j.contextIdType === 'transaction_tax' || j.contextIdType === 'market_transaction_id'))
-    );
-    return matched.reduce((acc, j) => acc + Math.abs(j.amount || 0), 0);
+    const { tax, brokerFee } = ledgerRepository.getJournalEntriesForTransaction(characterId, transactionId, journalRefId);
+    return isBuy ? brokerFee : (tax + brokerFee);
   }
 
   /**
@@ -156,9 +150,10 @@ export class RoiService {
     characterIds?: number[];
     typeId?: number;
   } = {}): AutoReconciliationResult {
-    // 1. Fetch all candidate transactions
+    // 1. Fetch all candidate transactions across single character or ecosystem
+    const effectiveCharId = params.characterIds && params.characterIds.length > 0 ? undefined : params.characterId;
     const { items: allTransactions } = ledgerRepository.getTransactions({
-      characterId: params.characterId,
+      characterId: effectiveCharId,
       typeId: params.typeId,
       pageSize: 100000,
     });
@@ -169,8 +164,8 @@ export class RoiService {
       transactions = transactions.filter((t) => set.has(t.characterId));
     }
 
-    // 2. Clear previous automatic FIFO allocations
-    this.repo.clearAutoAllocations(params.characterId);
+    // 2. Clear previous automatic FIFO allocations for the target scope
+    this.repo.clearAutoAllocations(params.characterId, params.characterIds);
 
     // 3. Separate purchases and sales and sort chronologically asc
     const buys = transactions
@@ -332,8 +327,9 @@ export class RoiService {
     const { character_id, character_ids, start_date, end_date, type_id, buy_hub_id, sell_hub_id } = params;
 
     // Filter transactions using canonical ledger repository
+    const effectiveCharId = character_ids && character_ids.length > 0 ? undefined : character_id;
     let transactions: CharacterTransaction[] = ledgerRepository.getTransactions({
-      characterId: character_id,
+      characterId: effectiveCharId,
       pageSize: 100000,
     }).items;
 

@@ -44,7 +44,7 @@ export class AuthService {
   /**
    * Generates authorization URL with PKCE and CSRF state
    */
-  public createLoginUrl(overrideCallbackUrl?: string): { url: string; state: string } {
+  public createLoginUrl(overrideCallbackUrl?: string, sessionId?: string): { url: string; state: string } {
     if (!this.config.clientId) {
       throw new Error('EVE_CLIENT_ID is not configured in environment variables');
     }
@@ -54,8 +54,8 @@ export class AuthService {
     const verifier = generateCodeVerifier();
     const challenge = generateCodeChallenge(verifier);
 
-    // Save pending state
-    this.sessionStore.saveOAuthState(state, verifier);
+    // Save pending state with optional existing sessionId
+    this.sessionStore.saveOAuthState(state, verifier, sessionId);
 
     const params = new URLSearchParams({
       response_type: 'code',
@@ -82,10 +82,13 @@ export class AuthService {
     }
 
     // Validate and consume state
-    const codeVerifier = this.sessionStore.consumeOAuthState(state);
-    if (!codeVerifier) {
+    const stateEntry = this.sessionStore.consumeOAuthState(state);
+    if (!stateEntry) {
       throw new Error('Invalid or expired OAuth state parameter (replay protection triggered)');
     }
+
+    const { verifier: codeVerifier, sessionId: stateSessionId } = stateEntry;
+    const targetSessionId = existingSessionId || stateSessionId;
 
     // Exchange authorization code for tokens
     const tokens = await this.exchangeCodeForTokens(code, codeVerifier);
@@ -96,12 +99,12 @@ export class AuthService {
     // Expiration timestamp
     const expiresAt = Date.now() + tokens.expires_in * 1000;
 
-    // If an existing valid session is present, link this character to the session
-    if (existingSessionId) {
-      const existing = await this.getValidSession(existingSessionId);
+    // If an existing valid session is present (from cookie or state), link this character to the session
+    if (targetSessionId) {
+      const existing = await this.getValidSession(targetSessionId);
       if (existing) {
         const updated = this.sessionStore.addOrUpdateCharacter(
-          existingSessionId,
+          targetSessionId,
           {
             characterId: identity.characterId,
             characterName: identity.characterName,
@@ -210,6 +213,57 @@ export class AuthService {
       refreshToken: tokens.refresh_token,
       expiresAt,
     };
+  }
+
+  /**
+   * Refreshes tokens for a specific linked character in the session
+   */
+  public async refreshCharacterTokens(sessionId: string, characterId: number): Promise<string | null> {
+    const session = this.sessionStore.getSession(sessionId);
+    if (!session || !session.characters || !session.characters[characterId]) return null;
+
+    const char = session.characters[characterId];
+    if (!char.refreshToken) return null;
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Host': 'login.eveonline.com',
+    };
+
+    const bodyParams = new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: char.refreshToken,
+    });
+
+    if (this.config.clientSecret) {
+      headers['Authorization'] = `Basic ${Buffer.from(`${this.config.clientId}:${this.config.clientSecret}`).toString('base64')}`;
+    } else {
+      bodyParams.set('client_id', this.config.clientId);
+    }
+
+    const response = await this.fetchFn(this.config.tokenBaseUrl, {
+      method: 'POST',
+      headers,
+      body: bodyParams.toString(),
+    });
+
+    if (!response.ok) {
+      console.warn(`[Auth] Token refresh failed for character ${characterId}`);
+      return null;
+    }
+
+    const tokens: EveTokenResponse = await response.json();
+    const expiresAt = Date.now() + tokens.expires_in * 1000;
+
+    this.sessionStore.updateSessionTokens(
+      sessionId,
+      tokens.access_token,
+      tokens.refresh_token,
+      expiresAt,
+      characterId
+    );
+
+    return tokens.access_token;
   }
 
   /**

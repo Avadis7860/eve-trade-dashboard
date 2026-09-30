@@ -12,18 +12,41 @@ function getSessionCharacterId(req: Request): number | undefined {
   return session ? session.characterId : undefined;
 }
 
+// Helper to extract all linked character IDs in session
+function getSessionCharacterIds(req: Request): number[] {
+  const sessionId = req.cookies?.eve_session_id;
+  if (!sessionId) return [];
+  const session = defaultSessionStore.getSession(sessionId);
+  if (!session) return [];
+  if (session.characters && Object.keys(session.characters).length > 0) {
+    return Object.keys(session.characters).map(Number);
+  }
+  return session.characterId ? [session.characterId] : [];
+}
+
 // POST /api/roi/reconcile - Trigger automatic chronological FIFO reconciliation (supports multi-character)
 roiRouter.post('/reconcile', (req: Request, res: Response) => {
   try {
     const sessionCharId = getSessionCharacterId(req);
+    const sessionCharIds = getSessionCharacterIds(req);
     const { character_id, character_ids, type_id } = req.body;
 
-    const charId = character_id ? Number(character_id) : sessionCharId;
-    const charIds = Array.isArray(character_ids) ? character_ids.map(Number) : undefined;
+    let targetCharIds: number[] | undefined;
+    let targetCharId: number | undefined;
+
+    if (Array.isArray(character_ids) && character_ids.length > 0) {
+      targetCharIds = character_ids.map(Number);
+    } else if (character_id) {
+      targetCharId = Number(character_id);
+    } else if (sessionCharIds.length > 1) {
+      targetCharIds = sessionCharIds;
+    } else {
+      targetCharId = sessionCharId;
+    }
 
     const result = roiService.autoReconcileFifo({
-      characterId: charId,
-      characterIds: charIds,
+      characterId: targetCharIds && targetCharIds.length > 0 ? undefined : targetCharId,
+      characterIds: targetCharIds,
       typeId: type_id ? Number(type_id) : undefined,
     });
 
@@ -38,13 +61,17 @@ roiRouter.post('/reconcile', (req: Request, res: Response) => {
 roiRouter.get('/summary', (req: Request, res: Response) => {
   try {
     const sessionCharId = getSessionCharacterId(req);
+    const sessionCharIds = getSessionCharacterIds(req);
     const requestedCharId = req.query.character_id ? Number(req.query.character_id) : undefined;
-    const characterId = requestedCharId || sessionCharId;
 
     let characterIds: number[] | undefined;
     if (typeof req.query.character_ids === 'string') {
       characterIds = req.query.character_ids.split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n));
+    } else if (!requestedCharId && sessionCharIds.length > 1) {
+      characterIds = sessionCharIds;
     }
+
+    const characterId = characterIds && characterIds.length > 0 ? undefined : (requestedCharId || sessionCharId);
 
     const summary = roiService.getSummary({
       character_id: characterId,
@@ -67,14 +94,18 @@ roiRouter.get('/summary', (req: Request, res: Response) => {
 roiRouter.get('/allocations', (req: Request, res: Response) => {
   try {
     const sessionCharId = getSessionCharacterId(req);
+    const sessionCharIds = getSessionCharacterIds(req);
     const requestedCharId = req.query.character_id ? Number(req.query.character_id) : undefined;
-    const characterId = requestedCharId || sessionCharId;
     const sellTxId = req.query.sell_transaction_id ? Number(req.query.sell_transaction_id) : undefined;
 
     let characterIds: number[] | undefined;
     if (typeof req.query.character_ids === 'string') {
       characterIds = req.query.character_ids.split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n));
+    } else if (!requestedCharId && sessionCharIds.length > 1) {
+      characterIds = sessionCharIds;
     }
+
+    const characterId = characterIds && characterIds.length > 0 ? undefined : (requestedCharId || sessionCharId);
 
     const allocations = roiService.listAllocations(characterId, sellTxId, characterIds);
     return res.json({ allocations });
@@ -152,13 +183,17 @@ roiRouter.delete('/allocations/:id', (req: Request, res: Response) => {
 roiRouter.get('/unsold-inventory', (req: Request, res: Response) => {
   try {
     const sessionCharId = getSessionCharacterId(req);
+    const sessionCharIds = getSessionCharacterIds(req);
     const requestedCharId = req.query.character_id ? Number(req.query.character_id) : undefined;
-    const characterId = requestedCharId || sessionCharId;
 
     let characterIds: number[] | undefined;
     if (typeof req.query.character_ids === 'string') {
       characterIds = req.query.character_ids.split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n));
+    } else if (!requestedCharId && sessionCharIds.length > 1) {
+      characterIds = sessionCharIds;
     }
+
+    const characterId = characterIds && characterIds.length > 0 ? undefined : (requestedCharId || sessionCharId);
 
     const inventory = roiService.getUnsoldInventory(characterId, characterIds);
     return res.json({ inventory });

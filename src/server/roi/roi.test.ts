@@ -542,4 +542,77 @@ describe('ROI TTC & Financial Metrics Module', () => {
     expect(summary.realized_profit_ttc_isk).toBe(1500);
     expect(summary.roi_percent_ttc).toBe(60); // 1500 / 2500 = 60%
   });
+
+  it('correctly resolves 100% reconciliation when buyer and seller are different characters in the ecosystem', () => {
+    const BUYER_ID = 1001;
+    const SELLER_ID = 1002;
+    const TRIT_ID = 34;
+
+    // Character A (Jita Buyer) buys 50,000 Tritanium @ 4.5 ISK in Jita
+    const buyA = makeTx({
+      transactionId: 101,
+      characterId: BUYER_ID,
+      date: '2026-03-01T08:00:00Z',
+      isBuy: true,
+      locationId: 60003760, // Jita
+      quantity: 50000,
+      typeId: TRIT_ID,
+      typeName: 'Tritanium',
+      unitPrice: 4.5,
+    });
+
+    // Character B (Regional Seller) sells 50,000 Tritanium @ 6.5 ISK in Rens
+    const sellB = makeTx({
+      transactionId: 201,
+      characterId: SELLER_ID,
+      date: '2026-03-02T10:00:00Z',
+      isBuy: false,
+      locationId: 60004588, // Rens
+      quantity: 50000,
+      typeId: TRIT_ID,
+      typeName: 'Tritanium',
+      unitPrice: 6.5,
+    });
+
+    // Tax entry for Character B's sale: 3.6% of 325,000 = 11,700 ISK
+    const taxB = makeJournal({
+      journalId: 301,
+      characterId: SELLER_ID,
+      date: '2026-03-02T10:00:00Z',
+      refType: 'transaction_tax',
+      amount: -11700,
+      contextId: 201,
+      contextIdType: 'transaction_tax',
+      description: 'Transaction Tax',
+    });
+
+    ledgerRepository.saveTransactions([buyA, sellB]);
+    ledgerRepository.saveJournalEntries([taxB]);
+
+    // When running FIFO with both character IDs:
+    const reconcileResult = roiService.autoReconcileFifo({
+      characterIds: [BUYER_ID, SELLER_ID],
+    });
+
+    expect(reconcileResult.allocations_created).toBe(1);
+    expect(reconcileResult.total_quantity_reconciled).toBe(50000);
+    expect(reconcileResult.sales_fully_matched).toBe(1);
+    expect(reconcileResult.sales_unmatched).toBe(0);
+
+    const summary = roiService.getSummary({
+      character_ids: [BUYER_ID, SELLER_ID],
+    });
+
+    expect(summary.total_sales_volume).toBe(50000);
+    expect(summary.allocated_sales_volume).toBe(50000);
+    expect(summary.coverage_percent).toBe(100);
+    expect(summary.coverage_status).toBe('COMPLETE');
+    expect(summary.gross_revenue_isk).toBe(325000); // 50,000 * 6.5
+    expect(summary.allocated_buy_cost_isk).toBe(225000); // 50,000 * 4.5
+    expect(summary.attributable_sell_fees_isk).toBe(11700); // 11,700 tax
+    // Realized Profit = 325,000 - 225,000 - 11,700 = 88,300 ISK
+    expect(summary.realized_profit_ttc_isk).toBe(88300);
+    // ROI = (88,300 / 225,000) * 100 = 39.24%
+    expect(summary.roi_percent_ttc).toBe(39.24);
+  });
 });

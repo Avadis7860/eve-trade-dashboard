@@ -4,6 +4,7 @@ import type { UserSession, LinkedCharacter } from './types.ts';
 export interface PendingOAuthState {
   verifier: string;
   createdAt: number;
+  sessionId?: string;
 }
 
 export class SessionStore {
@@ -13,20 +14,21 @@ export class SessionStore {
   private readonly SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
   /**
-   * Stores a one-time OAuth state with its associated PKCE code verifier
+   * Stores a one-time OAuth state with its associated PKCE code verifier and optional session ID
    */
-  public saveOAuthState(state: string, verifier: string): void {
+  public saveOAuthState(state: string, verifier: string, sessionId?: string): void {
     this.cleanupExpiredStates();
     this.pendingStates.set(state, {
       verifier,
+      sessionId,
       createdAt: Date.now(),
     });
   }
 
   /**
-   * Consumes and deletes an OAuth state. Returns verifier or null if invalid/expired.
+   * Consumes and deletes an OAuth state. Returns verifier and optional sessionId or null if invalid/expired.
    */
-  public consumeOAuthState(state: string): string | null {
+  public consumeOAuthState(state: string): { verifier: string; sessionId?: string } | null {
     this.cleanupExpiredStates();
     const entry = this.pendingStates.get(state);
     if (!entry) {
@@ -34,7 +36,7 @@ export class SessionStore {
     }
     // Delete immediately to prevent replay attacks
     this.pendingStates.delete(state);
-    return entry.verifier;
+    return { verifier: entry.verifier, sessionId: entry.sessionId };
   }
 
   /**

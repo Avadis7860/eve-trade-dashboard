@@ -30,7 +30,8 @@ export function createAuthRouter(authService: AuthService = new AuthService()): 
         }
       }
 
-      const { url } = authService.createLoginUrl(overrideCallback);
+      const existingSessionId = req.cookies?.[SESSION_COOKIE_NAME];
+      const { url } = authService.createLoginUrl(overrideCallback, existingSessionId);
       if (req.query.format === 'json') {
         res.json({ url });
       } else {

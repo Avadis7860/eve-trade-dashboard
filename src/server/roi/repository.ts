@@ -55,10 +55,19 @@ export class RoiRepository {
     return this.allocations.delete(id);
   }
 
-  clearAutoAllocations(characterId?: number): void {
+  clearAutoAllocations(characterId?: number, characterIds?: number[]): void {
+    const charSet = characterIds && characterIds.length > 0 ? new Set(characterIds) : null;
     for (const [id, alloc] of this.allocations.entries()) {
       if (alloc.reconciliation_mode === 'FIFO_AUTOMATIC') {
-        if (!characterId || alloc.character_id === characterId || alloc.buy_character_id === characterId || alloc.sell_character_id === characterId) {
+        if (charSet) {
+          if (
+            charSet.has(alloc.character_id) ||
+            (alloc.buy_character_id && charSet.has(alloc.buy_character_id)) ||
+            (alloc.sell_character_id && charSet.has(alloc.sell_character_id))
+          ) {
+            this.allocations.delete(id);
+          }
+        } else if (!characterId || alloc.character_id === characterId || alloc.buy_character_id === characterId || alloc.sell_character_id === characterId) {
           this.allocations.delete(id);
         }
       }
@@ -70,8 +79,9 @@ export class RoiRepository {
    * If characterId is undefined, computes across all characters in the ecosystem.
    */
   getUnsoldInventory(characterId?: number, characterIds?: number[]): UnsoldInventoryItem[] {
+    const effectiveCharId = characterIds && characterIds.length > 0 ? undefined : characterId;
     const { items: transactions } = ledgerRepository.getTransactions({
-      characterId: characterId,
+      characterId: effectiveCharId,
       pageSize: 100000,
     });
 
@@ -92,12 +102,12 @@ export class RoiRepository {
         const resolvedHub = hubsService.resolveLocationToHub(buyTx.locationId, buyTx.locationName);
         const tiedCapital = roundIsk(remainingQty * buyTx.unitPrice);
         
-        // Find if any journal broker fees were linked to this buy
-        const { items: journalEntries } = ledgerRepository.getJournalEntries(buyTx.characterId, 1, 100000);
-        const totalBuyFees = journalEntries
-          .filter((j) => (j.contextId === buyTx.transactionId || j.journalId === buyTx.journalRefId) &&
-            (j.refType === 'brokers_fee' || j.contextIdType === 'market_transaction_id' || j.contextIdType === 'broker_fee'))
-          .reduce((acc, j) => acc + Math.abs(j.amount || 0), 0);
+        // Find linked broker fees for this buy transaction
+        const { brokerFee: totalBuyFees } = ledgerRepository.getJournalEntriesForTransaction(
+          buyTx.characterId,
+          buyTx.transactionId,
+          buyTx.journalRefId
+        );
 
         const feeRatio = buyTx.quantity > 0 ? remainingQty / buyTx.quantity : 0;
         const remainingFees = roundIsk(totalBuyFees * feeRatio);

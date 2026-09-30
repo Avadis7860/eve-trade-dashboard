@@ -21,6 +21,9 @@ export interface CharacterTransaction {
   clientName?: string;
   source: string; // e.g. "esi:/characters/{character_id}/wallet/transactions/"
   observedAt: number; // UTC unix timestamp in ms when recorded
+  tax?: number; // Resolved transaction tax from ESI journal
+  brokerFee?: number; // Resolved broker fee from ESI journal
+  netValue?: number; // Total value net of taxes and broker fees (TTC)
 }
 
 export interface CharacterWalletJournalEntry {
@@ -69,6 +72,9 @@ export interface LedgerSummary {
   totalBuyVolume: number; // units bought
   totalGrossSalesIsk: number; // ISK from sales
   totalBuySpendIsk: number; // ISK spent on buys
+  totalTaxesIsk: number; // ISK paid in transaction taxes
+  totalBrokerFeesIsk: number; // ISK paid in brokers fees
+  totalNetSalesIsk: number; // ISK from sales after taxes & broker fees
   distinctItemsCount: number;
   distinctLocationsCount: number;
   completeness: 'COMPLETE' | 'PARTIAL' | 'ERROR' | 'UNKNOWN' | 'ABSENT';

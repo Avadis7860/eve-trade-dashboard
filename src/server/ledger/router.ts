@@ -157,8 +157,8 @@ export function createLedgerRouter(
           char.characterId,
           char.accessToken,
           async () => {
-            const refreshed = await authService.refreshSessionTokens(session);
-            return refreshed.accessToken;
+            const token = await authService.refreshCharacterTokens(session.sessionId, char.characterId);
+            return token;
           }
         );
       }

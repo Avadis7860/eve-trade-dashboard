@@ -116,12 +116,14 @@ describe('Auth Module — Session Store & CSRF Replay Protection', () => {
   it('saves and consumes OAuth state exactly once (replay prevention)', () => {
     const state = 'test_state_123';
     const verifier = 'test_verifier_456';
+    const sessionId = 'session_abc';
 
-    store.saveOAuthState(state, verifier);
+    store.saveOAuthState(state, verifier, sessionId);
 
     // First consumption succeeds
     const consumed = store.consumeOAuthState(state);
-    expect(consumed).toBe(verifier);
+    expect(consumed?.verifier).toBe(verifier);
+    expect(consumed?.sessionId).toBe(sessionId);
 
     // Second consumption fails (state consumed)
     const replayed = store.consumeOAuthState(state);
@@ -306,10 +308,11 @@ describe('Auth Module — AuthService SSO Flow', () => {
     expect(session1.characterId).toBe(11111111);
     expect(Object.keys(session1.characters).length).toBe(1);
 
-    // 2. Link Character 2 to the same session
+    // 2. Link Character 2 to the same session via state-preserved sessionId (even if callback has no cookie)
     currentMockToken = char2Token;
-    const { state: state2 } = authService.createLoginUrl();
-    const session2 = await authService.handleCallback('code_char2', state2, session1.sessionId);
+    const { state: state2 } = authService.createLoginUrl(undefined, session1.sessionId);
+    // Notice we do NOT pass existingSessionId as 3rd arg: it is recovered automatically from OAuth state
+    const session2 = await authService.handleCallback('code_char2', state2);
     expect(session2.sessionId).toBe(session1.sessionId);
     expect(session2.characterId).toBe(22222222); // Character 2 is now active
     expect(Object.keys(session2.characters).length).toBe(2);
@@ -324,13 +327,17 @@ describe('Auth Module — AuthService SSO Flow', () => {
     expect(char2Info).toBeDefined();
     expect(char2Info?.isActive).toBe(true);
 
-    // 4. Switch active character back to Character 1
+    // 4. Test refreshing tokens for an individual character in the session
+    const refreshedTokenChar1 = await authService.refreshCharacterTokens(session1.sessionId, 11111111);
+    expect(refreshedTokenChar1).toBeDefined();
+
+    // 5. Switch active character back to Character 1
     const switched = authService.switchActiveCharacter(session1.sessionId, 11111111);
     expect(switched?.characterId).toBe(11111111);
     expect(switched?.activeCharacterId).toBe(11111111);
     expect(switched?.characterName).toBe('Buyer Character');
 
-    // 5. Unlink Character 2
+    // 6. Unlink Character 2
     const afterUnlink = authService.removeCharacter(session1.sessionId, 22222222);
     expect(afterUnlink).not.toBeNull();
     expect(Object.keys(afterUnlink!.characters).length).toBe(1);

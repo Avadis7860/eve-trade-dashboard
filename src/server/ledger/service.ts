@@ -57,18 +57,11 @@ export class LedgerService {
       return null;
     }
 
-    // Look for matching journal entries by journalRefId or contextId
-    const relatedJournalEntries: CharacterWalletJournalEntry[] = [];
-    const allJournal = this.repo.getJournalEntries(characterId, 1, 500);
-
-    for (const jn of allJournal.items) {
-      if (
-        (transaction.journalRefId && jn.journalId === transaction.journalRefId) ||
-        (jn.contextId && jn.contextId === transaction.transactionId)
-      ) {
-        relatedJournalEntries.push(jn);
-      }
-    }
+    const { entries: relatedJournalEntries } = this.repo.getJournalEntriesForTransaction(
+      characterId,
+      transactionId,
+      transaction.journalRefId
+    );
 
     return {
       transaction,

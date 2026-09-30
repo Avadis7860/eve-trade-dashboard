@@ -1,16 +1,44 @@
-import { ExplicitCostAllocation, UnsoldInventoryItem } from './types';
-import { defaultLedgerRepository, type ILedgerRepository } from '../ledger/repository';
-import { hubsService } from '../hubs/service';
-import { roundIsk } from './calculator';
+import { ExplicitCostAllocation, UnsoldInventoryItem } from './types.ts';
+import { defaultLedgerRepository, type ILedgerRepository } from '../ledger/repository.ts';
+import { hubsService } from '../hubs/service.ts';
+import { roundIsk } from './calculator.ts';
+import { StorageManager, DurableFileDatabaseAdapter } from '../storage/database.ts';
+import type { IDatabaseAdapter } from '../storage/types.ts';
 
 export class RoiRepository {
-  // Map of allocation_id -> ExplicitCostAllocation
   private allocations = new Map<string, ExplicitCostAllocation>();
 
-  constructor(private ledgerRepo: ILedgerRepository = defaultLedgerRepository) {}
+  constructor(
+    private ledgerRepo: ILedgerRepository = defaultLedgerRepository,
+    private adapter: IDatabaseAdapter | null = null
+  ) {
+    if (this.adapter) {
+      this.loadFromStorage();
+    }
+  }
+
+  private loadFromStorage(): void {
+    if (this.adapter instanceof DurableFileDatabaseAdapter) {
+      const state = this.adapter.getState();
+      if (state?.data?.roi) {
+        this.restoreData(state.data.roi, false);
+      }
+    }
+  }
+
+  private syncToStorage(): void {
+    if (this.adapter instanceof DurableFileDatabaseAdapter) {
+      const state = this.adapter.getState();
+      state.data.roi = {
+        allocations: Array.from(this.allocations.values()),
+      };
+      this.adapter.persist();
+    }
+  }
 
   reset(): void {
     this.allocations.clear();
+    this.syncToStorage();
   }
 
   listAllocations(characterId?: number, characterIds?: number[]): ExplicitCostAllocation[] {
@@ -51,14 +79,21 @@ export class RoiRepository {
 
   saveAllocation(allocation: ExplicitCostAllocation): void {
     this.allocations.set(allocation.id, { ...allocation });
+    this.syncToStorage();
   }
 
   deleteAllocation(id: string): boolean {
-    return this.allocations.delete(id);
+    const deleted = this.allocations.delete(id);
+    if (deleted) {
+      this.syncToStorage();
+    }
+    return deleted;
   }
 
   clearAutoAllocations(characterId?: number, characterIds?: number[]): void {
     const charSet = characterIds && characterIds.length > 0 ? new Set(characterIds) : null;
+    let modified = false;
+
     for (const [id, alloc] of this.allocations.entries()) {
       if (alloc.reconciliation_mode === 'FIFO_AUTOMATIC') {
         if (charSet) {
@@ -68,18 +103,20 @@ export class RoiRepository {
             (alloc.sell_character_id && charSet.has(alloc.sell_character_id))
           ) {
             this.allocations.delete(id);
+            modified = true;
           }
         } else if (!characterId || alloc.character_id === characterId || alloc.buy_character_id === characterId || alloc.sell_character_id === characterId) {
           this.allocations.delete(id);
+          modified = true;
         }
       }
     }
+
+    if (modified) {
+      this.syncToStorage();
+    }
   }
 
-  /**
-   * Computes the remaining unsold (unallocated) quantity for all buy transactions.
-   * If characterId is undefined, computes across all characters in the ecosystem.
-   */
   getUnsoldInventory(characterId?: number, characterIds?: number[]): UnsoldInventoryItem[] {
     const effectiveCharId = characterIds && characterIds.length > 0 ? undefined : characterId;
     const { items: transactions } = this.ledgerRepo.getTransactions({
@@ -104,7 +141,6 @@ export class RoiRepository {
         const resolvedHub = hubsService.resolveLocationToHub(buyTx.locationId, buyTx.locationName);
         const tiedCapital = roundIsk(remainingQty * buyTx.unitPrice);
         
-        // Find linked broker fees for this buy transaction
         const { brokerFee: totalBuyFees } = this.ledgerRepo.getJournalEntriesForTransaction(
           buyTx.characterId,
           buyTx.transactionId,
@@ -142,12 +178,15 @@ export class RoiRepository {
     };
   }
 
-  restoreData(data: { allocations: ExplicitCostAllocation[] }): void {
+  restoreData(data: { allocations: ExplicitCostAllocation[] }, sync = true): void {
     this.allocations.clear();
     for (const alloc of data.allocations) {
       this.allocations.set(alloc.id, alloc);
     }
+    if (sync) {
+      this.syncToStorage();
+    }
   }
 }
 
-export const roiRepository = new RoiRepository();
+export const roiRepository = new RoiRepository(defaultLedgerRepository, StorageManager.getInstance().getAdapter());

@@ -4,6 +4,8 @@ import type {
   AssetSummaryMetrics,
   AssetStockCheck,
 } from './types.ts';
+import { StorageManager, DurableFileDatabaseAdapter } from '../storage/database.ts';
+import type { IDatabaseAdapter } from '../storage/types.ts';
 
 export interface IAssetsRepository {
   saveAssets(assets: CharacterAsset[]): { inserted: number; updated: number };
@@ -17,8 +19,33 @@ export interface IAssetsRepository {
   restoreData(data: { assets: CharacterAsset[] }): void;
 }
 
-export class InMemoryAssetsRepository implements IAssetsRepository {
+export class PersistentAssetsRepository implements IAssetsRepository {
   private assets: Map<string, CharacterAsset> = new Map();
+
+  constructor(private adapter: IDatabaseAdapter | null = null) {
+    if (this.adapter) {
+      this.loadFromStorage();
+    }
+  }
+
+  private loadFromStorage(): void {
+    if (this.adapter instanceof DurableFileDatabaseAdapter) {
+      const state = this.adapter.getState();
+      if (state?.data?.assets) {
+        this.restoreData(state.data.assets, false);
+      }
+    }
+  }
+
+  private syncToStorage(): void {
+    if (this.adapter instanceof DurableFileDatabaseAdapter) {
+      const state = this.adapter.getState();
+      state.data.assets = {
+        assets: Array.from(this.assets.values()),
+      };
+      this.adapter.persist();
+    }
+  }
 
   public saveAssets(assets: CharacterAsset[]): { inserted: number; updated: number } {
     let inserted = 0;
@@ -34,6 +61,7 @@ export class InMemoryAssetsRepository implements IAssetsRepository {
       }
     }
 
+    this.syncToStorage();
     return { inserted, updated };
   }
 
@@ -80,7 +108,6 @@ export class InMemoryAssetsRepository implements IAssetsRepository {
       matched.push(asset);
     }
 
-    // Sort by typeName then quantity desc
     matched.sort((a, b) => {
       const nameComp = (a.typeName || '').localeCompare(b.typeName || '');
       if (nameComp !== 0) return nameComp;
@@ -206,6 +233,7 @@ export class InMemoryAssetsRepository implements IAssetsRepository {
         this.assets.delete(key);
       }
     }
+    this.syncToStorage();
   }
 
   public dumpData(): { assets: CharacterAsset[] } {
@@ -214,12 +242,16 @@ export class InMemoryAssetsRepository implements IAssetsRepository {
     };
   }
 
-  public restoreData(data: { assets: CharacterAsset[] }): void {
+  public restoreData(data: { assets: CharacterAsset[] }, sync = true): void {
     this.assets.clear();
     for (const asset of data.assets) {
       this.assets.set(asset.id, asset);
     }
+    if (sync) {
+      this.syncToStorage();
+    }
   }
 }
 
-export const defaultAssetsRepository = new InMemoryAssetsRepository();
+export class InMemoryAssetsRepository extends PersistentAssetsRepository {}
+export const defaultAssetsRepository = new PersistentAssetsRepository(StorageManager.getInstance().getAdapter());

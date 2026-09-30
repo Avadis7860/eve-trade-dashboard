@@ -18,7 +18,7 @@ Un seul chantier actif, une phase, une branche, un PR. Jamais sur main. Petits l
 | 06 | Dashboard intégré initial | 03–05 | Terminé |
 | H01 | Hardening sécurité et isolation multi-personnages | 00–06 | Terminé |
 | H02 | Hardening intégrité, résilience et sauvegarde SHA-256 | 02–06 | Terminé |
-| 07 | Durabilité du stockage et historique fiable | 00–06, H01–H02 | Planifiée |
+| 07 | Durabilité du stockage et historique fiable | 00–06, H01–H02 | Terminé |
 | 08 | Réconciliation financière et métriques versionnées | 07 | Planifiée |
 | 09 | Positions de capital et inventaire mutuellement exclusif | 07, 08 | Planifiée |
 | 10 | Product 360 et visualisations temporelles | 07–09 | Planifiée |

@@ -1,0 +1,229 @@
+{
+  "version": 1,
+  "appliedMigrations": [
+    1
+  ],
+  "data": {
+    "ledger": {
+      "transactions": [
+        {
+          "id": "1001:101",
+          "characterId": 1001,
+          "transactionId": 101,
+          "date": "2026-03-01T08:00:00Z",
+          "isBuy": true,
+          "isPersonal": true,
+          "typeId": 34,
+          "typeName": "Tritanium",
+          "quantity": 50000,
+          "unitPrice": 4.5,
+          "totalValue": 225000,
+          "journalRefId": 0,
+          "locationId": 60003760,
+          "clientId": 999,
+          "clientName": "Trader",
+          "source": "esi:/characters/...",
+          "observedAt": 1790779496488
+        },
+        {
+          "id": "1002:201",
+          "characterId": 1002,
+          "transactionId": 201,
+          "date": "2026-03-02T10:00:00Z",
+          "isBuy": false,
+          "isPersonal": true,
+          "typeId": 34,
+          "typeName": "Tritanium",
+          "quantity": 50000,
+          "unitPrice": 6.5,
+          "totalValue": 325000,
+          "journalRefId": 0,
+          "locationId": 60004588,
+          "clientId": 999,
+          "clientName": "Trader",
+          "source": "esi:/characters/...",
+          "observedAt": 1790779496488
+        }
+      ],
+      "journalEntries": [
+        {
+          "id": "1002:301",
+          "characterId": 1002,
+          "journalId": 301,
+          "date": "2026-03-02T10:00:00Z",
+          "refType": "transaction_tax",
+          "amount": -11700,
+          "balance": 1000000,
+          "contextId": 201,
+          "contextIdType": "transaction_tax",
+          "description": "Transaction Tax",
+          "source": "esi:/characters/...",
+          "observedAt": 1790779496488
+        }
+      ]
+    },
+    "orders": {
+      "snapshots": [
+        {
+          "id": "1001:201",
+          "characterId": 1001,
+          "orderId": 201,
+          "typeId": 34,
+          "typeName": "Tritanium",
+          "regionId": 10000002,
+          "locationId": 60003760,
+          "isBuyOrder": false,
+          "price": 6,
+          "volumeTotal": 1000,
+          "volumeRemain": 1000,
+          "volumeFilled": 0,
+          "issued": "2026-09-01T12:00:00Z",
+          "duration": 90,
+          "expiresAt": "2026-11-30T12:00:00Z",
+          "state": "ACTIVE",
+          "stateJustification": "Actif",
+          "firstObservedAt": 1790779235230,
+          "lastObservedAt": 1790779235230,
+          "lastSnapshotVolumeRemain": 1000,
+          "isActiveInCurrentSnapshot": true,
+          "source": "test"
+        }
+      ],
+      "restockItems": []
+    },
+    "hubs": {
+      "definitions": [
+        {
+          "id": "hub-jita",
+          "name": "Jita IV - Moon 4 - CNAP",
+          "system_name": "Jita",
+          "is_system_default": true,
+          "notes": "Hub commercial principal (The Forge)",
+          "created_at": "2026-01-01T00:00:00Z"
+        },
+        {
+          "id": "hub-amarr",
+          "name": "Amarr VIII (Oris) - Emperor Family Academy",
+          "system_name": "Amarr",
+          "is_system_default": true,
+          "notes": "Hub commercial secondaire (Domain)",
+          "created_at": "2026-01-01T00:00:00Z"
+        },
+        {
+          "id": "hub-dodixie",
+          "name": "Dodixie IX - Moon 20 - Federation Navy Assembly Plant",
+          "system_name": "Dodixie",
+          "is_system_default": true,
+          "notes": "Hub Gallente (Sinq Laison)",
+          "created_at": "2026-01-01T00:00:00Z"
+        },
+        {
+          "id": "hub-rens",
+          "name": "Rens VI - Moon 8 - Brutor Tribe Treasury",
+          "system_name": "Rens",
+          "is_system_default": true,
+          "notes": "Hub Minmatar (Heimatar)",
+          "created_at": "2026-01-01T00:00:00Z"
+        },
+        {
+          "id": "hub-hek",
+          "name": "Hek VIII - Moon 12 - Boundless Creation Factory",
+          "system_name": "Hek",
+          "is_system_default": true,
+          "notes": "Hub Minmatar secondaire (Metropolis)",
+          "created_at": "2026-01-01T00:00:00Z"
+        },
+        {
+          "id": "hub-auto-60054321",
+          "name": "Sobeki Hub",
+          "system_name": "Sobeki",
+          "is_system_default": false,
+          "notes": "Hub auto-détecté depuis l'emplacement #60054321",
+          "created_at": "2026-09-30T14:44:59.359Z"
+        }
+      ],
+      "mappings": [
+        {
+          "location_id": 60003760,
+          "location_name": "Jita IV - Moon 4 - Caldari Navy Assembly Plant",
+          "hub_id": "hub-jita",
+          "updated_at": "2026-01-01T00:00:00Z"
+        },
+        {
+          "location_id": 60008494,
+          "location_name": "Amarr VIII (Oris) - Emperor Family Academy",
+          "hub_id": "hub-amarr",
+          "updated_at": "2026-01-01T00:00:00Z"
+        },
+        {
+          "location_id": 60011866,
+          "location_name": "Dodixie IX - Moon 20 - Federation Navy Assembly Plant",
+          "hub_id": "hub-dodixie",
+          "updated_at": "2026-01-01T00:00:00Z"
+        },
+        {
+          "location_id": 60004588,
+          "location_name": "Rens VI - Moon 8 - Brutor Tribe Treasury",
+          "hub_id": "hub-rens",
+          "updated_at": "2026-01-01T00:00:00Z"
+        },
+        {
+          "location_id": 60005686,
+          "location_name": "Hek VIII - Moon 12 - Boundless Creation Factory",
+          "hub_id": "hub-hek",
+          "updated_at": "2026-01-01T00:00:00Z"
+        },
+        {
+          "location_id": 60012345,
+          "location_name": "Perimeter - I-RED Commercial Complex",
+          "hub_id": "hub-jita",
+          "notes": "Mapping auto-découvert depuis transactions",
+          "updated_at": "2026-09-30T14:44:59.359Z"
+        },
+        {
+          "location_id": 60054321,
+          "location_name": "Sobeki III - Moon 2 - Core Complexion Inc. Factory",
+          "hub_id": "hub-auto-60054321",
+          "notes": "Mapping auto-découvert depuis transactions",
+          "updated_at": "2026-09-30T14:44:59.359Z"
+        }
+      ]
+    },
+    "roi": {
+      "allocations": [
+        {
+          "id": "fifo-201-101-1790779496489-0",
+          "character_id": 1002,
+          "buy_character_id": 1001,
+          "sell_character_id": 1002,
+          "sell_transaction_id": 201,
+          "buy_transaction_id": 101,
+          "type_id": 34,
+          "type_name": "Tritanium",
+          "quantity_allocated": 50000,
+          "unit_buy_price": 4.5,
+          "allocated_buy_cost": 225000,
+          "allocated_buy_fees": 0,
+          "allocated_sell_fees": 11700,
+          "buy_location_id": 60003760,
+          "buy_hub_id": "hub-jita",
+          "buy_hub_name": "Jita IV - Moon 4 - CNAP",
+          "sell_location_id": 60004588,
+          "sell_hub_id": "hub-rens",
+          "sell_hub_name": "Rens VI - Moon 8 - Brutor Tribe Treasury",
+          "reconciliation_mode": "FIFO_AUTOMATIC",
+          "created_at": "2026-09-30T14:44:56.489Z",
+          "updated_at": "2026-09-30T14:44:56.489Z",
+          "notes": "Rapprochement chronologique FIFO multi-personnages (Achat Perso #1001 -> Vente Perso #1002)",
+          "version": 1
+        }
+      ]
+    },
+    "assets": {
+      "assets": []
+    },
+    "sync": {
+      "states": []
+    }
+  }
+}

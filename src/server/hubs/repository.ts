@@ -1,4 +1,6 @@
-import { HubDefinition, HubLocationMapping } from './types';
+import { HubDefinition, HubLocationMapping } from './types.ts';
+import { StorageManager, DurableFileDatabaseAdapter } from '../storage/database.ts';
+import type { IDatabaseAdapter } from '../storage/types.ts';
 
 // Default EVE Online major trade hubs
 const DEFAULT_HUBS: HubDefinition[] = [
@@ -81,11 +83,39 @@ export class HubsRepository {
   private hubs = new Map<string, HubDefinition>();
   private mappings = new Map<number, HubLocationMapping>();
 
-  constructor() {
-    this.resetToDefaults();
+  constructor(private adapter: IDatabaseAdapter | null = null) {
+    this.resetToDefaults(false);
+    if (this.adapter) {
+      this.loadFromStorage();
+    }
   }
 
-  resetToDefaults(): void {
+  private loadFromStorage(): void {
+    if (this.adapter instanceof DurableFileDatabaseAdapter) {
+      const state = this.adapter.getState();
+      if (state?.data?.hubs && state.data.hubs.definitions.length > 0) {
+        this.restoreData({
+          hubs: state.data.hubs.definitions,
+          mappings: state.data.hubs.mappings,
+        }, false);
+      } else {
+        this.syncToStorage();
+      }
+    }
+  }
+
+  private syncToStorage(): void {
+    if (this.adapter instanceof DurableFileDatabaseAdapter) {
+      const state = this.adapter.getState();
+      state.data.hubs = {
+        definitions: Array.from(this.hubs.values()),
+        mappings: Array.from(this.mappings.values()),
+      };
+      this.adapter.persist();
+    }
+  }
+
+  resetToDefaults(sync = true): void {
     this.hubs.clear();
     for (const h of DEFAULT_HUBS) {
       this.hubs.set(h.id, { ...h });
@@ -94,6 +124,10 @@ export class HubsRepository {
     this.mappings.clear();
     for (const m of DEFAULT_MAPPINGS) {
       this.mappings.set(m.location_id, { ...m });
+    }
+
+    if (sync) {
+      this.syncToStorage();
     }
   }
 
@@ -107,20 +141,21 @@ export class HubsRepository {
 
   upsertHub(hub: HubDefinition): void {
     this.hubs.set(hub.id, { ...hub });
+    this.syncToStorage();
   }
 
   deleteHub(id: string): boolean {
     const hub = this.hubs.get(id);
     if (!hub || hub.is_system_default) {
-      return false; // Can not delete system defaults
+      return false;
     }
     this.hubs.delete(id);
-    // Unlink any mappings pointing to this hub
     for (const [locId, mapping] of this.mappings.entries()) {
       if (mapping.hub_id === id) {
         this.mappings.delete(locId);
       }
     }
+    this.syncToStorage();
     return true;
   }
 
@@ -134,10 +169,15 @@ export class HubsRepository {
 
   upsertMapping(mapping: HubLocationMapping): void {
     this.mappings.set(mapping.location_id, { ...mapping });
+    this.syncToStorage();
   }
 
   deleteMapping(locationId: number): boolean {
-    return this.mappings.delete(locationId);
+    const deleted = this.mappings.delete(locationId);
+    if (deleted) {
+      this.syncToStorage();
+    }
+    return deleted;
   }
 
   dumpData(): { hubs: HubDefinition[]; mappings: HubLocationMapping[] } {
@@ -147,7 +187,7 @@ export class HubsRepository {
     };
   }
 
-  restoreData(data: { hubs: HubDefinition[]; mappings: HubLocationMapping[] }): void {
+  restoreData(data: { hubs: HubDefinition[]; mappings: HubLocationMapping[] }, sync = true): void {
     this.hubs.clear();
     this.mappings.clear();
     for (const hub of data.hubs) {
@@ -156,7 +196,10 @@ export class HubsRepository {
     for (const mapping of data.mappings) {
       this.mappings.set(mapping.location_id, mapping);
     }
+    if (sync) {
+      this.syncToStorage();
+    }
   }
 }
 
-export const hubsRepository = new HubsRepository();
+export const hubsRepository = new HubsRepository(StorageManager.getInstance().getAdapter());

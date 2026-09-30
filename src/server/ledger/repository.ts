@@ -6,6 +6,8 @@ import type {
   LedgerSummary,
   LedgerFilterOptions,
 } from './types.ts';
+import { StorageManager, DurableFileDatabaseAdapter } from '../storage/database.ts';
+import type { IDatabaseAdapter } from '../storage/types.ts';
 
 export interface ILedgerRepository {
   saveTransactions(transactions: CharacterTransaction[]): { inserted: number; updated: number };
@@ -31,15 +33,42 @@ export interface ILedgerRepository {
   restoreData(data: { transactions: CharacterTransaction[]; journalEntries: CharacterWalletJournalEntry[] }): void;
 }
 
-export class InMemoryLedgerRepository implements ILedgerRepository {
-  // Map of composite key -> transaction
+export class PersistentLedgerRepository implements ILedgerRepository {
   private transactions: Map<string, CharacterTransaction> = new Map();
-  // Map of composite key -> journal entry
   private journalEntries: Map<string, CharacterWalletJournalEntry> = new Map();
 
-  /**
-   * Generates unique composite key ensuring strict character isolation
-   */
+  // Secondary indexes for sub-millisecond filtering on 50k+ items
+  private txByCharacter: Map<number, Set<string>> = new Map();
+  private txByType: Map<number, Set<string>> = new Map();
+  private txByLocation: Map<number, Set<string>> = new Map();
+  private jnByCharacter: Map<number, Set<string>> = new Map();
+
+  constructor(private adapter: IDatabaseAdapter | null = null) {
+    if (this.adapter) {
+      this.loadFromStorage();
+    }
+  }
+
+  private loadFromStorage(): void {
+    if (this.adapter instanceof DurableFileDatabaseAdapter) {
+      const state = this.adapter.getState();
+      if (state?.data?.ledger) {
+        this.restoreData(state.data.ledger, false);
+      }
+    }
+  }
+
+  private syncToStorage(): void {
+    if (this.adapter instanceof DurableFileDatabaseAdapter) {
+      const state = this.adapter.getState();
+      state.data.ledger = {
+        transactions: Array.from(this.transactions.values()),
+        journalEntries: Array.from(this.journalEntries.values()),
+      };
+      this.adapter.persist();
+    }
+  }
+
   private makeTxKey(characterId: number, transactionId: number): string {
     return `${characterId}:${transactionId}`;
   }
@@ -48,9 +77,40 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
     return `${characterId}:${journalId}`;
   }
 
-  /**
-   * Persists transactions idempotently. Re-importing identical transactions will not create duplicates.
-   */
+  private indexTransaction(key: string, tx: CharacterTransaction): void {
+    if (!this.txByCharacter.has(tx.characterId)) {
+      this.txByCharacter.set(tx.characterId, new Set());
+    }
+    this.txByCharacter.get(tx.characterId)!.add(key);
+
+    if (!this.txByType.has(tx.typeId)) {
+      this.txByType.set(tx.typeId, new Set());
+    }
+    this.txByType.get(tx.typeId)!.add(key);
+
+    if (!this.txByLocation.has(tx.locationId)) {
+      this.txByLocation.set(tx.locationId, new Set());
+    }
+    this.txByLocation.get(tx.locationId)!.add(key);
+  }
+
+  private unindexTransaction(key: string, tx: CharacterTransaction): void {
+    this.txByCharacter.get(tx.characterId)?.delete(key);
+    this.txByType.get(tx.typeId)?.delete(key);
+    this.txByLocation.get(tx.locationId)?.delete(key);
+  }
+
+  private indexJournal(key: string, jn: CharacterWalletJournalEntry): void {
+    if (!this.jnByCharacter.has(jn.characterId)) {
+      this.jnByCharacter.set(jn.characterId, new Set());
+    }
+    this.jnByCharacter.get(jn.characterId)!.add(key);
+  }
+
+  private unindexJournal(key: string, jn: CharacterWalletJournalEntry): void {
+    this.jnByCharacter.get(jn.characterId)?.delete(key);
+  }
+
   public saveTransactions(transactions: CharacterTransaction[]): { inserted: number; updated: number } {
     let inserted = 0;
     let updated = 0;
@@ -58,27 +118,27 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
     for (const tx of transactions) {
       const key = this.makeTxKey(tx.characterId, tx.transactionId);
       if (this.transactions.has(key)) {
-        // Update with fresh resolution data if available
         const existing = this.transactions.get(key)!;
-        this.transactions.set(key, {
+        this.unindexTransaction(key, existing);
+        const updatedTx = {
           ...existing,
           ...tx,
-          // Preserve first observation time
           observedAt: existing.observedAt,
-        });
+        };
+        this.transactions.set(key, updatedTx);
+        this.indexTransaction(key, updatedTx);
         updated++;
       } else {
         this.transactions.set(key, tx);
+        this.indexTransaction(key, tx);
         inserted++;
       }
     }
 
+    this.syncToStorage();
     return { inserted, updated };
   }
 
-  /**
-   * Returns single transaction by ID for a specific character enriched with tax and fees
-   */
   public getTransactionById(characterId: number, transactionId: number): CharacterTransaction | null {
     const key = this.makeTxKey(characterId, transactionId);
     const tx = this.transactions.get(key);
@@ -86,14 +146,6 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
     return this.enrichTransaction(tx);
   }
 
-  /**
-   * Directly resolves linked tax and broker fee journal entries for a given transaction.
-   * In EVE Online:
-   * 1. A sale transaction has `journalRefId` pointing to the `market_transaction` entry.
-   * 2. The sales tax paid to the SCC is recorded in a separate `transaction_tax` entry with negative amount.
-   *    In ESI, `transaction_tax` does not always populate `contextId` with the `transactionId`.
-   *    However, it has the exact same timestamp (or within +/- 3 seconds) and is in the same journal sequence.
-   */
   public getJournalEntriesForTransaction(
     characterId: number,
     transactionId: number,
@@ -108,9 +160,14 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
     let fallbackTax = 0;
     const entries: CharacterWalletJournalEntry[] = [];
 
-    // Pass 1: Direct ID matches (contextId === transactionId, contextId === journalRefId, or journalId === journalRefId)
-    for (const jn of this.journalEntries.values()) {
-      if (jn.characterId !== characterId) continue;
+    const charJnKeys = this.jnByCharacter.get(characterId);
+    if (!charJnKeys || charJnKeys.size === 0) {
+      return { tax: 0, brokerFee: 0, entries: [] };
+    }
+
+    for (const key of charJnKeys) {
+      const jn = this.journalEntries.get(key);
+      if (!jn) continue;
 
       const matchesTxId = jn.contextId !== undefined && Number(jn.contextId) === Number(transactionId);
       const matchesRefId = journalRefId !== undefined && Number(jn.journalId) === Number(journalRefId);
@@ -140,19 +197,16 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
       }
     }
 
-    // Pass 2: If this is a sale and tax wasn't matched via direct ID,
-    // correlate by journalRefId proximity or timestamp (Sales tax paid to the SCC)
     if (!dedicatedTaxFound && isBuy === false) {
       const txTime = txDate ? new Date(txDate).getTime() : 0;
-      for (const jn of this.journalEntries.values()) {
-        if (jn.characterId !== characterId) continue;
+      for (const key of charJnKeys) {
+        const jn = this.journalEntries.get(key);
+        if (!jn) continue;
+
         const isTaxRef = jn.refType === 'transaction_tax' || jn.refType === 'market_tax' || jn.refType === 'contract_sales_tax';
         if (!isTaxRef) continue;
 
-        // Proximity by journalId (adjacent entry in journal sequence)
         const isAdjacentId = journalRefId !== undefined && Math.abs(jn.journalId - journalRefId) <= 10;
-
-        // Proximity by date (within +/- 3 seconds)
         const jnTime = new Date(jn.date).getTime();
         const isTimeMatch = txTime > 0 && Math.abs(jnTime - txTime) <= 3000;
 
@@ -160,7 +214,6 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
           const taxAmt = jn.tax !== undefined && jn.tax > 0 ? jn.tax : Math.abs(jn.amount || 0);
           if (txTotalValue !== undefined && txTotalValue > 0) {
             const ratio = taxAmt / txTotalValue;
-            // Standard EVE Online sales tax rates range between 3.375% (Accounting V) and 8%
             if (ratio >= 0.02 && ratio <= 0.12) {
               tax += taxAmt;
               dedicatedTaxFound = true;
@@ -187,9 +240,6 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
     return { tax, brokerFee, entries };
   }
 
-  /**
-   * Enriches a transaction with resolved tax, brokerFee, and netValue
-   */
   public enrichTransaction(tx: CharacterTransaction): CharacterTransaction {
     const { tax, brokerFee } = this.getJournalEntriesForTransaction(
       tx.characterId,
@@ -211,22 +261,11 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
     };
   }
 
-  /**
-   * Returns total transaction count for a character
-   */
   public countTransactions(characterId: number): number {
-    let count = 0;
-    for (const tx of this.transactions.values()) {
-      if (tx.characterId === characterId) {
-        count++;
-      }
-    }
-    return count;
+    const set = this.txByCharacter.get(characterId);
+    return set ? set.size : 0;
   }
 
-  /**
-   * Retrieves filtered and paginated transactions with full summaries
-   */
   public getTransactions(filters: LedgerQueryFilters): PaginatedLedgerResult<CharacterTransaction> {
     const {
       characterId,
@@ -242,32 +281,35 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
       pageSize = 50,
     } = filters;
 
-    // 1. Filter by character and criteria
+    let candidateKeys: Iterable<string>;
+    if (characterId !== undefined) {
+      candidateKeys = this.txByCharacter.get(characterId) || [];
+    } else if (typeId !== undefined) {
+      candidateKeys = this.txByType.get(typeId) || [];
+    } else if (locationId !== undefined) {
+      candidateKeys = this.txByLocation.get(locationId) || [];
+    } else {
+      candidateKeys = this.transactions.keys();
+    }
+
     const matched: CharacterTransaction[] = [];
     const searchLower = search ? search.trim().toLowerCase() : '';
     const fromTime = fromDate ? new Date(fromDate).getTime() : -Infinity;
     const toTime = toDate ? new Date(toDate).getTime() : Infinity;
 
-    for (const tx of this.transactions.values()) {
-      if (characterId !== undefined && tx.characterId !== characterId) {
-        continue;
-      }
+    for (const key of candidateKeys) {
+      const tx = this.transactions.get(key);
+      if (!tx) continue;
 
-      // Filter by type (ALL, SELL, BUY)
+      if (characterId !== undefined && tx.characterId !== characterId) continue;
       if (type === 'SELL' && tx.isBuy) continue;
       if (type === 'BUY' && !tx.isBuy) continue;
-
-      // Filter by typeId
       if (typeId !== undefined && tx.typeId !== typeId) continue;
-
-      // Filter by locationId
       if (locationId !== undefined && tx.locationId !== locationId) continue;
 
-      // Filter by date range
       const txTime = new Date(tx.date).getTime();
       if (txTime < fromTime || txTime > toTime) continue;
 
-      // Filter by search string (typeName, clientName, locationName, transactionId)
       if (searchLower) {
         const matchesName = tx.typeName?.toLowerCase().includes(searchLower);
         const matchesLocation = tx.locationName?.toLowerCase().includes(searchLower);
@@ -283,7 +325,6 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
       matched.push(tx);
     }
 
-    // 2. Sort
     matched.sort((a, b) => {
       let comparison = 0;
       switch (sortBy) {
@@ -308,7 +349,6 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
       return sortOrder === 'asc' ? comparison : -comparison;
     });
 
-    // 3. Paginate & Enrich
     const total = matched.length;
     const validPage = Math.max(1, page);
     const validPageSize = Math.max(1, Math.min(500, pageSize));
@@ -316,7 +356,6 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
     const offset = (validPage - 1) * validPageSize;
     const paginatedItems = matched.slice(offset, offset + validPageSize).map((tx) => this.enrichTransaction(tx));
 
-    // 4. Calculate Summary
     const summary = this.getSummary(characterId);
 
     return {
@@ -332,9 +371,6 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
     };
   }
 
-  /**
-   * Persists wallet journal entries idempotently
-   */
   public saveJournalEntries(entries: CharacterWalletJournalEntry[]): { inserted: number; updated: number } {
     let inserted = 0;
     let updated = 0;
@@ -346,31 +382,34 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
         updated++;
       } else {
         this.journalEntries.set(key, entry);
+        this.indexJournal(key, entry);
         inserted++;
       }
     }
 
+    this.syncToStorage();
     return { inserted, updated };
   }
 
-  /**
-   * Retrieves paginated journal entries for a character
-   */
   public getJournalEntries(
     characterId?: number,
     page = 1,
     pageSize = 50
   ): { items: CharacterWalletJournalEntry[]; total: number } {
-    const matched: CharacterWalletJournalEntry[] = [];
+    let candidateKeys: Iterable<string>;
+    if (characterId !== undefined) {
+      candidateKeys = this.jnByCharacter.get(characterId) || [];
+    } else {
+      candidateKeys = this.journalEntries.keys();
+    }
 
-    for (const entry of this.journalEntries.values()) {
-      if (characterId !== undefined && entry.characterId !== characterId) {
-        continue;
-      }
+    const matched: CharacterWalletJournalEntry[] = [];
+    for (const key of candidateKeys) {
+      const entry = this.journalEntries.get(key);
+      if (!entry) continue;
       matched.push(entry);
     }
 
-    // Sort by date desc
     matched.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     const total = matched.length;
@@ -382,20 +421,23 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
     return { items, total };
   }
 
-  /**
-   * Returns single journal entry
-   */
   public getJournalEntryById(characterId: number, journalId: number): CharacterWalletJournalEntry | null {
     const key = this.makeJournalKey(characterId, journalId);
     return this.journalEntries.get(key) || null;
   }
 
-  /**
-   * Retrieves all transactions without pagination limits, optionally filtered by character or list of characters
-   */
   public getAllTransactions(characterId?: number, characterIds?: number[]): CharacterTransaction[] {
     const result: CharacterTransaction[] = [];
     const filterSet = characterIds && characterIds.length > 0 ? new Set(characterIds) : null;
+
+    if (characterId !== undefined && !filterSet) {
+      const keys = this.txByCharacter.get(characterId) || [];
+      for (const key of keys) {
+        const tx = this.transactions.get(key);
+        if (tx) result.push(this.enrichTransaction(tx));
+      }
+      return result;
+    }
 
     for (const tx of this.transactions.values()) {
       if (filterSet) {
@@ -409,9 +451,6 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
     return result;
   }
 
-  /**
-   * Computes financial summaries without assuming unproven costs, verifying against both transactions and journal
-   */
   public getSummary(characterId?: number, characterIds?: number[]): LedgerSummary {
     let totalTransactionsCount = 0;
     let sellTransactionsCount = 0;
@@ -427,12 +466,16 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
 
     const filterSet = characterIds && characterIds.length > 0 ? new Set(characterIds) : null;
 
-    for (const tx of this.transactions.values()) {
-      if (filterSet) {
-        if (!filterSet.has(tx.characterId)) continue;
-      } else if (characterId !== undefined && tx.characterId !== characterId) {
-        continue;
-      }
+    let candidateTxs: Iterable<CharacterTransaction>;
+    if (characterId !== undefined && !filterSet) {
+      const keys = this.txByCharacter.get(characterId) || [];
+      candidateTxs = Array.from(keys).map((k) => this.transactions.get(k)!).filter(Boolean);
+    } else {
+      candidateTxs = this.transactions.values();
+    }
+
+    for (const tx of candidateTxs) {
+      if (filterSet && !filterSet.has(tx.characterId)) continue;
 
       totalTransactionsCount++;
       distinctTypes.add(tx.typeId);
@@ -453,15 +496,18 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
       }
     }
 
-    // Direct check of wallet journal to ensure no unlinked taxes or broker fees are omitted
     let journalTaxesTotal = 0;
     let journalBrokerFeesTotal = 0;
-    for (const jn of this.journalEntries.values()) {
-      if (filterSet) {
-        if (!filterSet.has(jn.characterId)) continue;
-      } else if (characterId !== undefined && jn.characterId !== characterId) {
-        continue;
-      }
+    let candidateJns: Iterable<CharacterWalletJournalEntry>;
+    if (characterId !== undefined && !filterSet) {
+      const keys = this.jnByCharacter.get(characterId) || [];
+      candidateJns = Array.from(keys).map((k) => this.journalEntries.get(k)!).filter(Boolean);
+    } else {
+      candidateJns = this.journalEntries.values();
+    }
+
+    for (const jn of candidateJns) {
+      if (filterSet && !filterSet.has(jn.characterId)) continue;
 
       const isTaxRef = jn.refType === 'transaction_tax' || jn.refType === 'market_tax' || jn.refType === 'contract_sales_tax';
       const isBrokerRef = jn.refType === 'brokers_fee' || jn.refType === 'broker_fee' || jn.refType === 'contract_brokers_fee';
@@ -474,7 +520,6 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
       }
     }
 
-    // Ensure taxes and broker fees reflect full verified journal activity
     totalTaxesIsk = Math.max(totalTaxesIsk, journalTaxesTotal);
     totalBrokerFeesIsk = Math.max(totalBrokerFeesIsk, journalBrokerFeesTotal);
 
@@ -505,17 +550,15 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
     };
   }
 
-  /**
-   * Retrieves distinct filter options (items and locations) available in character's dataset
-   */
   public getFilterOptions(characterId: number): LedgerFilterOptions {
     const typeMap = new Map<number, { name: string; count: number }>();
     const locationMap = new Map<number, { name: string; count: number }>();
 
-    for (const tx of this.transactions.values()) {
-      if (tx.characterId !== characterId) continue;
+    const keys = this.txByCharacter.get(characterId) || [];
+    for (const key of keys) {
+      const tx = this.transactions.get(key);
+      if (!tx) continue;
 
-      // Track type
       const currentType = typeMap.get(tx.typeId) || {
         name: tx.typeName || `Item #${tx.typeId}`,
         count: 0,
@@ -526,7 +569,6 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
       }
       typeMap.set(tx.typeId, currentType);
 
-      // Track location
       const currentLocation = locationMap.get(tx.locationId) || {
         name: tx.locationName || `Location #${tx.locationId}`,
         count: 0,
@@ -553,33 +595,44 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
     return { types, locations };
   }
 
-  /**
-   * Clears all transactions and journal entries
-   */
   public reset(): void {
     this.transactions.clear();
     this.journalEntries.clear();
+    this.txByCharacter.clear();
+    this.txByType.clear();
+    this.txByLocation.clear();
+    this.jnByCharacter.clear();
+    this.syncToStorage();
   }
 
-  /**
-   * Purges all data for a given character (e.g. on character reset / logout)
-   */
   public clearCharacter(characterId: number): void {
-    for (const [key, tx] of this.transactions.entries()) {
-      if (tx.characterId === characterId) {
-        this.transactions.delete(key);
+    const txKeys = this.txByCharacter.get(characterId);
+    if (txKeys) {
+      for (const key of Array.from(txKeys)) {
+        const tx = this.transactions.get(key);
+        if (tx) {
+          this.unindexTransaction(key, tx);
+          this.transactions.delete(key);
+        }
       }
+      this.txByCharacter.delete(characterId);
     }
-    for (const [key, jn] of this.journalEntries.entries()) {
-      if (jn.characterId === characterId) {
-        this.journalEntries.delete(key);
+
+    const jnKeys = this.jnByCharacter.get(characterId);
+    if (jnKeys) {
+      for (const key of Array.from(jnKeys)) {
+        const jn = this.journalEntries.get(key);
+        if (jn) {
+          this.unindexJournal(key, jn);
+          this.journalEntries.delete(key);
+        }
       }
+      this.jnByCharacter.delete(characterId);
     }
+
+    this.syncToStorage();
   }
 
-  /**
-   * Dumps entire state for backup
-   */
   public dumpData(): { transactions: CharacterTransaction[]; journalEntries: CharacterWalletJournalEntry[] } {
     return {
       transactions: Array.from(this.transactions.values()),
@@ -587,20 +640,34 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
     };
   }
 
-  /**
-   * Restores data from backup atomically
-   */
-  public restoreData(data: { transactions: CharacterTransaction[]; journalEntries: CharacterWalletJournalEntry[] }): void {
+  public restoreData(
+    data: { transactions: CharacterTransaction[]; journalEntries: CharacterWalletJournalEntry[] },
+    sync = true
+  ): void {
     this.transactions.clear();
     this.journalEntries.clear();
+    this.txByCharacter.clear();
+    this.txByType.clear();
+    this.txByLocation.clear();
+    this.jnByCharacter.clear();
+
     for (const tx of data.transactions) {
-      this.transactions.set(this.makeTxKey(tx.characterId, tx.transactionId), tx);
+      const key = this.makeTxKey(tx.characterId, tx.transactionId);
+      this.transactions.set(key, tx);
+      this.indexTransaction(key, tx);
     }
     for (const jn of data.journalEntries) {
-      this.journalEntries.set(this.makeJournalKey(jn.characterId, jn.journalId), jn);
+      const key = this.makeJournalKey(jn.characterId, jn.journalId);
+      this.journalEntries.set(key, jn);
+      this.indexJournal(key, jn);
+    }
+
+    if (sync) {
+      this.syncToStorage();
     }
   }
 }
 
-export const defaultLedgerRepository = new InMemoryLedgerRepository();
+export class InMemoryLedgerRepository extends PersistentLedgerRepository {}
+export const defaultLedgerRepository = new PersistentLedgerRepository(StorageManager.getInstance().getAdapter());
 export const ledgerRepository = defaultLedgerRepository;

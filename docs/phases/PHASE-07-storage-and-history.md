@@ -1,6 +1,6 @@
 # PHASE-07 — Durabilité du stockage et historique fiable
 
-**Type :** socle technique & persistance · **Dépendances :** 00–06, H01–H02 · **État :** Planifiée
+**Type :** socle technique & persistance · **Dépendances :** 00–06, H01–H02 · **État :** Terminé
 
 ---
 
@@ -13,7 +13,7 @@
 
 ## 2. Dépendances exactes
 
-- Modules amont : `src/server/storage/backupService.ts`, `src/server/sync/repository.ts`, `src/server/ledger/repository.ts`, `src/server/orders/repository.ts`, `src/server/roi/repository.ts`, `src/server/assets/repository.ts`.
+- Modules amont : `src/server/storage/backupService.ts`, `src/server/storage/database.ts`, `src/server/storage/schema.ts`, `src/server/sync/repository.ts`, `src/server/ledger/repository.ts`, `src/server/orders/repository.ts`, `src/server/roi/repository.ts`, `src/server/assets/repository.ts`.
 - Contrats : `docs/DOMAIN_CONTRACTS.md`, `docs/ARCHITECTURE.md`.
 
 ---
@@ -55,11 +55,11 @@
 
 ## 6. Critères d'acceptation mesurables
 
-- [ ] Toutes les données (transactions, journal, ordres, actifs, allocations, hubs) survivent à un redémarrage complet du processus serveur sans nécessiter de restauration manuelle.
-- [ ] L'import d'une sauvegarde `AppBackupSnapshot` v1 restaure fidèlement 100% des enregistrements et allocations.
-- [ ] Une synchronisation ESI répétée 5 fois sur le même historique n'ajoute aucun doublon et ne modifie aucun checksum d'intégrité.
-- [ ] Temps de requête sur 50 000 transactions inférieur à 50 ms pour les filtres usuels (par personnage, type, date).
-- [ ] Suite de tests complète (`vitest run`) au vert, linting et typecheck stricts validés.
+- [x] Toutes les données (transactions, journal, ordres, actifs, allocations, hubs) survivent à un redémarrage complet du processus serveur sans nécessiter de restauration manuelle.
+- [x] L'import d'une sauvegarde `AppBackupSnapshot` v1 restaure fidèlement 100% des enregistrements et allocations.
+- [x] Une synchronisation ESI répétée 5 fois sur le même historique n'ajoute aucun doublon et ne modifie aucun checksum d'intégrité.
+- [x] Temps de requête sur 50 000 transactions inférieur à 50 ms pour les filtres usuels (par personnage, type, date).
+- [x] Suite de tests complète (`vitest run`) au vert, linting et typecheck stricts validés.
 
 ---
 

@@ -6,17 +6,16 @@ import type {
   CreateRestockItemDto,
   UpdateRestockItemDto,
 } from './types.ts';
+import { StorageManager, DurableFileDatabaseAdapter } from '../storage/database.ts';
+import type { IDatabaseAdapter } from '../storage/types.ts';
 
 export interface IOrdersRepository {
-  // Orders
   saveOrderSnapshots(snapshots: CharacterOrderSnapshot[]): { inserted: number; updated: number };
   getOrders(filters: OrderQueryFilters): { items: CharacterOrderSnapshot[]; total: number; page: number; pageSize: number; totalPages: number };
   getOrderById(characterId: number, orderId: number): CharacterOrderSnapshot | null;
   getOrdersForCharacter(characterId: number): CharacterOrderSnapshot[];
   getSummary(characterId: number): OrderSummaryMetrics;
   markMissingOrdersAsDisappeared(characterId: number, currentOrderIds: Set<number>, observedAt: number): number;
-  
-  // Restock List Items (Local Projections)
   getRestockItems(characterId: number): RestockItem[];
   getRestockItemById(characterId: number, itemId: string): RestockItem | null;
   createRestockItem(dto: CreateRestockItemDto): RestockItem;
@@ -27,9 +26,35 @@ export interface IOrdersRepository {
   restoreData(data: { snapshots: CharacterOrderSnapshot[]; restockItems: RestockItem[] }): void;
 }
 
-export class InMemoryOrdersRepository implements IOrdersRepository {
+export class PersistentOrdersRepository implements IOrdersRepository {
   private orders: Map<string, CharacterOrderSnapshot> = new Map();
   private restockItems: Map<string, RestockItem> = new Map();
+
+  constructor(private adapter: IDatabaseAdapter | null = null) {
+    if (this.adapter) {
+      this.loadFromStorage();
+    }
+  }
+
+  private loadFromStorage(): void {
+    if (this.adapter instanceof DurableFileDatabaseAdapter) {
+      const state = this.adapter.getState();
+      if (state?.data?.orders) {
+        this.restoreData(state.data.orders, false);
+      }
+    }
+  }
+
+  private syncToStorage(): void {
+    if (this.adapter instanceof DurableFileDatabaseAdapter) {
+      const state = this.adapter.getState();
+      state.data.orders = {
+        snapshots: Array.from(this.orders.values()),
+        restockItems: Array.from(this.restockItems.values()),
+      };
+      this.adapter.persist();
+    }
+  }
 
   private makeOrderKey(characterId: number, orderId: number): string {
     return `${characterId}:${orderId}`;
@@ -56,6 +81,7 @@ export class InMemoryOrdersRepository implements IOrdersRepository {
       }
     }
 
+    this.syncToStorage();
     return { inserted, updated };
   }
 
@@ -98,6 +124,9 @@ export class InMemoryOrdersRepository implements IOrdersRepository {
         }
       }
     }
+    if (changed > 0) {
+      this.syncToStorage();
+    }
     return changed;
   }
 
@@ -127,7 +156,6 @@ export class InMemoryOrdersRepository implements IOrdersRepository {
     for (const order of this.orders.values()) {
       if (order.characterId !== characterId) continue;
 
-      // Filter by state
       if (state && state !== 'ALL') {
         if (state === 'ACTIVE_ALL') {
           if (order.state !== 'ACTIVE' && order.state !== 'PARTIALLY_FILLED') continue;
@@ -136,16 +164,10 @@ export class InMemoryOrdersRepository implements IOrdersRepository {
         }
       }
 
-      // Filter by isBuyOrder
       if (isBuyOrder !== undefined && order.isBuyOrder !== isBuyOrder) continue;
-
-      // Filter by typeId
       if (typeId !== undefined && order.typeId !== typeId) continue;
-
-      // Filter by locationId
       if (locationId !== undefined && order.locationId !== locationId) continue;
 
-      // Filter by search
       if (searchLower) {
         const matchName = order.typeName?.toLowerCase().includes(searchLower);
         const matchLoc = order.locationName?.toLowerCase().includes(searchLower);
@@ -156,7 +178,6 @@ export class InMemoryOrdersRepository implements IOrdersRepository {
       matched.push(order);
     }
 
-    // Sort
     matched.sort((a, b) => {
       let comp = 0;
       switch (sortBy) {
@@ -247,8 +268,6 @@ export class InMemoryOrdersRepository implements IOrdersRepository {
     };
   }
 
-  // --- Restock List Local Storage ---
-
   public getRestockItems(characterId: number): RestockItem[] {
     const list: RestockItem[] = [];
     for (const item of this.restockItems.values()) {
@@ -292,6 +311,7 @@ export class InMemoryOrdersRepository implements IOrdersRepository {
     };
 
     this.restockItems.set(id, item);
+    this.syncToStorage();
     return item;
   }
 
@@ -310,13 +330,18 @@ export class InMemoryOrdersRepository implements IOrdersRepository {
     };
 
     this.restockItems.set(itemId, updated);
+    this.syncToStorage();
     return updated;
   }
 
   public deleteRestockItem(characterId: number, itemId: string): boolean {
     const existing = this.getRestockItemById(characterId, itemId);
     if (!existing) return false;
-    return this.restockItems.delete(itemId);
+    const deleted = this.restockItems.delete(itemId);
+    if (deleted) {
+      this.syncToStorage();
+    }
+    return deleted;
   }
 
   public clearCharacter(characterId: number): void {
@@ -330,6 +355,7 @@ export class InMemoryOrdersRepository implements IOrdersRepository {
         this.restockItems.delete(key);
       }
     }
+    this.syncToStorage();
   }
 
   public dumpData(): { snapshots: CharacterOrderSnapshot[]; restockItems: RestockItem[] } {
@@ -339,7 +365,10 @@ export class InMemoryOrdersRepository implements IOrdersRepository {
     };
   }
 
-  public restoreData(data: { snapshots: CharacterOrderSnapshot[]; restockItems: RestockItem[] }): void {
+  public restoreData(
+    data: { snapshots: CharacterOrderSnapshot[]; restockItems: RestockItem[] },
+    sync = true
+  ): void {
     this.orders.clear();
     this.restockItems.clear();
     for (const snap of data.snapshots) {
@@ -348,7 +377,12 @@ export class InMemoryOrdersRepository implements IOrdersRepository {
     for (const item of data.restockItems) {
       this.restockItems.set(item.id, item);
     }
+    if (sync) {
+      this.syncToStorage();
+    }
   }
 }
 
-export const defaultOrdersRepository = new InMemoryOrdersRepository();
+export class InMemoryOrdersRepository extends PersistentOrdersRepository {}
+export const defaultOrdersRepository = new PersistentOrdersRepository(StorageManager.getInstance().getAdapter());
+export const ordersRepository = defaultOrdersRepository;

@@ -38,7 +38,7 @@ export interface AppBackupSnapshot {
 
 export interface DataIntegrityIssue {
   level: 'ERROR' | 'WARNING';
-  category: 'LEDGER' | 'ORDERS' | 'ROI' | 'ASSETS' | 'HUBS' | 'SYNC';
+  category: 'LEDGER' | 'ORDERS' | 'ROI' | 'ASSETS' | 'HUBS' | 'SYNC' | 'STORAGE';
   message: string;
   entityId?: string | number;
 }
@@ -58,4 +58,36 @@ export interface DataIntegrityReport {
     issuesCount: number;
   };
   issues: DataIntegrityIssue[];
+}
+
+export interface SchemaMigration {
+  version: number;
+  name: string;
+  upSql: string;
+  downSql?: string;
+}
+
+export interface QueryResult<T = Record<string, unknown>> {
+  rows: T[];
+  rowCount: number;
+}
+
+export interface IDatabaseAdapter {
+  init(): Promise<void> | void;
+  close(): Promise<void> | void;
+  query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<QueryResult<T>> | QueryResult<T>;
+  execute(sql: string, params?: unknown[]): Promise<number> | number;
+  transaction<T>(fn: (adapter: IDatabaseAdapter) => Promise<T> | T): Promise<T> | T;
+  getAppliedMigrationVersions(): Promise<number[]> | number[];
+  recordMigration(version: number, name?: string): Promise<void> | void;
+  clearCharacterData(characterId: number): Promise<void> | void;
+  isHealthy(): Promise<boolean> | boolean;
+}
+
+export type StorageEngineType = 'postgres' | 'file' | 'memory';
+
+export interface StorageConfig {
+  engine: StorageEngineType;
+  databaseUrl?: string;
+  storagePath?: string;
 }

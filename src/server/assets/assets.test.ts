@@ -70,7 +70,7 @@ describe('ESI Assets Module (Character & Corporation Inventory Stock)', () => {
       const res = repo.getAssets({ characterId: 1001 });
       expect(res.total).toBe(2);
       expect(res.items.length).toBe(2);
-      expect(res.items.every((a) => a.characterId === 1001)).toBe(true);
+      expect(res.items.every((a: CharacterAsset) => a.characterId === 1001)).toBe(true);
     });
 
     it('filters assets by typeId and locationId', () => {
@@ -98,8 +98,8 @@ describe('ESI Assets Module (Character & Corporation Inventory Stock)', () => {
       expect(breakdown.typeId).toBe(34);
       expect(breakdown.totalQuantity).toBe(200000);
       expect(breakdown.locations.length).toBe(2);
-      expect(breakdown.locations.find((l) => l.locationId === 60003760)?.quantity).toBe(150000);
-      expect(breakdown.locations.find((l) => l.locationId === 60008494)?.quantity).toBe(50000);
+      expect(breakdown.locations.find((l: { locationId: number }) => l.locationId === 60003760)?.quantity).toBe(150000);
+      expect(breakdown.locations.find((l: { locationId: number }) => l.locationId === 60008494)?.quantity).toBe(50000);
     });
 
     it('generates accurate summary metrics', () => {

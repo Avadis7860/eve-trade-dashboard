@@ -1,4 +1,6 @@
 import type { SyncState, SyncResourceType, FullCharacterSyncStatus } from './types.ts';
+import { StorageManager, DurableFileDatabaseAdapter } from '../storage/database.ts';
+import type { IDatabaseAdapter } from '../storage/types.ts';
 
 export interface ISyncRepository {
   getSyncState(characterId: number, resource: SyncResourceType): SyncState;
@@ -9,8 +11,33 @@ export interface ISyncRepository {
   restoreData(data: { states: SyncState[] }): void;
 }
 
-export class InMemorySyncRepository implements ISyncRepository {
+export class PersistentSyncRepository implements ISyncRepository {
   private states: Map<string, SyncState> = new Map();
+
+  constructor(private adapter: IDatabaseAdapter | null = null) {
+    if (this.adapter) {
+      this.loadFromStorage();
+    }
+  }
+
+  private loadFromStorage(): void {
+    if (this.adapter instanceof DurableFileDatabaseAdapter) {
+      const state = this.adapter.getState();
+      if (state?.data?.sync) {
+        this.restoreData(state.data.sync, false);
+      }
+    }
+  }
+
+  private syncToStorage(): void {
+    if (this.adapter instanceof DurableFileDatabaseAdapter) {
+      const state = this.adapter.getState();
+      state.data.sync = {
+        states: Array.from(this.states.values()),
+      };
+      this.adapter.persist();
+    }
+  }
 
   private makeKey(characterId: number, resource: SyncResourceType): string {
     return `${characterId}:${resource}`;
@@ -33,6 +60,7 @@ export class InMemorySyncRepository implements ISyncRepository {
     };
 
     this.states.set(key, defaultState);
+    this.syncToStorage();
     return defaultState;
   }
 
@@ -50,6 +78,7 @@ export class InMemorySyncRepository implements ISyncRepository {
       asOf: Date.now(),
     };
     this.states.set(this.makeKey(characterId, resource), updated);
+    this.syncToStorage();
     return updated;
   }
 
@@ -58,7 +87,6 @@ export class InMemorySyncRepository implements ISyncRepository {
     const journal = this.getSyncState(characterId, 'wallet_journal');
     const orders = this.getSyncState(characterId, 'character_orders');
 
-    // Freshness check (e.g. fresh if synced in last 10 minutes)
     const TEN_MINUTES_MS = 10 * 60 * 1000;
     const lastCompleted = Math.max(
       transactions.lastSyncCompletedAt || 0,
@@ -83,6 +111,7 @@ export class InMemorySyncRepository implements ISyncRepository {
         this.states.delete(key);
       }
     }
+    this.syncToStorage();
   }
 
   public dumpData(): { states: SyncState[] } {
@@ -91,12 +120,16 @@ export class InMemorySyncRepository implements ISyncRepository {
     };
   }
 
-  public restoreData(data: { states: SyncState[] }): void {
+  public restoreData(data: { states: SyncState[] }, sync = true): void {
     this.states.clear();
     for (const s of data.states) {
       this.states.set(this.makeKey(s.characterId, s.resource), s);
     }
+    if (sync) {
+      this.syncToStorage();
+    }
   }
 }
 
-export const defaultSyncRepository = new InMemorySyncRepository();
+export class InMemorySyncRepository extends PersistentSyncRepository {}
+export const defaultSyncRepository = new PersistentSyncRepository(StorageManager.getInstance().getAdapter());

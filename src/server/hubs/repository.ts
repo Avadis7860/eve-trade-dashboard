@@ -139,24 +139,6 @@ export class HubsRepository {
   deleteMapping(locationId: number): boolean {
     return this.mappings.delete(locationId);
   }
-
-  dumpData(): { hubs: HubDefinition[]; mappings: HubLocationMapping[] } {
-    return {
-      hubs: Array.from(this.hubs.values()),
-      mappings: Array.from(this.mappings.values()),
-    };
-  }
-
-  restoreData(data: { hubs: HubDefinition[]; mappings: HubLocationMapping[] }): void {
-    this.hubs.clear();
-    this.mappings.clear();
-    for (const hub of data.hubs) {
-      this.hubs.set(hub.id, hub);
-    }
-    for (const mapping of data.mappings) {
-      this.mappings.set(mapping.location_id, mapping);
-    }
-  }
 }
 
 export const hubsRepository = new HubsRepository();

@@ -13,8 +13,6 @@ export interface IAssetsRepository {
   getStockBreakdown(typeId: number, characterIds?: number[]): AssetStockCheck;
   getSummary(characterId?: number, characterIds?: number[]): AssetSummaryMetrics;
   clearAssets(characterId: number): void;
-  dumpData(): { assets: CharacterAsset[] };
-  restoreData(data: { assets: CharacterAsset[] }): void;
 }
 
 export class InMemoryAssetsRepository implements IAssetsRepository {
@@ -205,19 +203,6 @@ export class InMemoryAssetsRepository implements IAssetsRepository {
       if (asset.characterId === characterId) {
         this.assets.delete(key);
       }
-    }
-  }
-
-  public dumpData(): { assets: CharacterAsset[] } {
-    return {
-      assets: Array.from(this.assets.values()),
-    };
-  }
-
-  public restoreData(data: { assets: CharacterAsset[] }): void {
-    this.assets.clear();
-    for (const asset of data.assets) {
-      this.assets.set(asset.id, asset);
     }
   }
 }

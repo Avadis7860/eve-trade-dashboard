@@ -23,8 +23,6 @@ export interface IOrdersRepository {
   updateRestockItem(characterId: number, itemId: string, updates: UpdateRestockItemDto): RestockItem | null;
   deleteRestockItem(characterId: number, itemId: string): boolean;
   clearCharacter(characterId: number): void;
-  dumpData(): { snapshots: CharacterOrderSnapshot[]; restockItems: RestockItem[] };
-  restoreData(data: { snapshots: CharacterOrderSnapshot[]; restockItems: RestockItem[] }): void;
 }
 
 export class InMemoryOrdersRepository implements IOrdersRepository {
@@ -329,24 +327,6 @@ export class InMemoryOrdersRepository implements IOrdersRepository {
       if (item.characterId === characterId) {
         this.restockItems.delete(key);
       }
-    }
-  }
-
-  public dumpData(): { snapshots: CharacterOrderSnapshot[]; restockItems: RestockItem[] } {
-    return {
-      snapshots: Array.from(this.orders.values()),
-      restockItems: Array.from(this.restockItems.values()),
-    };
-  }
-
-  public restoreData(data: { snapshots: CharacterOrderSnapshot[]; restockItems: RestockItem[] }): void {
-    this.orders.clear();
-    this.restockItems.clear();
-    for (const snap of data.snapshots) {
-      this.orders.set(this.makeOrderKey(snap.characterId, snap.orderId), snap);
-    }
-    for (const item of data.restockItems) {
-      this.restockItems.set(item.id, item);
     }
   }
 }

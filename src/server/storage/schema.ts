@@ -1,6 +1,6 @@
 import type { SchemaMigration } from './types.ts';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const INITIAL_MIGRATION_SQL = `
 -- Schema Migrations Table
@@ -204,7 +204,9 @@ CREATE TABLE IF NOT EXISTS character_assets (
   location_type TEXT NOT NULL,
   location_flag TEXT NOT NULL,
   is_singleton BOOLEAN NOT NULL,
-  is_blueprint_copy BOOLEAN,
+  is_corp_asset BOOLEAN NOT NULL DEFAULT FALSE,
+  corporation_id BIGINT,
+  source TEXT NOT NULL DEFAULT 'esi',
   observed_at BIGINT NOT NULL
 );
 
@@ -261,6 +263,14 @@ export const MIGRATIONS: SchemaMigration[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_opening_char ON opening_balances (character_id);
       CREATE INDEX IF NOT EXISTS idx_opening_type ON opening_balances (type_id);
+    `,
+  },
+  {
+    version: 3,
+    name: '003_relational_performance_indexes',
+    upSql: `
+      CREATE INDEX IF NOT EXISTS idx_alloc_sell_buy ON explicit_cost_allocations (sell_transaction_id, buy_transaction_id);
+      CREATE INDEX IF NOT EXISTS idx_tx_char_date_desc ON transactions (character_id, date DESC);
     `,
   },
 ];

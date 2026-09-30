@@ -434,7 +434,7 @@ export default function App() {
   // Orders State
   const [orders, setOrders] = useState<CharacterOrderSnapshot[]>([]);
   const [orderSummary, setOrderSummary] = useState<OrderSummaryMetrics | null>(null);
-  const [orderStateFilter, setOrderStateFilter] = useState<string>('ALL');
+  const [orderStateFilter, setOrderStateFilter] = useState<OrderLifecycleState | 'ALL'>('ALL');
   const [ordersPage, setOrdersPage] = useState(1);
   const [ordersTotalPages, setOrdersTotalPages] = useState(1);
   const [ordersTotalCount, setOrdersTotalCount] = useState(0);
@@ -1441,12 +1441,12 @@ export default function App() {
                 ordersTotalPages={ordersTotalPages}
                 ordersTotalCount={ordersTotalCount}
                 iskDisplayMode={preferences.iskDisplayMode}
-                onOrderStateFilterChange={(state) => { setOrderStateFilter(state); setOrdersPage(1); }}
-                onOrdersSearchChange={(search) => { setOrdersSearch(search); setOrdersPage(1); }}
+                onOrderStateFilterChange={(state: OrderLifecycleState | 'ALL') => { setOrderStateFilter(state); setOrdersPage(1); }}
+                onOrdersSearchChange={(search: string) => { setOrdersSearch(search); setOrdersPage(1); }}
                 onOrdersPageChange={setOrdersPage}
                 onSelectOrder={setSelectedOrder}
                 onQuickAddRestock={handleQuickAddRestock}
-                onOpenProduct360={(typeId) => setSelectedProduct360TypeId(typeId)}
+                onOpenProduct360={(typeId: number) => setSelectedProduct360TypeId(typeId)}
               />
             )}
 

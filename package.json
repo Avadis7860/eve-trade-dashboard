@@ -9,6 +9,7 @@
     "lint": "eslint src/ server.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "bench:baseline": "tsx scripts/baseline-bench.ts",
     "start": "NODE_ENV=production tsx server.ts"
   },
   "dependencies": {

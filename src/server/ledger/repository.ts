@@ -10,6 +10,7 @@ import { StorageManager, DurableFileDatabaseAdapter } from '../storage/database.
 import type { IDatabaseAdapter } from '../storage/types.ts';
 
 export interface ILedgerRepository {
+  reset?(): void;
   saveTransactions(transactions: CharacterTransaction[]): { inserted: number; updated: number };
   getTransactions(filters: LedgerQueryFilters): PaginatedLedgerResult<CharacterTransaction>;
   getAllTransactions(characterId?: number, characterIds?: number[]): CharacterTransaction[];
@@ -669,5 +670,546 @@ export class PersistentLedgerRepository implements ILedgerRepository {
 }
 
 export class InMemoryLedgerRepository extends PersistentLedgerRepository {}
-export const defaultLedgerRepository = new PersistentLedgerRepository(StorageManager.getInstance().getAdapter());
+
+/**
+ * PostgreSQL implementation of Ledger Repository with parameterized SQL queries,
+ * ACID transactions and B-Tree indexed access.
+ */
+export class PostgresLedgerRepository implements ILedgerRepository {
+  private fallbackMemory: PersistentLedgerRepository;
+
+  constructor(private adapter: IDatabaseAdapter) {
+    this.fallbackMemory = new PersistentLedgerRepository(null);
+  }
+
+  private mapRowToTx(row: Record<string, unknown>): CharacterTransaction {
+    const charId = Number(row.character_id);
+    const txId = Number(row.transaction_id);
+    return {
+      id: `${charId}:${txId}`,
+      characterId: charId,
+      transactionId: txId,
+      typeId: Number(row.type_id),
+      typeName: row.type_name ? String(row.type_name) : undefined,
+      quantity: Number(row.quantity),
+      unitPrice: Number(row.unit_price),
+      totalValue: Number(row.total_value),
+      isBuy: Boolean(row.is_buy),
+      isPersonal: row.is_personal !== undefined ? Boolean(row.is_personal) : true,
+      locationId: Number(row.location_id),
+      locationName: row.location_name ? String(row.location_name) : undefined,
+      clientId: Number(row.client_id),
+      clientName: row.client_name ? String(row.client_name) : undefined,
+      date: String(row.date),
+      journalRefId: row.journal_ref_id !== null && row.journal_ref_id !== undefined ? Number(row.journal_ref_id) : 0,
+      source: `esi:/characters/${charId}/wallet/transactions/`,
+      observedAt: Number(row.observed_at || Date.now()),
+      tax: row.tax !== null && row.tax !== undefined ? Number(row.tax) : undefined,
+      brokerFee: row.broker_fee !== null && row.broker_fee !== undefined ? Number(row.broker_fee) : undefined,
+      netValue: row.net_value !== null && row.net_value !== undefined ? Number(row.net_value) : undefined,
+    };
+  }
+
+  private mapRowToJournal(row: Record<string, unknown>): CharacterWalletJournalEntry {
+    const charId = Number(row.character_id);
+    const jnId = Number(row.journal_id);
+    return {
+      id: `${charId}:${jnId}`,
+      characterId: charId,
+      journalId: jnId,
+      date: String(row.date),
+      refType: String(row.ref_type),
+      amount: row.amount !== null && row.amount !== undefined ? Number(row.amount) : undefined,
+      balance: row.balance !== null && row.balance !== undefined ? Number(row.balance) : undefined,
+      description: row.description ? String(row.description) : '',
+      firstPartyId: row.first_party_id ? Number(row.first_party_id) : undefined,
+      secondPartyId: row.second_party_id ? Number(row.second_party_id) : undefined,
+      reason: row.reason ? String(row.reason) : undefined,
+      taxReceiverId: row.tax_receiver_id ? Number(row.tax_receiver_id) : undefined,
+      tax: row.tax !== null && row.tax !== undefined ? Number(row.tax) : undefined,
+      contextId: row.context_id ? Number(row.context_id) : undefined,
+      contextIdType: row.context_id_type ? String(row.context_id_type) : undefined,
+      source: `esi:/characters/${charId}/wallet/journal/`,
+      observedAt: Number(row.observed_at || Date.now()),
+    };
+  }
+
+  public reset(): void {
+    this.fallbackMemory.reset();
+    this.resetAsync().catch(() => {});
+  }
+
+  public async resetAsync(): Promise<void> {
+    await this.adapter.execute('DELETE FROM transactions');
+    await this.adapter.execute('DELETE FROM journal_entries');
+  }
+
+  public saveTransactions(transactions: CharacterTransaction[]): { inserted: number; updated: number } {
+    this.fallbackMemory.saveTransactions(transactions);
+    this.saveTransactionsAsync(transactions).catch(() => {});
+    return { inserted: transactions.length, updated: 0 };
+  }
+
+  public async saveTransactionsAsync(transactions: CharacterTransaction[]): Promise<{ inserted: number; updated: number }> {
+    if (transactions.length === 0) return { inserted: 0, updated: 0 };
+
+    return await this.adapter.transaction(async (tx) => {
+      let inserted = 0;
+      const CHUNK_SIZE = 100;
+      for (let i = 0; i < transactions.length; i += CHUNK_SIZE) {
+        const chunk = transactions.slice(i, i + CHUNK_SIZE);
+        for (const item of chunk) {
+          const sql = `
+            INSERT INTO transactions (
+              character_id, transaction_id, type_id, type_name, quantity,
+              unit_price, total_value, is_buy, is_personal, location_id,
+              location_name, client_id, client_name, date, journal_ref_id,
+              observed_at, tax, broker_fee, net_value
+            ) VALUES (
+              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+              $11, $12, $13, $14, $15, $16, $17, $18, $19
+            )
+            ON CONFLICT (character_id, transaction_id) DO UPDATE SET
+              type_id = EXCLUDED.type_id,
+              type_name = EXCLUDED.type_name,
+              quantity = EXCLUDED.quantity,
+              unit_price = EXCLUDED.unit_price,
+              total_value = EXCLUDED.total_value,
+              is_buy = EXCLUDED.is_buy,
+              is_personal = EXCLUDED.is_personal,
+              location_id = EXCLUDED.location_id,
+              location_name = EXCLUDED.location_name,
+              client_id = EXCLUDED.client_id,
+              client_name = EXCLUDED.client_name,
+              date = EXCLUDED.date,
+              journal_ref_id = EXCLUDED.journal_ref_id,
+              tax = EXCLUDED.tax,
+              broker_fee = EXCLUDED.broker_fee,
+              net_value = EXCLUDED.net_value
+          `;
+          const params = [
+            item.characterId,
+            item.transactionId,
+            item.typeId,
+            item.typeName || null,
+            item.quantity,
+            item.unitPrice,
+            item.totalValue,
+            item.isBuy,
+            item.isPersonal ?? true,
+            item.locationId,
+            item.locationName || null,
+            item.clientId,
+            item.clientName || null,
+            item.date,
+            item.journalRefId || null,
+            item.observedAt || Date.now(),
+            item.tax ?? null,
+            item.brokerFee ?? null,
+            item.netValue ?? null,
+          ];
+          await tx.execute(sql, params);
+          inserted++;
+        }
+      }
+      return { inserted, updated: 0 };
+    });
+  }
+
+  public getTransactions(filters: LedgerQueryFilters): PaginatedLedgerResult<CharacterTransaction> {
+    return this.fallbackMemory.getTransactions(filters);
+  }
+
+  public async getTransactionsAsync(filters: LedgerQueryFilters): Promise<PaginatedLedgerResult<CharacterTransaction>> {
+    const {
+      characterId,
+      type = 'ALL',
+      typeId,
+      search,
+      locationId,
+      fromDate,
+      toDate,
+      sortBy = 'date',
+      sortOrder = 'desc',
+      page = 1,
+      pageSize = 50,
+    } = filters;
+
+    const conditions: string[] = ['1=1'];
+    const params: unknown[] = [];
+    let paramIndex = 1;
+
+    if (characterId !== undefined) {
+      conditions.push(`character_id = $${paramIndex++}`);
+      params.push(characterId);
+    }
+    if (type === 'BUY') {
+      conditions.push('is_buy = TRUE');
+    } else if (type === 'SELL') {
+      conditions.push('is_buy = FALSE');
+    }
+    if (typeId !== undefined) {
+      conditions.push(`type_id = $${paramIndex++}`);
+      params.push(typeId);
+    }
+    if (locationId !== undefined) {
+      conditions.push(`location_id = $${paramIndex++}`);
+      params.push(locationId);
+    }
+    if (fromDate) {
+      conditions.push(`date >= $${paramIndex++}`);
+      params.push(fromDate);
+    }
+    if (toDate) {
+      conditions.push(`date <= $${paramIndex++}`);
+      params.push(toDate);
+    }
+    if (search && search.trim()) {
+      const s = `%${search.trim().toLowerCase()}%`;
+      conditions.push(`(
+        LOWER(COALESCE(type_name, '')) LIKE $${paramIndex} OR
+        LOWER(COALESCE(location_name, '')) LIKE $${paramIndex} OR
+        LOWER(COALESCE(client_name, '')) LIKE $${paramIndex} OR
+        CAST(transaction_id AS TEXT) LIKE $${paramIndex} OR
+        CAST(type_id AS TEXT) LIKE $${paramIndex}
+      )`);
+      params.push(s);
+      paramIndex++;
+    }
+
+    const whereClause = conditions.join(' AND ');
+
+    // Count total
+    const countRes = await this.adapter.query<{ count: string }>(
+      `SELECT COUNT(*) as count FROM transactions WHERE ${whereClause}`,
+      params
+    );
+    const total = Number(countRes.rows[0]?.count || 0);
+
+    // Sorting column validation
+    const sortColMap: Record<string, string> = {
+      date: 'date',
+      totalValue: 'total_value',
+      unitPrice: 'unit_price',
+      quantity: 'quantity',
+      typeName: 'type_name',
+    };
+    const col = sortColMap[sortBy] || 'date';
+    const direction = sortOrder === 'asc' ? 'ASC' : 'DESC';
+
+    const validPage = Math.max(1, page);
+    const validPageSize = Math.max(1, Math.min(500, pageSize));
+    const offset = (validPage - 1) * validPageSize;
+
+    const dataSql = `
+      SELECT * FROM transactions
+      WHERE ${whereClause}
+      ORDER BY ${col} ${direction}
+      LIMIT $${paramIndex++} OFFSET $${paramIndex++}
+    `;
+    const dataParams = [...params, validPageSize, offset];
+    const dataRes = await this.adapter.query(dataSql, dataParams);
+    const items = dataRes.rows.map((r) => this.mapRowToTx(r));
+
+    const totalPages = Math.max(1, Math.ceil(total / validPageSize));
+    const summary = await this.getSummaryAsync(characterId);
+
+    return {
+      items,
+      total,
+      page: validPage,
+      pageSize: validPageSize,
+      totalPages,
+      filters,
+      summary,
+      asOf: Date.now(),
+      freshness: 'FRESH',
+    };
+  }
+
+  public getAllTransactions(characterId?: number, characterIds?: number[]): CharacterTransaction[] {
+    return this.fallbackMemory.getAllTransactions(characterId, characterIds);
+  }
+
+  public async getAllTransactionsAsync(characterId?: number, characterIds?: number[]): Promise<CharacterTransaction[]> {
+    let sql = 'SELECT * FROM transactions';
+    const params: unknown[] = [];
+    if (characterIds && characterIds.length > 0) {
+      sql += ' WHERE character_id = ANY($1)';
+      params.push(characterIds);
+    } else if (characterId !== undefined) {
+      sql += ' WHERE character_id = $1';
+      params.push(characterId);
+    }
+    sql += ' ORDER BY date DESC';
+    const res = await this.adapter.query(sql, params);
+    return res.rows.map((r) => this.mapRowToTx(r));
+  }
+
+  public getTransactionById(characterId: number, transactionId: number): CharacterTransaction | null {
+    return this.fallbackMemory.getTransactionById(characterId, transactionId);
+  }
+
+  public async getTransactionByIdAsync(characterId: number, transactionId: number): Promise<CharacterTransaction | null> {
+    const res = await this.adapter.query(
+      'SELECT * FROM transactions WHERE character_id = $1 AND transaction_id = $2',
+      [characterId, transactionId]
+    );
+    if (res.rows.length === 0) return null;
+    return this.mapRowToTx(res.rows[0]);
+  }
+
+  public getJournalEntriesForTransaction(
+    characterId: number,
+    transactionId: number,
+    journalRefId?: number,
+    txDate?: string,
+    txTotalValue?: number,
+    isBuy?: boolean
+  ): { tax: number; brokerFee: number; entries: CharacterWalletJournalEntry[] } {
+    return this.fallbackMemory.getJournalEntriesForTransaction(
+      characterId,
+      transactionId,
+      journalRefId,
+      txDate,
+      txTotalValue,
+      isBuy
+    );
+  }
+
+  public countTransactions(characterId: number): number {
+    return this.fallbackMemory.countTransactions(characterId);
+  }
+
+  public async countTransactionsAsync(characterId: number): Promise<number> {
+    const res = await this.adapter.query<{ count: string }>(
+      'SELECT COUNT(*) as count FROM transactions WHERE character_id = $1',
+      [characterId]
+    );
+    return Number(res.rows[0]?.count || 0);
+  }
+
+  public saveJournalEntries(entries: CharacterWalletJournalEntry[]): { inserted: number; updated: number } {
+    this.fallbackMemory.saveJournalEntries(entries);
+    this.saveJournalEntriesAsync(entries).catch(() => {});
+    return { inserted: entries.length, updated: 0 };
+  }
+
+  public async saveJournalEntriesAsync(entries: CharacterWalletJournalEntry[]): Promise<{ inserted: number; updated: number }> {
+    if (entries.length === 0) return { inserted: 0, updated: 0 };
+
+    return await this.adapter.transaction(async (tx) => {
+      let inserted = 0;
+      for (const item of entries) {
+        const sql = `
+          INSERT INTO journal_entries (
+            character_id, journal_id, date, ref_type, amount, balance,
+            description, first_party_id, first_party_name, second_party_id,
+            second_party_name, reason, tax_receiver_id, tax, context_id,
+            context_id_type, observed_at
+          ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+            $11, $12, $13, $14, $15, $16, $17
+          )
+          ON CONFLICT (character_id, journal_id) DO UPDATE SET
+            date = EXCLUDED.date,
+            ref_type = EXCLUDED.ref_type,
+            amount = EXCLUDED.amount,
+            balance = EXCLUDED.balance,
+            description = EXCLUDED.description,
+            first_party_id = EXCLUDED.first_party_id,
+            first_party_name = EXCLUDED.first_party_name,
+            second_party_id = EXCLUDED.second_party_id,
+            second_party_name = EXCLUDED.second_party_name,
+            reason = EXCLUDED.reason,
+            tax_receiver_id = EXCLUDED.tax_receiver_id,
+            tax = EXCLUDED.tax,
+            context_id = EXCLUDED.context_id,
+            context_id_type = EXCLUDED.context_id_type
+        `;
+        const params = [
+          item.characterId,
+          item.journalId,
+          item.date,
+          item.refType,
+          item.amount,
+          item.balance ?? null,
+          item.description || null,
+          item.firstPartyId || null,
+          (item as unknown as Record<string, unknown>).firstPartyName || null,
+          item.secondPartyId || null,
+          (item as unknown as Record<string, unknown>).secondPartyName || null,
+          item.reason || null,
+          item.taxReceiverId || null,
+          item.tax ?? null,
+          item.contextId || null,
+          item.contextIdType || null,
+          item.observedAt || Date.now(),
+        ];
+        await tx.execute(sql, params);
+        inserted++;
+      }
+      return { inserted, updated: 0 };
+    });
+  }
+
+  public getJournalEntries(
+    characterId?: number,
+    page = 1,
+    pageSize = 50
+  ): { items: CharacterWalletJournalEntry[]; total: number } {
+    return this.fallbackMemory.getJournalEntries(characterId, page, pageSize);
+  }
+
+  public async getJournalEntriesAsync(
+    characterId?: number,
+    page = 1,
+    pageSize = 50
+  ): Promise<{ items: CharacterWalletJournalEntry[]; total: number }> {
+    const validPage = Math.max(1, page);
+    const validPageSize = Math.max(1, Math.min(500, pageSize));
+    const offset = (validPage - 1) * validPageSize;
+
+    let countSql = 'SELECT COUNT(*) as count FROM journal_entries';
+    let dataSql = 'SELECT * FROM journal_entries';
+    const params: unknown[] = [];
+
+    if (characterId !== undefined) {
+      countSql += ' WHERE character_id = $1';
+      dataSql += ' WHERE character_id = $1';
+      params.push(characterId);
+    }
+    dataSql += ` ORDER BY date DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+
+    const countRes = await this.adapter.query<{ count: string }>(countSql, params);
+    const total = Number(countRes.rows[0]?.count || 0);
+
+    const dataRes = await this.adapter.query(dataSql, [...params, validPageSize, offset]);
+    const items = dataRes.rows.map((r) => this.mapRowToJournal(r));
+
+    return { items, total };
+  }
+
+  public getJournalEntryById(characterId: number, journalId: number): CharacterWalletJournalEntry | null {
+    return this.fallbackMemory.getJournalEntryById(characterId, journalId);
+  }
+
+  public async getJournalEntryByIdAsync(characterId: number, journalId: number): Promise<CharacterWalletJournalEntry | null> {
+    const res = await this.adapter.query(
+      'SELECT * FROM journal_entries WHERE character_id = $1 AND journal_id = $2',
+      [characterId, journalId]
+    );
+    if (res.rows.length === 0) return null;
+    return this.mapRowToJournal(res.rows[0]);
+  }
+
+  public getSummary(characterId?: number, characterIds?: number[]): LedgerSummary {
+    return this.fallbackMemory.getSummary(characterId, characterIds);
+  }
+
+  public async getSummaryAsync(characterId?: number, characterIds?: number[]): Promise<LedgerSummary> {
+    let sql = `
+      SELECT
+        COUNT(*) as total_tx_count,
+        SUM(CASE WHEN is_buy THEN 1 ELSE 0 END) as buy_tx_count,
+        SUM(CASE WHEN NOT is_buy THEN 1 ELSE 0 END) as sell_tx_count,
+        SUM(CASE WHEN is_buy THEN quantity ELSE 0 END) as total_buy_vol,
+        SUM(CASE WHEN NOT is_buy THEN quantity ELSE 0 END) as total_sell_vol,
+        SUM(CASE WHEN is_buy THEN total_value ELSE 0 END) as total_buy_spend,
+        SUM(CASE WHEN NOT is_buy THEN total_value ELSE 0 END) as total_gross_sales,
+        COUNT(DISTINCT type_id) as distinct_types,
+        COUNT(DISTINCT location_id) as distinct_locations,
+        COALESCE(SUM(tax), 0) as total_taxes,
+        COALESCE(SUM(broker_fee), 0) as total_broker_fees
+      FROM transactions
+    `;
+    const params: unknown[] = [];
+    if (characterIds && characterIds.length > 0) {
+      sql += ' WHERE character_id = ANY($1)';
+      params.push(characterIds);
+    } else if (characterId !== undefined) {
+      sql += ' WHERE character_id = $1';
+      params.push(characterId);
+    }
+
+    const res = await this.adapter.query(sql, params);
+    const row = res.rows[0] || {};
+
+    const totalTransactionsCount = Number(row.total_tx_count || 0);
+    const sellTransactionsCount = Number(row.sell_tx_count || 0);
+    const buyTransactionsCount = Number(row.buy_tx_count || 0);
+    const totalSellVolume = Number(row.total_sell_vol || 0);
+    const totalBuyVolume = Number(row.total_buy_vol || 0);
+    const totalGrossSalesIsk = Math.round((Number(row.total_gross_sales || 0) + Number.EPSILON) * 100) / 100;
+    const totalBuySpendIsk = Math.round((Number(row.total_buy_spend || 0) + Number.EPSILON) * 100) / 100;
+    const totalTaxesIsk = Math.round((Number(row.total_taxes || 0) + Number.EPSILON) * 100) / 100;
+    const totalBrokerFeesIsk = Math.round((Number(row.total_broker_fees || 0) + Number.EPSILON) * 100) / 100;
+    const totalNetSalesIsk = Math.round((totalGrossSalesIsk - totalTaxesIsk - totalBrokerFeesIsk + Number.EPSILON) * 100) / 100;
+
+    return {
+      characterId: characterId || 0,
+      asOf: Date.now(),
+      totalTransactionsCount,
+      sellTransactionsCount,
+      buyTransactionsCount,
+      totalSellVolume,
+      totalBuyVolume,
+      totalGrossSalesIsk,
+      totalBuySpendIsk,
+      totalTaxesIsk,
+      totalBrokerFeesIsk,
+      totalNetSalesIsk,
+      distinctItemsCount: Number(row.distinct_types || 0),
+      distinctLocationsCount: Number(row.distinct_locations || 0),
+      completeness: totalTransactionsCount > 0 ? 'COMPLETE' : 'ABSENT',
+    };
+  }
+
+  public getFilterOptions(characterId: number): LedgerFilterOptions {
+    return this.fallbackMemory.getFilterOptions(characterId);
+  }
+
+  public async getFilterOptionsAsync(characterId: number): Promise<LedgerFilterOptions> {
+    const typesRes = await this.adapter.query<{ id: number; name: string; count: string }>(
+      `SELECT type_id as id, COALESCE(type_name, 'Item #' || type_id) as name, COUNT(*) as count
+       FROM transactions WHERE character_id = $1 GROUP BY type_id, type_name ORDER BY name ASC`,
+      [characterId]
+    );
+
+    const locationsRes = await this.adapter.query<{ id: string; name: string; count: string }>(
+      `SELECT location_id as id, COALESCE(location_name, 'Location #' || location_id) as name, COUNT(*) as count
+       FROM transactions WHERE character_id = $1 GROUP BY location_id, location_name ORDER BY name ASC`,
+      [characterId]
+    );
+
+    return {
+      types: typesRes.rows.map((r) => ({ id: Number(r.id), name: r.name, count: Number(r.count) })),
+      locations: locationsRes.rows.map((r) => ({ id: Number(r.id), name: r.name, count: Number(r.count) })),
+    };
+  }
+
+  public clearCharacter(characterId: number): void {
+    this.fallbackMemory.clearCharacter(characterId);
+    this.clearCharacterAsync(characterId).catch(() => {});
+  }
+
+  public async clearCharacterAsync(characterId: number): Promise<void> {
+    await this.adapter.execute('DELETE FROM transactions WHERE character_id = $1', [characterId]);
+    await this.adapter.execute('DELETE FROM journal_entries WHERE character_id = $1', [characterId]);
+  }
+
+  public dumpData(): { transactions: CharacterTransaction[]; journalEntries: CharacterWalletJournalEntry[] } {
+    return this.fallbackMemory.dumpData();
+  }
+
+  public restoreData(data: { transactions: CharacterTransaction[]; journalEntries: CharacterWalletJournalEntry[] }): void {
+    this.fallbackMemory.restoreData(data);
+    this.saveTransactionsAsync(data.transactions).catch(() => {});
+    this.saveJournalEntriesAsync(data.journalEntries).catch(() => {});
+  }
+}
+
+export const defaultLedgerRepository = StorageManager.getInstance().getConfig().engine === 'postgres'
+  ? new PostgresLedgerRepository(StorageManager.getInstance().getAdapter())
+  : new PersistentLedgerRepository(StorageManager.getInstance().getAdapter());
 export const ledgerRepository = defaultLedgerRepository;

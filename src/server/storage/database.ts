@@ -52,6 +52,8 @@ export class DurableFileDatabaseAdapter implements IDatabaseAdapter {
   public init(): void {
     if (this.isInitialized) return;
 
+    logger.warn('[Storage] Running with DurableFileDatabaseAdapter (offline local fallback). For production/staging, configure DATABASE_URL for PostgreSQL persistence.');
+
     if (this.storagePath) {
       try {
         const dir = path.dirname(this.storagePath);
@@ -201,11 +203,31 @@ export class PostgresDatabaseAdapter implements IDatabaseAdapter {
   private pool: pg.Pool;
   private isConnected = false;
 
-  constructor(connectionString: string) {
-    this.pool = new Pool({
-      connectionString,
-      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
+  constructor(connectionString: string | pg.PoolConfig) {
+    if (typeof connectionString === 'string') {
+      this.pool = new Pool({
+        connectionString,
+        ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
+        connectionTimeoutMillis: 10000,
+        idleTimeoutMillis: 30000,
+        max: 20,
+      });
+    } else {
+      this.pool = new Pool({
+        connectionTimeoutMillis: 10000,
+        idleTimeoutMillis: 30000,
+        max: 20,
+        ...connectionString,
+      });
+    }
+
+    this.pool.on('error', (err: Error) => {
+      logger.error(`Unexpected error on idle PostgreSQL client: ${err.message}`);
     });
+  }
+
+  public getPool(): pg.Pool {
+    return this.pool;
   }
 
   public async init(): Promise<void> {
@@ -213,13 +235,37 @@ export class PostgresDatabaseAdapter implements IDatabaseAdapter {
     try {
       const client = await this.pool.connect();
       try {
-        // Run initial migrations
-        for (const migration of MIGRATIONS) {
-          await client.query(migration.upSql);
-          await client.query(
-            'INSERT INTO schema_migrations (version, name) VALUES ($1, $2) ON CONFLICT (version) DO NOTHING',
-            [migration.version, migration.name]
+        // Ensure schema_migrations table exists
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS schema_migrations (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            applied_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
           );
+        `);
+
+        // Check already applied migrations
+        const appliedRes = await client.query('SELECT version FROM schema_migrations');
+        const appliedVersions = new Set<number>(appliedRes.rows.map((r: { version: number }) => r.version));
+
+        // Run pending migrations sequentially
+        for (const migration of MIGRATIONS) {
+          if (!appliedVersions.has(migration.version)) {
+            await client.query('BEGIN');
+            try {
+              await client.query(migration.upSql);
+              await client.query(
+                'INSERT INTO schema_migrations (version, name) VALUES ($1, $2) ON CONFLICT (version) DO NOTHING',
+                [migration.version, migration.name]
+              );
+              await client.query('COMMIT');
+              appliedVersions.add(migration.version);
+              logger.info(`Applied migration ${migration.version}: ${migration.name}`);
+            } catch (migErr) {
+              await client.query('ROLLBACK');
+              throw migErr;
+            }
+          }
         }
         this.isConnected = true;
       } finally {

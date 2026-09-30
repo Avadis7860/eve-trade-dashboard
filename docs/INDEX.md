@@ -3,6 +3,7 @@
 | Besoin | Document |
 |---|---|
 | Plan et statut des phases | [MASTERPLAN](MASTERPLAN.md) |
+| Roadmap Fiabilité & Performance | [MASTERPLAN-RELIABILITY-PERFORMANCE](MASTERPLAN-RELIABILITY-PERFORMANCE.md) |
 | Audit produit existant & modèle cible | [PRODUCT_REDESIGN_AUDIT](PRODUCT_REDESIGN_AUDIT.md) |
 | Périmètre et exclusions | [PRODUCT_SCOPE](PRODUCT_SCOPE.md) |
 | Architecture technique | [ARCHITECTURE](ARCHITECTURE.md) |
@@ -33,9 +34,20 @@
 - [08 Réconciliation financière et métriques versionnées](phases/PHASE-08-financial-reconciliation.md) — *Terminé*
 - [09 Positions de capital et inventaire](phases/PHASE-09-capital-and-inventory.md) — *Terminé*
 - [10 Product 360 et analyses temporelles](phases/PHASE-10-product-360-analytics.md) — *Terminé*
-- [10.bis Soldes réels des wallets, filtrage de liquidité et scopes ESI complets](phases/PHASE-10bis-wallets-and-scopes.md) — *Planifiée*
-- [11 Opérations, réapprovisionnement et transferts](phases/PHASE-11-restock-and-transfers.md) — *Planifiée*
-- [12 Refonte du cockpit, navigation et intégration UX](phases/PHASE-12-cockpit-and-ux-redesign.md) — *Planifiée*
-- [H03 Hardening UX, performance et release](phases/PHASE-H03-quality-release.md) — *Planifiée*
+- [10.bis Soldes réels des wallets, filtrage de liquidité et scopes ESI complets](phases/PHASE-10bis-wallets-and-scopes.md) — *Suspendue (Gel fonctionnel)*
+- [11 Opérations, réapprovisionnement et transferts](phases/PHASE-11-restock-and-transfers.md) — *Suspendue (Gel fonctionnel)*
+- [12 Refonte du cockpit, navigation et intégration UX](phases/PHASE-12-cockpit-and-ux-redesign.md) — *Suspendue (Gel fonctionnel)*
+- [H03 Hardening UX, performance et release](phases/PHASE-H03-quality-release.md) — *Suspendue (Gel fonctionnel)*
 
-Le masterplan est la source de vérité sur les statuts. Ne pas dupliquer ici les plans détaillés.
+## Roadmap Prioritaire — Fiabilité & Performance (Gel Fonctionnel)
+- [R00 Baseline, mesure et gel fonctionnel](phases/PHASE-R00-baseline.md) — *Terminé*
+- [R01 Persistance et stockage durable PostgreSQL](phases/PHASE-R01-persistence.md) — *Terminé*
+- [R02 Complétude, pagination et vérité des états](phases/PHASE-R02-completeness-pagination.md) — *Priorité BLOQUANTE*
+- [R03 Architecture des requêtes frontend](phases/PHASE-R03-frontend-query-architecture.md) — *Priorité MAJEURE*
+- [R04 Optimisation des calculs métier et accès SQL](phases/PHASE-R04-business-calculations-data-access.md) — *Priorité MAJEURE*
+- [R05 Synchronisation ESI et concurrence contrôlée](phases/PHASE-R05-esi-sync-concurrency.md) — *Priorité MAJEURE*
+- [R06 Sécurité, isolation multi-perso et backup](phases/PHASE-R06-security-isolation-backup.md) — *Priorité MAJEURE*
+- [R07 Stratégie de tests complète (Domain, SQL, HTTP, UI, E2E)](phases/PHASE-R07-testing-strategy.md) — *Priorité MAJEURE*
+- [R08 Observabilité et critères de production](phases/PHASE-R08-observability-production.md) — *Priorité MAJEURE*
+
+Le masterplan et le masterplan de fiabilité sont les sources de vérité sur les statuts. Ne pas dupliquer ici les plans détaillés.

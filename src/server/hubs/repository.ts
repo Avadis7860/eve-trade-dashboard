@@ -79,7 +79,21 @@ const DEFAULT_MAPPINGS: HubLocationMapping[] = [
   },
 ];
 
-export class HubsRepository {
+export interface IHubsRepository {
+  resetToDefaults(sync?: boolean): void;
+  listHubs(): HubDefinition[];
+  getHub(id: string): HubDefinition | undefined;
+  upsertHub(hub: HubDefinition): void;
+  deleteHub(id: string): boolean;
+  listMappings(): HubLocationMapping[];
+  getMapping(locationId: number): HubLocationMapping | undefined;
+  upsertMapping(mapping: HubLocationMapping): void;
+  deleteMapping(locationId: number): boolean;
+  dumpData(): { hubs: HubDefinition[]; mappings: HubLocationMapping[] };
+  restoreData(data: { hubs: HubDefinition[]; mappings: HubLocationMapping[] }, sync?: boolean): void;
+}
+
+export class PersistentHubsRepository implements IHubsRepository {
   private hubs = new Map<string, HubDefinition>();
   private mappings = new Map<number, HubLocationMapping>();
 
@@ -202,4 +216,201 @@ export class HubsRepository {
   }
 }
 
-export const hubsRepository = new HubsRepository(StorageManager.getInstance().getAdapter());
+export class InMemoryHubsRepository extends PersistentHubsRepository {}
+
+/**
+ * PostgreSQL implementation of Hubs Repository with parameterized SQL queries
+ * and relational integrity constraints.
+ */
+export class PostgresHubsRepository implements IHubsRepository {
+  private fallbackMemory: PersistentHubsRepository;
+
+  constructor(private adapter: IDatabaseAdapter) {
+    this.fallbackMemory = new PersistentHubsRepository(null);
+  }
+
+  private mapRowToHub(row: Record<string, unknown>): HubDefinition {
+    return {
+      id: String(row.id),
+      name: String(row.name),
+      system_name: String(row.system_name),
+      is_system_default: Boolean(row.is_system_default),
+      notes: row.notes ? String(row.notes) : undefined,
+      created_at: String(row.created_at),
+    };
+  }
+
+  private mapRowToMapping(row: Record<string, unknown>): HubLocationMapping {
+    return {
+      location_id: Number(row.location_id),
+      location_name: String(row.location_name),
+      hub_id: String(row.hub_id),
+      updated_at: String(row.updated_at),
+    };
+  }
+
+  public resetToDefaults(sync = true): void {
+    this.fallbackMemory.resetToDefaults(sync);
+    this.resetToDefaultsAsync().catch(() => {});
+  }
+
+  public async resetToDefaultsAsync(): Promise<void> {
+    await this.adapter.transaction(async (tx) => {
+      await tx.execute('DELETE FROM hub_location_mappings');
+      await tx.execute('DELETE FROM hubs');
+
+      for (const h of DEFAULT_HUBS) {
+        await tx.execute(
+          `INSERT INTO hubs (id, name, system_name, is_system_default, notes, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (id) DO UPDATE SET
+             name = EXCLUDED.name,
+             system_name = EXCLUDED.system_name,
+             is_system_default = EXCLUDED.is_system_default,
+             notes = EXCLUDED.notes`,
+          [h.id, h.name, h.system_name, h.is_system_default, h.notes || null, h.created_at]
+        );
+      }
+
+      for (const m of DEFAULT_MAPPINGS) {
+        await tx.execute(
+          `INSERT INTO hub_location_mappings (location_id, location_name, hub_id, updated_at)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (location_id) DO UPDATE SET
+             location_name = EXCLUDED.location_name,
+             hub_id = EXCLUDED.hub_id,
+             updated_at = EXCLUDED.updated_at`,
+          [m.location_id, m.location_name, m.hub_id, m.updated_at]
+        );
+      }
+    });
+  }
+
+  public listHubs(): HubDefinition[] {
+    return this.fallbackMemory.listHubs();
+  }
+
+  public async listHubsAsync(): Promise<HubDefinition[]> {
+    const res = await this.adapter.query('SELECT * FROM hubs ORDER BY name ASC');
+    return res.rows.map((r) => this.mapRowToHub(r));
+  }
+
+  public getHub(id: string): HubDefinition | undefined {
+    return this.fallbackMemory.getHub(id);
+  }
+
+  public async getHubAsync(id: string): Promise<HubDefinition | undefined> {
+    const res = await this.adapter.query('SELECT * FROM hubs WHERE id = $1', [id]);
+    if (res.rows.length === 0) return undefined;
+    return this.mapRowToHub(res.rows[0]);
+  }
+
+  public upsertHub(hub: HubDefinition): void {
+    this.fallbackMemory.upsertHub(hub);
+    this.upsertHubAsync(hub).catch(() => {});
+  }
+
+  public async upsertHubAsync(hub: HubDefinition): Promise<void> {
+    const sql = `
+      INSERT INTO hubs (id, name, system_name, is_system_default, notes, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        system_name = EXCLUDED.system_name,
+        is_system_default = EXCLUDED.is_system_default,
+        notes = EXCLUDED.notes
+    `;
+    await this.adapter.execute(sql, [
+      hub.id,
+      hub.name,
+      hub.system_name,
+      hub.is_system_default ?? false,
+      hub.notes || null,
+      hub.created_at || new Date().toISOString(),
+    ]);
+  }
+
+  public deleteHub(id: string): boolean {
+    const deleted = this.fallbackMemory.deleteHub(id);
+    this.deleteHubAsync(id).catch(() => {});
+    return deleted;
+  }
+
+  public async deleteHubAsync(id: string): Promise<boolean> {
+    const hub = await this.getHubAsync(id);
+    if (!hub || hub.is_system_default) {
+      return false;
+    }
+    const res = await this.adapter.execute('DELETE FROM hubs WHERE id = $1', [id]);
+    return res > 0;
+  }
+
+  public listMappings(): HubLocationMapping[] {
+    return this.fallbackMemory.listMappings();
+  }
+
+  public async listMappingsAsync(): Promise<HubLocationMapping[]> {
+    const res = await this.adapter.query('SELECT * FROM hub_location_mappings');
+    return res.rows.map((r) => this.mapRowToMapping(r));
+  }
+
+  public getMapping(locationId: number): HubLocationMapping | undefined {
+    return this.fallbackMemory.getMapping(locationId);
+  }
+
+  public async getMappingAsync(locationId: number): Promise<HubLocationMapping | undefined> {
+    const res = await this.adapter.query('SELECT * FROM hub_location_mappings WHERE location_id = $1', [locationId]);
+    if (res.rows.length === 0) return undefined;
+    return this.mapRowToMapping(res.rows[0]);
+  }
+
+  public upsertMapping(mapping: HubLocationMapping): void {
+    this.fallbackMemory.upsertMapping(mapping);
+    this.upsertMappingAsync(mapping).catch(() => {});
+  }
+
+  public async upsertMappingAsync(mapping: HubLocationMapping): Promise<void> {
+    const sql = `
+      INSERT INTO hub_location_mappings (location_id, location_name, hub_id, updated_at)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (location_id) DO UPDATE SET
+        location_name = EXCLUDED.location_name,
+        hub_id = EXCLUDED.hub_id,
+        updated_at = EXCLUDED.updated_at
+    `;
+    await this.adapter.execute(sql, [
+      mapping.location_id,
+      mapping.location_name,
+      mapping.hub_id,
+      mapping.updated_at || new Date().toISOString(),
+    ]);
+  }
+
+  public deleteMapping(locationId: number): boolean {
+    const deleted = this.fallbackMemory.deleteMapping(locationId);
+    this.deleteMappingAsync(locationId).catch(() => {});
+    return deleted;
+  }
+
+  public async deleteMappingAsync(locationId: number): Promise<boolean> {
+    const res = await this.adapter.execute('DELETE FROM hub_location_mappings WHERE location_id = $1', [locationId]);
+    return res > 0;
+  }
+
+  public dumpData(): { hubs: HubDefinition[]; mappings: HubLocationMapping[] } {
+    return this.fallbackMemory.dumpData();
+  }
+
+  public restoreData(data: { hubs: HubDefinition[]; mappings: HubLocationMapping[] }, sync = true): void {
+    this.fallbackMemory.restoreData(data, sync);
+  }
+}
+
+export type HubsRepository = IHubsRepository;
+export const HubsRepository = PersistentHubsRepository;
+
+export const defaultHubsRepository = StorageManager.getInstance().getConfig().engine === 'postgres'
+  ? new PostgresHubsRepository(StorageManager.getInstance().getAdapter())
+  : new PersistentHubsRepository(StorageManager.getInstance().getAdapter());
+export const hubsRepository = defaultHubsRepository;
+

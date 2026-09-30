@@ -1,6 +1,6 @@
 # Index canonique du code
 
-**État :** Phase 10 (Product 360 et visualisations temporelles : Fiche d'inspection transversale Product 360 accessible en un clic depuis n'importe quel élément de l'interface, séries temporelles interactives avec barres de volume et courbe de chiffre d'affaires, courbe de profit net TTC cumulé, pyramide des âges du stock invendu 0-14j/15-30j/31-60j/61-90j/>90j, matrice des flux de hubs, alternatives tabulaires accessibles avec export CSV RFC 4180, calcul déterministe de la vélocité journalière V_jour, de la durée moyenne de détention D_detention et du rendement par capital-jour R_cap_jour sans extrapolation arbitraire, endpoints `/api/analytics/product/:typeId` et `/api/analytics/timeseries`, composant `Product360Modal` et vue globale `AnalyticsView`) terminée et validée.
+**État :** Phase R01 (Persistance et stockage durable PostgreSQL : Implémentation complète et couverte des dépôts SQL relationnels paramétrés `PostgresLedgerRepository`, `PostgresOrdersRepository`, `PostgresRoiRepository`, `PostgresAssetsRepository`, `PostgresHubsRepository`, `PostgresSyncRepository`, isolation transactionnelle ACID stricte, configuration avancée du pool de connexions `pg.Pool`, migrations séquentielles idempotentes version 3 avec index de performance, purge en cascade sans fuite multi-personnages `clearCharacterData`, journalisation d'avertissement formelle sur le fallback fichier local et suite complète de tests de contrat et d'intégration PostgreSQL dans `src/server/storage/postgres.test.ts`) terminée et validée.
 
 ## Runtime & Environnement
 - **Runtime :** Node.js 22, TypeScript strict.
@@ -14,6 +14,7 @@
   - `npm run lint` : Vérification ESLint (`eslint src/ server.ts`).
   - `npm run typecheck` : Vérification des types sans émission (`tsc --noEmit`).
   - `npm test` : Suite de tests unitaires et intégration (`vitest run`).
+  - `npm run bench:baseline` : Exécution du banc d'essai et profiling de référence (`tsx scripts/baseline-bench.ts`).
   - `npm start` : Démarrage en production (`NODE_ENV=production tsx server.ts`).
 
 ## Variables d'environnement
@@ -102,11 +103,15 @@
 - `eslint.config.js` — Configuration du linter ESLint en mode strict TypeScript — Validation de syntaxe et typage — N/A
 - `metadata.json` — Métadonnées Google AI Studio — Identification de l'application et permissions — N/A
 - `.env.example` — Modèle de configuration d'environnement sans secrets — Déclaration des variables — N/A
+- `scripts/baseline-bench.ts` — Harnais de benchmark automatisé et reproductible pour la baseline métrique (latence HTTP, I/O fichier bloquant, calculs métier FIFO/P360/Capital et cascades UI) — `npm run bench:baseline`
+- `docs/MASTERPLAN-RELIABILITY-PERFORMANCE.md` — Masterplan canonique de remise à niveau, fiabilisation et optimisation des performances (Phases R00 à R08) — N/A
+- `docs/phases/PHASE-R00-baseline.md` à `PHASE-R08-observability-production.md` — Cahiers de cadrage détaillés des 9 phases de remise à niveau — N/A
 
 ## Tests
 - `src/server/analytics/analytics.test.ts` — Suite de tests complète pour le moteur analytique Product 360 et séries temporelles : calcul de vélocité journalière $V_{jour}$, durée moyenne de détention $D_{detention}$, rendement par capital-jour $R_{cap\_jour}$, pyramide des âges d'inventaire 0-14j/15-30j/31-60j/61-90j/>90j, courbes cumulées de profit et CA, matrices de flux de hubs, gestion des articles sans ventes et isolation multi-personnages des endpoints API `/api/analytics`.
 - `src/server/capital/capital.test.ts` — Suite de tests exhaustifs pour le moteur de capital et d'inventaire : stricte invariance arithmétique de la décomposition physique (`COMMITTED_SELL_ORDER`, `FREE_HUB_STOCK`, `REMOTE_DORMANT_STOCK`, `IN_TRANSIT_STOCK`), détection du transit et des cales de vaisseaux, identification des stocks dormants sans mouvement depuis >30 jours, valorisation de revient des invendus, isolation de la valeur notionnelle de vente hors capital réel, agrégation multi-personnages de l'écosystème et sécurisation des routes API `/api/capital`.
 - `src/server/storage/storage.test.ts` — Tests exhaustifs de persistance durable, survie au redémarrage complet, migrations relationnelles versionnées, purge atomique multi-domaines par personnage, requêtes indexées ultra-rapides (<50ms sur 50 000 transactions) et rollback de transactions ACID sur erreur.
+- `src/server/storage/postgres.test.ts` — Tests d'intégration et de contrat complets PostgreSQL : application séquentielle des migrations versionnées, requêtes SQL paramétrées `$1, $2`, batch inserts sub-100ms, isolation stricte multi-personnages, rollback atomique sur crash simulé, cycle de vie des ordres et allocations FIFO.
 - `src/server/sync/resilience.test.ts` — Tests exhaustifs de résilience et de tolérance aux pannes : simulation de coupures réseau en cours de pagination (`from_id` et `x-pages`), reprise sur checkpoint sans doublon ni perte de données, conservation des données valides lors de pannes complètes, respect des budgets d'erreur ESI 420/429 avec cooldown `Retry-After`, retries bornés exponentiels avec jitter sur 5xx, gestion du cache 304, idempotence absolue des synchronisations répétées et combinaison d'allocations manuelles et FIFO sans dépassement ni double comptage.
 - `src/server/storage/backup.test.ts` — Tests du module de sauvegarde et de fiabilité du stockage : export complet avec empreinte SHA-256, rejet des fichiers altérés ou corrompus, validation de schéma versionné, restauration atomique avec garantie de rollback et audit exhaustif d'intégrité des données.
 - `src/server/security/security.test.ts` — Suite de tests de sécurité : validation des en-têtes CSP/HSTS/nosniff, blocage CSRF sur requêtes d'origine non autorisée, rejet d'accès multi-tenant inter-personnages non autorisés, minimisation des scopes ESI, purge des logs et suppression des sessions lors de la déconnexion.

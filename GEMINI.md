@@ -1,0 +1,5 @@
+# Instructions Gemini / Google AI Studio
+
+Lis docs/INDEX.md, docs/MASTERPLAN.md, le seul markdown de la phase active, puis uniquement les contrats nécessaires et les entrées pertinentes de docs/CODE_INDEX.md.
+
+Règles : ne jamais travailler sur main ; une phase = une branche = un PR ; ne pas élargir le périmètre ; ne pas inventer routes/scopes ESI, chemins ou résultats de tests ; vérifier les spécifications CCP courantes. OAuth, secrets et jetons restent côté serveur. MVP en lecture seule vis-à-vis du marché. UNKNOWN, PARTIAL, ERROR et ABSENT ne valent jamais zéro. Pas de FIFO ou coût moyen implicite. Ajouter les tests avec le code, les exécuter avant chaque push et vérifier la CI. Ne jamais désactiver un contrôle rouge. Mettre à jour docs/CODE_INDEX.md et les contrats touchés dans le même PR. Ne pas démarrer la phase suivante avant acceptation de la précédente.

@@ -264,4 +264,76 @@ describe('Auth Module — AuthService SSO Flow', () => {
     expect(validSession?.refreshToken).toBe('new_refresh_token');
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
+
+  it('supports linking multiple characters to the same session, switching, and unlinking', async () => {
+    const char1Token = createMockJwt({
+      iss: 'login.eveonline.com',
+      sub: 'CHARACTER:EVE:11111111',
+      name: 'Buyer Character',
+      scp: DEFAULT_SCOPES,
+      exp: futureExp,
+      azp: 'my_client',
+    });
+
+    const char2Token = createMockJwt({
+      iss: 'login.eveonline.com',
+      sub: 'CHARACTER:EVE:22222222',
+      name: 'Seller Character',
+      scp: DEFAULT_SCOPES,
+      exp: futureExp,
+      azp: 'my_client',
+    });
+
+    let currentMockToken = char1Token;
+    const mockFetch = vi.fn().mockImplementation(async () => ({
+      ok: true,
+      json: async (): Promise<EveTokenResponse> => ({
+        access_token: currentMockToken,
+        token_type: 'Bearer',
+        expires_in: 1200,
+        refresh_token: 'refresh_' + currentMockToken.slice(-5),
+      }),
+    }));
+
+    authService = new AuthService({
+      clientId: 'my_client',
+      clientSecret: 'my_secret',
+    }, store, mockFetch as unknown as typeof fetch);
+
+    // 1. Initial login with Character 1
+    const { state: state1 } = authService.createLoginUrl();
+    const session1 = await authService.handleCallback('code_char1', state1);
+    expect(session1.characterId).toBe(11111111);
+    expect(Object.keys(session1.characters).length).toBe(1);
+
+    // 2. Link Character 2 to the same session
+    currentMockToken = char2Token;
+    const { state: state2 } = authService.createLoginUrl();
+    const session2 = await authService.handleCallback('code_char2', state2, session1.sessionId);
+    expect(session2.sessionId).toBe(session1.sessionId);
+    expect(session2.characterId).toBe(22222222); // Character 2 is now active
+    expect(Object.keys(session2.characters).length).toBe(2);
+
+    // 3. Public session info lists both characters with active flag
+    const publicInfo = authService.getPublicSessionInfo(session2);
+    expect(publicInfo.characters?.length).toBe(2);
+    const char1Info = publicInfo.characters?.find((c) => c.characterId === 11111111);
+    const char2Info = publicInfo.characters?.find((c) => c.characterId === 22222222);
+    expect(char1Info).toBeDefined();
+    expect(char1Info?.isActive).toBe(false);
+    expect(char2Info).toBeDefined();
+    expect(char2Info?.isActive).toBe(true);
+
+    // 4. Switch active character back to Character 1
+    const switched = authService.switchActiveCharacter(session1.sessionId, 11111111);
+    expect(switched?.characterId).toBe(11111111);
+    expect(switched?.activeCharacterId).toBe(11111111);
+    expect(switched?.characterName).toBe('Buyer Character');
+
+    // 5. Unlink Character 2
+    const afterUnlink = authService.removeCharacter(session1.sessionId, 22222222);
+    expect(afterUnlink).not.toBeNull();
+    expect(Object.keys(afterUnlink!.characters).length).toBe(1);
+    expect(afterUnlink!.characters[22222222]).toBeUndefined();
+  });
 });

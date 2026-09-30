@@ -13,9 +13,9 @@ export interface ILedgerRepository {
   getTransactionById(characterId: number, transactionId: number): CharacterTransaction | null;
   countTransactions(characterId: number): number;
   saveJournalEntries(entries: CharacterWalletJournalEntry[]): { inserted: number; updated: number };
-  getJournalEntries(characterId: number, page?: number, pageSize?: number): { items: CharacterWalletJournalEntry[]; total: number };
+  getJournalEntries(characterId?: number, page?: number, pageSize?: number): { items: CharacterWalletJournalEntry[]; total: number };
   getJournalEntryById(characterId: number, journalId: number): CharacterWalletJournalEntry | null;
-  getSummary(characterId: number): LedgerSummary;
+  getSummary(characterId?: number): LedgerSummary;
   getFilterOptions(characterId: number): LedgerFilterOptions;
   clearCharacter(characterId: number): void;
 }
@@ -111,7 +111,7 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
     const toTime = toDate ? new Date(toDate).getTime() : Infinity;
 
     for (const tx of this.transactions.values()) {
-      if (tx.characterId !== characterId) {
+      if (characterId !== undefined && tx.characterId !== characterId) {
         continue;
       }
 
@@ -219,16 +219,17 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
    * Retrieves paginated journal entries for a character
    */
   public getJournalEntries(
-    characterId: number,
+    characterId?: number,
     page = 1,
     pageSize = 50
   ): { items: CharacterWalletJournalEntry[]; total: number } {
     const matched: CharacterWalletJournalEntry[] = [];
 
     for (const entry of this.journalEntries.values()) {
-      if (entry.characterId === characterId) {
-        matched.push(entry);
+      if (characterId !== undefined && entry.characterId !== characterId) {
+        continue;
       }
+      matched.push(entry);
     }
 
     // Sort by date desc
@@ -254,7 +255,7 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
   /**
    * Computes financial summaries without assuming unproven costs
    */
-  public getSummary(characterId: number): LedgerSummary {
+  public getSummary(characterId?: number): LedgerSummary {
     let totalTransactionsCount = 0;
     let sellTransactionsCount = 0;
     let buyTransactionsCount = 0;
@@ -266,7 +267,7 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
     const distinctLocations = new Set<number>();
 
     for (const tx of this.transactions.values()) {
-      if (tx.characterId !== characterId) continue;
+      if (characterId !== undefined && tx.characterId !== characterId) continue;
 
       totalTransactionsCount++;
       distinctTypes.add(tx.typeId);
@@ -286,7 +287,7 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
     const completeness = totalTransactionsCount > 0 ? 'COMPLETE' : 'ABSENT';
 
     return {
-      characterId,
+      characterId: characterId || 0,
       asOf: Date.now(),
       totalTransactionsCount,
       sellTransactionsCount,
@@ -350,6 +351,14 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
   }
 
   /**
+   * Clears all transactions and journal entries
+   */
+  public reset(): void {
+    this.transactions.clear();
+    this.journalEntries.clear();
+  }
+
+  /**
    * Purges all data for a given character (e.g. on character reset / logout)
    */
   public clearCharacter(characterId: number): void {
@@ -367,3 +376,4 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
 }
 
 export const defaultLedgerRepository = new InMemoryLedgerRepository();
+export const ledgerRepository = defaultLedgerRepository;

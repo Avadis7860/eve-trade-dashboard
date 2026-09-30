@@ -74,9 +74,9 @@ export class AuthService {
   }
 
   /**
-   * Handles OAuth callback: validates state, exchanges code for tokens, creates session
+   * Handles OAuth callback: validates state, exchanges code for tokens, creates session or links character
    */
-  public async handleCallback(code: string, state: string): Promise<UserSession> {
+  public async handleCallback(code: string, state: string, existingSessionId?: string): Promise<UserSession> {
     if (!code || !state) {
       throw new Error('Missing code or state in OAuth callback');
     }
@@ -95,6 +95,26 @@ export class AuthService {
 
     // Expiration timestamp
     const expiresAt = Date.now() + tokens.expires_in * 1000;
+
+    // If an existing valid session is present, link this character to the session
+    if (existingSessionId) {
+      const existing = await this.getValidSession(existingSessionId);
+      if (existing) {
+        const updated = this.sessionStore.addOrUpdateCharacter(
+          existingSessionId,
+          {
+            characterId: identity.characterId,
+            characterName: identity.characterName,
+            scopes: identity.scopes,
+            accessToken: tokens.access_token,
+            refreshToken: tokens.refresh_token,
+            expiresAt,
+          },
+          true
+        );
+        if (updated) return updated;
+      }
+    }
 
     // Create and return session
     return this.sessionStore.createSession({
@@ -224,6 +244,26 @@ export class AuthService {
       return { authenticated: false };
     }
 
+    const charactersList = session.characters
+      ? Object.values(session.characters).map((c) => ({
+          characterId: c.characterId,
+          characterName: c.characterName,
+          portraitUrl: `https://images.evetech.net/characters/${c.characterId}/portrait?size=128`,
+          scopes: c.scopes,
+          expiresAt: c.expiresAt,
+          isActive: c.characterId === (session.activeCharacterId || session.characterId),
+        }))
+      : [
+          {
+            characterId: session.characterId,
+            characterName: session.characterName,
+            portraitUrl: `https://images.evetech.net/characters/${session.characterId}/portrait?size=128`,
+            scopes: session.scopes,
+            expiresAt: session.expiresAt,
+            isActive: true,
+          },
+        ];
+
     return {
       authenticated: true,
       character: {
@@ -233,7 +273,22 @@ export class AuthService {
         scopes: session.scopes,
         expiresAt: session.expiresAt,
       },
+      characters: charactersList,
     };
+  }
+
+  /**
+   * Switches the active character within the user session
+   */
+  public switchActiveCharacter(sessionId: string, characterId: number): UserSession | null {
+    return this.sessionStore.switchActiveCharacter(sessionId, characterId);
+  }
+
+  /**
+   * Removes a linked character from the session
+   */
+  public removeCharacter(sessionId: string, characterId: number): UserSession | null {
+    return this.sessionStore.removeCharacter(sessionId, characterId);
   }
 
   /**

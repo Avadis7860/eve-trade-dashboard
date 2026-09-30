@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { UserSession } from './types.ts';
+import type { UserSession, LinkedCharacter } from './types.ts';
 
 export interface PendingOAuthState {
   verifier: string;
@@ -38,16 +38,127 @@ export class SessionStore {
   }
 
   /**
-   * Creates a new user session
+   * Creates a new user session with primary character and initialized characters map
    */
-  public createSession(sessionData: Omit<UserSession, 'sessionId' | 'createdAt'>): UserSession {
+  public createSession(sessionData: {
+    characterId: number;
+    characterName: string;
+    scopes: string[];
+    accessToken: string;
+    refreshToken: string;
+    expiresAt: number;
+  }): UserSession {
     const sessionId = crypto.randomBytes(32).toString('hex');
+    const linkedChar: LinkedCharacter = {
+      characterId: sessionData.characterId,
+      characterName: sessionData.characterName,
+      scopes: sessionData.scopes,
+      accessToken: sessionData.accessToken,
+      refreshToken: sessionData.refreshToken,
+      expiresAt: sessionData.expiresAt,
+      createdAt: Date.now(),
+    };
+
     const session: UserSession = {
-      ...sessionData,
       sessionId,
+      activeCharacterId: sessionData.characterId,
+      characterId: sessionData.characterId,
+      characterName: sessionData.characterName,
+      scopes: sessionData.scopes,
+      accessToken: sessionData.accessToken,
+      refreshToken: sessionData.refreshToken,
+      expiresAt: sessionData.expiresAt,
+      characters: {
+        [sessionData.characterId]: linkedChar,
+      },
       createdAt: Date.now(),
     };
     this.sessions.set(sessionId, session);
+    return session;
+  }
+
+  /**
+   * Adds or updates a character in an existing session
+   */
+  public addOrUpdateCharacter(
+    sessionId: string,
+    charData: {
+      characterId: number;
+      characterName: string;
+      scopes: string[];
+      accessToken: string;
+      refreshToken: string;
+      expiresAt: number;
+    },
+    makeActive: boolean = true
+  ): UserSession | null {
+    const session = this.getSession(sessionId);
+    if (!session) return null;
+
+    if (!session.characters) {
+      session.characters = {};
+    }
+
+    session.characters[charData.characterId] = {
+      characterId: charData.characterId,
+      characterName: charData.characterName,
+      scopes: charData.scopes,
+      accessToken: charData.accessToken,
+      refreshToken: charData.refreshToken,
+      expiresAt: charData.expiresAt,
+      createdAt: session.characters[charData.characterId]?.createdAt || Date.now(),
+    };
+
+    if (makeActive || session.activeCharacterId === charData.characterId) {
+      session.activeCharacterId = charData.characterId;
+      session.characterId = charData.characterId;
+      session.characterName = charData.characterName;
+      session.scopes = charData.scopes;
+      session.accessToken = charData.accessToken;
+      session.refreshToken = charData.refreshToken;
+      session.expiresAt = charData.expiresAt;
+    }
+
+    return session;
+  }
+
+  /**
+   * Switches the active character in a session
+   */
+  public switchActiveCharacter(sessionId: string, characterId: number): UserSession | null {
+    const session = this.getSession(sessionId);
+    if (!session || !session.characters || !session.characters[characterId]) {
+      return null;
+    }
+
+    const char = session.characters[characterId];
+    session.activeCharacterId = characterId;
+    session.characterId = characterId;
+    session.characterName = char.characterName;
+    session.scopes = char.scopes;
+    session.accessToken = char.accessToken;
+    session.refreshToken = char.refreshToken;
+    session.expiresAt = char.expiresAt;
+    return session;
+  }
+
+  /**
+   * Removes a linked character from session
+   */
+  public removeCharacter(sessionId: string, characterId: number): UserSession | null {
+    const session = this.getSession(sessionId);
+    if (!session || !session.characters) return null;
+
+    delete session.characters[characterId];
+    const remainingIds = Object.keys(session.characters).map(Number);
+    if (remainingIds.length === 0) {
+      this.deleteSession(sessionId);
+      return null;
+    }
+
+    if (session.activeCharacterId === characterId) {
+      this.switchActiveCharacter(sessionId, remainingIds[0]);
+    }
     return session;
   }
 
@@ -74,14 +185,24 @@ export class SessionStore {
     sessionId: string,
     accessToken: string,
     refreshToken: string,
-    expiresAt: number
+    expiresAt: number,
+    characterId?: number
   ): boolean {
     const session = this.sessions.get(sessionId);
     if (!session) return false;
 
-    session.accessToken = accessToken;
-    session.refreshToken = refreshToken;
-    session.expiresAt = expiresAt;
+    const targetCharId = characterId || session.activeCharacterId || session.characterId;
+    if (session.characters && session.characters[targetCharId]) {
+      session.characters[targetCharId].accessToken = accessToken;
+      session.characters[targetCharId].refreshToken = refreshToken;
+      session.characters[targetCharId].expiresAt = expiresAt;
+    }
+
+    if (session.activeCharacterId === targetCharId || session.characterId === targetCharId) {
+      session.accessToken = accessToken;
+      session.refreshToken = refreshToken;
+      session.expiresAt = expiresAt;
+    }
     return true;
   }
 

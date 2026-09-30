@@ -7,6 +7,8 @@ import { createAuthRouter } from './src/server/auth/router.ts';
 import { createEsiRouter } from './src/server/esi/router.ts';
 import { createLedgerRouter } from './src/server/ledger/router.ts';
 import { createOrdersRouter } from './src/server/orders/router.ts';
+import { hubsRouter } from './src/server/hubs/router.ts';
+import { roiRouter } from './src/server/roi/router.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,7 +33,7 @@ export async function createApp() {
     res.json({
       name: 'EVE Trade Dashboard',
       description: 'EVE Online trade dashboard',
-      phase: 'PHASE-04-order-lifecycle',
+      phase: 'PHASE-05-hubs-and-roi',
       status: 'operational',
     });
   });
@@ -47,6 +49,12 @@ export async function createApp() {
 
   // Orders Lifecycle & Restock Router
   app.use('/api/orders', createOrdersRouter());
+
+  // Hubs Router
+  app.use('/api/hubs', hubsRouter);
+
+  // ROI TTC Router
+  app.use('/api/roi', roiRouter);
 
   // Vite middleware in dev or static serving in prod
   if (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test') {

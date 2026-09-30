@@ -62,7 +62,8 @@ export function createAuthRouter(authService: AuthService = new AuthService()): 
     }
 
     try {
-      const session = await authService.handleCallback(code, state);
+      const existingSessionId = req.cookies?.[SESSION_COOKIE_NAME];
+      const session = await authService.handleCallback(code, state, existingSessionId);
 
       res.cookie(SESSION_COOKIE_NAME, session.sessionId, {
         httpOnly: true,
@@ -79,7 +80,7 @@ export function createAuthRouter(authService: AuthService = new AuthService()): 
   });
 
   /**
-   * Session endpoint: returns currently authenticated character
+   * Session endpoint: returns currently authenticated character and linked characters
    */
   router.get('/session', async (req: Request, res: Response) => {
     const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
@@ -93,6 +94,47 @@ export function createAuthRouter(authService: AuthService = new AuthService()): 
       // Clear stale cookie
       res.clearCookie(SESSION_COOKIE_NAME);
       res.json(authService.getPublicSessionInfo(null));
+      return;
+    }
+
+    res.json(authService.getPublicSessionInfo(session));
+  });
+
+  /**
+   * Switch active character endpoint
+   */
+  router.post('/switch', (req: Request, res: Response) => {
+    const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
+    const { characterId } = req.body;
+    if (!sessionId || !characterId) {
+      res.status(400).json({ error: 'sessionId and characterId are required' });
+      return;
+    }
+
+    const session = authService.switchActiveCharacter(sessionId, Number(characterId));
+    if (!session) {
+      res.status(404).json({ error: 'Personnage introuvable dans cette session' });
+      return;
+    }
+
+    res.json(authService.getPublicSessionInfo(session));
+  });
+
+  /**
+   * Unlink a character from session
+   */
+  router.delete('/character/:characterId', (req: Request, res: Response) => {
+    const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
+    const characterId = Number(req.params.characterId);
+    if (!sessionId || isNaN(characterId)) {
+      res.status(400).json({ error: 'characterId valide requis' });
+      return;
+    }
+
+    const session = authService.removeCharacter(sessionId, characterId);
+    if (!session) {
+      res.clearCookie(SESSION_COOKIE_NAME);
+      res.json({ authenticated: false, characters: [] });
       return;
     }
 

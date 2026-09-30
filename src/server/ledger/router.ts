@@ -5,6 +5,7 @@ import { type ISyncRepository, defaultSyncRepository } from '../sync/repository.
 import { AuthService } from '../auth/service.ts';
 import { defaultSessionStore } from '../auth/sessionStore.ts';
 import type { LedgerFilterType } from './types.ts';
+import { roiService } from '../roi/service.ts';
 
 const SESSION_COOKIE_NAME = 'eve_session_id';
 
@@ -139,25 +140,38 @@ export function createLedgerRouter(
 
   /**
    * POST /api/ledger/sync
-   * Triggers an on-demand sync of wallet transactions and journal
+   * Triggers an on-demand sync of wallet transactions and journal for all linked characters
    */
   router.post('/sync', requireSession, async (req: Request, res: Response) => {
     const session = (req as Request & { session: NonNullable<Awaited<ReturnType<typeof authService.getValidSession>>> }).session;
 
     try {
-      const syncResult = await syncService.syncAll(
-        session.characterId,
-        session.accessToken,
-        async () => {
-          const refreshed = await authService.refreshSessionTokens(session);
-          return refreshed.accessToken;
-        }
-      );
+      const allCharacters = session.characters ? Object.values(session.characters) : [];
+      const charIdsToSync = allCharacters.length > 0
+        ? allCharacters
+        : [{ characterId: session.characterId, accessToken: session.accessToken }];
+
+      let lastResult;
+      for (const char of charIdsToSync) {
+        lastResult = await syncService.syncAll(
+          char.characterId,
+          char.accessToken,
+          async () => {
+            const refreshed = await authService.refreshSessionTokens(session);
+            return refreshed.accessToken;
+          }
+        );
+      }
+
+      // Automatically reconcile across all linked characters in the ecosystem
+      const allCharIds = charIdsToSync.map((c) => c.characterId);
+      roiService.autoReconcileFifo({ characterIds: allCharIds });
 
       res.json({
-        success: syncResult.transactions.status !== 'ERROR',
-        results: syncResult,
+        success: lastResult ? lastResult.transactions.status !== 'ERROR' : true,
+        results: lastResult,
         status: syncRepo.getFullStatus(session.characterId),
+        syncedCharacterIds: allCharIds,
       });
     } catch (err: unknown) {
       res.status(500).json({ error: (err as Error).message });

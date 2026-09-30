@@ -30,7 +30,15 @@ import {
   Trash2,
   CheckSquare,
   Sparkles,
-  ClipboardList
+  ClipboardList,
+  Percent,
+  MapPin,
+  Layers,
+  Scale,
+  Link2,
+  Users,
+  UserPlus,
+  ChevronDown
 } from 'lucide-react';
 
 interface HealthStatus {
@@ -46,11 +54,13 @@ interface CharacterSession {
   portraitUrl: string;
   scopes: string[];
   expiresAt: number;
+  isActive?: boolean;
 }
 
 interface AuthSessionResponse {
   authenticated: boolean;
   character?: CharacterSession;
+  characters?: CharacterSession[];
 }
 
 interface AuthStatusResponse {
@@ -174,6 +184,99 @@ export interface RestockItem {
   updatedAt: number;
 }
 
+export interface HubDefinition {
+  id: string;
+  name: string;
+  system_name?: string;
+  is_system_default: boolean;
+  notes?: string;
+  created_at: string;
+}
+
+export interface HubLocationMapping {
+  location_id: number;
+  location_name: string;
+  hub_id: string;
+  notes?: string;
+  updated_at: string;
+}
+
+export interface HubPairPerformance {
+  buy_hub_id: string;
+  buy_hub_name: string;
+  sell_hub_id: string;
+  sell_hub_name: string;
+  sold_volume_total: number;
+  sold_volume_allocated: number;
+  gross_revenue: number;
+  allocated_buy_cost: number;
+  allocated_buy_fees: number;
+  attributable_sell_fees: number;
+  realized_profit_ttc: number | null;
+  roi_percent_ttc: number | null;
+  coverage_status: 'COMPLETE' | 'PARTIAL' | 'UNKNOWN' | 'EMPTY';
+  coverage_percent: number;
+  transaction_count: number;
+}
+
+export interface ExplicitCostAllocation {
+  id: string;
+  character_id: number;
+  sell_transaction_id: number;
+  buy_transaction_id: number;
+  type_id: number;
+  type_name: string;
+  quantity_allocated: number;
+  unit_buy_price: number;
+  allocated_buy_cost: number;
+  allocated_buy_fees: number;
+  allocated_sell_fees: number;
+  buy_hub_id: string;
+  buy_hub_name: string;
+  sell_hub_id: string;
+  sell_hub_name: string;
+  created_at: string;
+  notes?: string;
+}
+
+export interface UnsoldInventoryItem {
+  character_id: number;
+  buy_transaction_id: number;
+  type_id: number;
+  type_name: string;
+  buy_date: string;
+  original_quantity: number;
+  allocated_quantity: number;
+  remaining_quantity: number;
+  unit_buy_price: number;
+  tied_capital_isk: number;
+  allocated_buy_fees_remaining: number;
+  location_id: number;
+  hub_id: string;
+  hub_name: string;
+}
+
+export interface RoiFinancialSummary {
+  as_of: string;
+  character_id?: number;
+  period_label: string;
+  total_sales_volume: number;
+  allocated_sales_volume: number;
+  unallocated_sales_volume: number;
+  gross_revenue_isk: number;
+  allocated_buy_cost_isk: number;
+  allocated_buy_fees_isk: number;
+  attributable_sell_fees_isk: number;
+  total_allocated_investment_ttc: number;
+  realized_profit_ttc_isk: number | null;
+  roi_percent_ttc: number | null;
+  tied_up_capital_isk: number;
+  unsold_items_count: number;
+  coverage_status: 'COMPLETE' | 'PARTIAL' | 'UNKNOWN' | 'EMPTY';
+  coverage_percent: number;
+  hub_pairs: HubPairPerformance[];
+}
+
 interface LedgerSummary {
   characterId: number;
   asOf: number;
@@ -220,11 +323,13 @@ export default function App() {
   const [authConfigured, setAuthConfigured] = useState<boolean | null>(null);
   const [esiStatus, setEsiStatus] = useState<EsiStatusResponse | null>(null);
   const [session, setSession] = useState<CharacterSession | null>(null);
+  const [linkedCharacters, setLinkedCharacters] = useState<CharacterSession[]>([]);
+  const [showCharacterDropdown, setShowCharacterDropdown] = useState(false);
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
 
   // Active Tab View
-  const [activeTab, setActiveTab] = useState<'ledger' | 'orders' | 'restock' | 'journal' | 'overview'>('ledger');
+  const [activeTab, setActiveTab] = useState<'ledger' | 'orders' | 'restock' | 'hubs-roi' | 'journal' | 'overview'>('ledger');
 
   // Ledger state
   const [transactions, setTransactions] = useState<CharacterTransaction[]>([]);
@@ -274,6 +379,26 @@ export default function App() {
     justification: 'Approvisionnement manuel planifié',
     notes: '',
   });
+
+  // Hubs & ROI TTC State (Phase 05)
+  const [roiSummary, setRoiSummary] = useState<RoiFinancialSummary | null>(null);
+  const [allocations, setAllocations] = useState<ExplicitCostAllocation[]>([]);
+  const [unsoldInventory, setUnsoldInventory] = useState<UnsoldInventoryItem[]>([]);
+  const [hubsList, setHubsList] = useState<HubDefinition[]>([]);
+  const [hubsMappings, setHubsMappings] = useState<HubLocationMapping[]>([]);
+  const [showAddHubModal, setShowAddHubModal] = useState(false);
+  const [showAddMappingModal, setShowAddMappingModal] = useState(false);
+  const [showAddAllocationModal, setShowAddAllocationModal] = useState(false);
+  const [newHubForm, setNewHubForm] = useState({ name: '', system_name: '', notes: '' });
+  const [newMappingForm, setNewMappingForm] = useState({ location_id: 0, location_name: '', hub_id: 'hub-jita', notes: '' });
+  const [newAllocForm, setNewAllocForm] = useState({
+    sell_transaction_id: 0,
+    buy_transaction_id: 0,
+    quantity_to_allocate: 0,
+    notes: '',
+  });
+  const [isReconciling, setIsReconciling] = useState(false);
+  const [reconcileMessage, setReconcileMessage] = useState<string | null>(null);
 
   const fetchLedgerData = useCallback(async () => {
     if (!session) return;
@@ -340,6 +465,27 @@ export default function App() {
     }
   }, [session, ordersPage, orderStateFilter, ordersSearch]);
 
+  const fetchRoiAndHubsData = useCallback(async () => {
+    if (!session) return;
+    try {
+      const [summaryRes, allocRes, invRes, hubsRes, mapRes] = await Promise.all([
+        fetch('/api/roi/summary').then((r) => (r.ok ? r.json() : null)),
+        fetch('/api/roi/allocations').then((r) => (r.ok ? r.json() : null)),
+        fetch('/api/roi/unsold-inventory').then((r) => (r.ok ? r.json() : null)),
+        fetch('/api/hubs').then((r) => (r.ok ? r.json() : null)),
+        fetch('/api/hubs/mappings').then((r) => (r.ok ? r.json() : null)),
+      ]);
+
+      if (summaryRes?.summary) setRoiSummary(summaryRes.summary);
+      if (allocRes?.allocations) setAllocations(allocRes.allocations);
+      if (invRes?.inventory) setUnsoldInventory(invRes.inventory);
+      if (hubsRes?.hubs) setHubsList(hubsRes.hubs);
+      if (mapRes?.mappings) setHubsMappings(mapRes.mappings);
+    } catch (err) {
+      console.error('Failed to load ROI and Hubs data:', err);
+    }
+  }, [session]);
+
   const handleSync = async () => {
     if (isSyncing || !session) return;
     setIsSyncing(true);
@@ -347,7 +493,7 @@ export default function App() {
     try {
       const res = await fetch('/api/ledger/sync', { method: 'POST' });
       if (res.ok) {
-        await Promise.all([fetchLedgerData(), fetchOrdersData()]);
+        await Promise.all([fetchLedgerData(), fetchOrdersData(), fetchRoiAndHubsData()]);
       }
     } catch (err) {
       console.error('Sync failed:', err);
@@ -463,12 +609,130 @@ export default function App() {
     });
   }, []);
 
+  const handleCreateHub = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('/api/hubs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newHubForm),
+      });
+      if (res.ok) {
+        setShowAddHubModal(false);
+        setNewHubForm({ name: '', system_name: '', notes: '' });
+        fetchRoiAndHubsData();
+      }
+    } catch (err) {
+      console.error('Failed to create hub:', err);
+    }
+  };
+
+  const handleDeleteHub = async (hubId: string) => {
+    try {
+      const res = await fetch(`/api/hubs/${encodeURIComponent(hubId)}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchRoiAndHubsData();
+      }
+    } catch (err) {
+      console.error('Failed to delete hub:', err);
+    }
+  };
+
+  const handleCreateMapping = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('/api/hubs/mappings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newMappingForm),
+      });
+      if (res.ok) {
+        setShowAddMappingModal(false);
+        setNewMappingForm({ location_id: 0, location_name: '', hub_id: 'hub-jita', notes: '' });
+        fetchRoiAndHubsData();
+      }
+    } catch (err) {
+      console.error('Failed to create mapping:', err);
+    }
+  };
+
+  const handleDeleteMapping = async (locationId: number) => {
+    try {
+      const res = await fetch(`/api/hubs/mappings/${locationId}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchRoiAndHubsData();
+      }
+    } catch (err) {
+      console.error('Failed to delete mapping:', err);
+    }
+  };
+
+  const handleCreateAllocation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('/api/roi/allocations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          character_id: session?.characterId,
+          sell_transaction_id: Number(newAllocForm.sell_transaction_id),
+          buy_transaction_id: Number(newAllocForm.buy_transaction_id),
+          quantity_to_allocate: Number(newAllocForm.quantity_to_allocate),
+          notes: newAllocForm.notes,
+        }),
+      });
+      if (res.ok) {
+        setShowAddAllocationModal(false);
+        setNewAllocForm({ sell_transaction_id: 0, buy_transaction_id: 0, quantity_to_allocate: 0, notes: '' });
+        fetchRoiAndHubsData();
+      }
+    } catch (err) {
+      console.error('Failed to create allocation:', err);
+    }
+  };
+
+  const handleDeleteAllocation = async (id: string) => {
+    try {
+      const res = await fetch(`/api/roi/allocations/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchRoiAndHubsData();
+      }
+    } catch (err) {
+      console.error('Failed to delete allocation:', err);
+    }
+  };
+
+  const handleAutoReconcile = async () => {
+    if (isReconciling || !session) return;
+    setIsReconciling(true);
+    setReconcileMessage(null);
+    try {
+      const res = await fetch('/api/roi/reconcile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ character_id: session.characterId }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setReconcileMessage(
+          `${data.result.allocations_created} allocations créées (${data.result.total_quantity_reconciled} unités rapprochées en FIFO)`
+        );
+        await fetchRoiAndHubsData();
+      }
+    } catch (err) {
+      console.error('Failed to run auto-reconciliation:', err);
+    } finally {
+      setIsReconciling(false);
+    }
+  };
+
   useEffect(() => {
     if (session) {
       fetchLedgerData();
       fetchOrdersData();
+      fetchRoiAndHubsData();
     }
-  }, [session, activeTab, fetchLedgerData, fetchOrdersData]);
+  }, [session, activeTab, fetchLedgerData, fetchOrdersData, fetchRoiAndHubsData]);
 
   const checkSession = useCallback(async () => {
     try {
@@ -477,14 +741,58 @@ export default function App() {
         const data: AuthSessionResponse = await res.json();
         if (data.authenticated && data.character) {
           setSession(data.character);
+          if (data.characters) {
+            setLinkedCharacters(data.characters);
+          }
         } else {
           setSession(null);
+          setLinkedCharacters([]);
         }
       }
     } catch (err) {
       console.error('Session check failed:', err);
     }
   }, []);
+
+  const handleSwitchCharacter = async (characterId: number) => {
+    try {
+      const res = await fetch('/api/auth/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ characterId }),
+      });
+      if (res.ok) {
+        const data: AuthSessionResponse = await res.json();
+        if (data.authenticated && data.character) {
+          setSession(data.character);
+          if (data.characters) setLinkedCharacters(data.characters);
+          setShowCharacterDropdown(false);
+          await Promise.all([fetchLedgerData(), fetchOrdersData(), fetchRoiAndHubsData()]);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to switch character:', err);
+    }
+  };
+
+  const handleUnlinkCharacter = async (characterId: number) => {
+    try {
+      const res = await fetch(`/api/auth/character/${characterId}`, { method: 'DELETE' });
+      if (res.ok) {
+        const data: AuthSessionResponse = await res.json();
+        if (data.authenticated && data.character) {
+          setSession(data.character);
+          if (data.characters) setLinkedCharacters(data.characters);
+        } else {
+          setSession(null);
+          setLinkedCharacters([]);
+        }
+        await Promise.all([fetchLedgerData(), fetchOrdersData(), fetchRoiAndHubsData()]);
+      }
+    } catch (err) {
+      console.error('Failed to unlink character:', err);
+    }
+  };
 
   // Listen for window focus / visibility change to auto-detect session after OAuth login in new tab
   useEffect(() => {
@@ -510,6 +818,9 @@ export default function App() {
       setRestockItems([]);
       setSummary(null);
       setOrderSummary(null);
+      setRoiSummary(null);
+      setAllocations([]);
+      setUnsoldInventory([]);
     } catch (err) {
       console.error('Logout failed:', err);
     }
@@ -520,8 +831,8 @@ export default function App() {
     { id: '01', name: 'EVE SSO & Identité', status: session ? 'Connecté' : 'Terminé', desc: 'OAuth 2.0 PKCE, gestion sécurisée des sessions et tokens' },
     { id: '02', name: 'Passerelle ESI Résiliente', status: 'Terminé', desc: 'Cache 304, rate limits (420/429), gestion des erreurs et pagination' },
     { id: '03', name: 'Transactions & Grand Livre', status: 'Terminé', desc: 'Sync wallet idempotente, pagination from_id, grand livre des ventes' },
-    { id: '04', name: 'Ordres & Réapprovisionnement', status: 'Actif', desc: 'Snapshots ordres de marché, cycle de vie et listes locales' },
-    { id: '05', name: 'Hubs & ROI TTC', status: 'Planifiée', desc: 'Taxes, frais de courtage, rentabilité réelle' },
+    { id: '04', name: 'Ordres & Réapprovisionnement', status: 'Terminé', desc: 'Snapshots ordres de marché, cycle de vie et listes locales' },
+    { id: '05', name: 'Hubs & ROI TTC', status: 'Actif', desc: 'Taxes, frais de courtage, rentabilité réelle et allocations explicites' },
     { id: '06', name: 'Dashboard Intégré', status: 'Planifiée', desc: 'Vue unifiée, filtres et métriques consolidées' },
   ];
 
@@ -595,6 +906,17 @@ export default function App() {
                   Réapprovisionnement
                 </button>
                 <button
+                  onClick={() => setActiveTab('hubs-roi')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                    activeTab === 'hubs-roi'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                  }`}
+                >
+                  <Scale className="w-3.5 h-3.5" />
+                  Hubs &amp; ROI TTC
+                </button>
+                <button
                   onClick={() => setActiveTab('journal')}
                   className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
                     activeTab === 'journal'
@@ -621,23 +943,117 @@ export default function App() {
           {/* User / Session Area in Header */}
           <div className="flex items-center space-x-3">
             {session ? (
-              <div className="flex items-center space-x-3 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5">
-                <img
-                  src={session.portraitUrl}
-                  alt={session.characterName}
-                  className="w-7 h-7 rounded border border-amber-500/40 bg-slate-800 object-cover"
-                />
-                <div className="text-left hidden sm:block">
-                  <div className="text-xs font-semibold text-slate-200 leading-tight">{session.characterName}</div>
-                  <div className="text-[10px] text-slate-400 font-mono">ID: {session.characterId}</div>
+              <div className="relative">
+                <div className="flex items-center space-x-2">
+                  <div
+                    onClick={() => setShowCharacterDropdown(!showCharacterDropdown)}
+                    className="flex items-center space-x-2.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-amber-500/40 rounded-lg px-2.5 py-1.5 cursor-pointer transition-colors"
+                  >
+                    <img
+                      src={session.portraitUrl}
+                      alt={session.characterName}
+                      className="w-7 h-7 rounded border border-amber-500/40 bg-slate-800 object-cover"
+                    />
+                    <div className="text-left hidden sm:block">
+                      <div className="text-xs font-semibold text-slate-200 leading-tight flex items-center gap-1.5">
+                        {session.characterName}
+                        {linkedCharacters.length > 1 && (
+                          <span className="text-[10px] font-mono px-1.5 py-0.2 bg-amber-500/20 text-amber-300 rounded border border-amber-500/30">
+                            {linkedCharacters.length} persos
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono">ID: {session.characterId}</div>
+                    </div>
+                    <ChevronDown className="w-3.5 h-3.5 text-slate-400 ml-1" />
+                  </div>
+
+                  <a
+                    href="/api/auth/login"
+                    title="Lier un autre personnage EVE SSO à cette session"
+                    className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-sky-500/40 text-slate-300 hover:text-sky-300 text-xs font-medium flex items-center gap-1.5 transition-colors"
+                  >
+                    <UserPlus className="w-3.5 h-3.5 text-sky-400" />
+                    <span className="hidden md:inline">+ Perso</span>
+                  </a>
+
+                  <button
+                    onClick={handleLogout}
+                    title="Déconnexion de tous les personnages"
+                    className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-rose-400 rounded-lg border border-slate-800 transition-colors"
+                  >
+                    <LogOut className="w-4 h-4" />
+                  </button>
                 </div>
-                <button
-                  onClick={handleLogout}
-                  title="Déconnexion"
-                  className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-rose-400 rounded transition-colors"
-                >
-                  <LogOut className="w-4 h-4" />
-                </button>
+
+                {showCharacterDropdown && (
+                  <div className="absolute right-0 mt-2 w-72 rounded-xl border border-slate-800 bg-slate-950 p-2 shadow-2xl z-50 space-y-2">
+                    <div className="px-2 py-1 text-[11px] font-mono uppercase tracking-wider text-slate-400 flex items-center justify-between border-b border-slate-800 pb-2">
+                      <span className="flex items-center gap-1.5">
+                        <Users className="w-3.5 h-3.5 text-amber-400" />
+                        Écosystème ({linkedCharacters.length} personnage{linkedCharacters.length > 1 ? 's' : ''})
+                      </span>
+                    </div>
+
+                    <div className="max-h-60 overflow-y-auto space-y-1">
+                      {linkedCharacters.map((c) => {
+                        const isCurrent = c.characterId === session.characterId;
+                        return (
+                          <div
+                            key={c.characterId}
+                            className={`flex items-center justify-between p-2 rounded-lg border transition-colors ${
+                              isCurrent
+                                ? 'bg-amber-500/10 border-amber-500/30 text-amber-200'
+                                : 'bg-slate-900/50 border-slate-800/80 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
+                            }`}
+                          >
+                            <div
+                              onClick={() => !isCurrent && handleSwitchCharacter(c.characterId)}
+                              className="flex items-center gap-2.5 flex-1 cursor-pointer"
+                            >
+                              <img
+                                src={c.portraitUrl}
+                                alt={c.characterName}
+                                className="w-6 h-6 rounded object-cover border border-slate-700"
+                              />
+                              <div className="text-left text-xs">
+                                <div className="font-semibold leading-tight flex items-center gap-1.5">
+                                  {c.characterName}
+                                  {isCurrent && (
+                                    <span className="text-[9px] font-mono px-1 rounded bg-amber-500/20 text-amber-300">
+                                      ACTIF
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[10px] text-slate-500 font-mono">ID: {c.characterId}</div>
+                              </div>
+                            </div>
+
+                            {linkedCharacters.length > 1 && (
+                              <button
+                                onClick={() => handleUnlinkCharacter(c.characterId)}
+                                title="Délier ce personnage"
+                                className="p-1 text-slate-500 hover:text-rose-400 rounded hover:bg-slate-800 transition-colors"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="border-t border-slate-800 pt-2">
+                      <a
+                        href="/api/auth/login"
+                        className="w-full py-2 px-3 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky-300 text-xs font-semibold flex items-center justify-center gap-2 transition-colors"
+                      >
+                        <UserPlus className="w-3.5 h-3.5" />
+                        Lier un autre personnage EVE SSO
+                      </a>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="flex items-center space-x-2 text-xs font-mono">
@@ -1441,6 +1857,406 @@ export default function App() {
                 </div>
               </div>
             )}
+
+            {/* TAB: HUBS & ROI TTC (PHASE 05) */}
+            {activeTab === 'hubs-roi' && (
+              <div className="space-y-6">
+                {/* Multi-Character Trading Ecosystem Card */}
+                <div className="p-4 rounded-xl border border-sky-500/25 bg-gradient-to-r from-sky-950/30 via-slate-900/60 to-slate-900/30 space-y-3">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div className="flex items-center space-x-3">
+                      <div className="p-2.5 rounded-lg bg-sky-500/10 border border-sky-500/30 text-sky-400">
+                        <Users className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-mono uppercase text-sky-400 font-semibold flex items-center gap-2">
+                          <span>Écosystème Commercial Multi-Personnages</span>
+                          <span className="px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 text-[10px] font-mono border border-sky-500/30">
+                            {linkedCharacters.length} personnage{linkedCharacters.length > 1 ? 's' : ''} connecté{linkedCharacters.length > 1 ? 's' : ''}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-300 mt-0.5 max-w-2xl">
+                          {linkedCharacters.length > 1
+                            ? 'Tous les achats et ventes de vos personnages sont regroupés dans un même pool chronologique (FIFO). Les achats du Personnage A (ex: acheteur Jita) alimentent automatiquement les ventes du Personnage B (ex: vendeur régional).'
+                            : 'Un seul personnage est actuellement lié à cette session. Si vous utilisez un personnage acheteur (ex: Jita) et un personnage vendeur (ex: Dodixie / Amarr), liez votre second personnage pour que la réconciliation FIFO couvre 100% de vos flux au lieu d\'un taux partiel.'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <a
+                      href="/api/auth/login"
+                      className="px-3.5 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 text-xs font-bold flex items-center gap-2 shadow-lg shadow-sky-500/10 shrink-0 transition-transform active:scale-95"
+                    >
+                      <UserPlus className="w-4 h-4" />
+                      + Lier un Personnage EVE SSO
+                    </a>
+                  </div>
+
+                  {/* Badges of all participating characters */}
+                  <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-800/80">
+                    <span className="text-[11px] font-mono text-slate-400 mr-1">Personnages du pool :</span>
+                    {linkedCharacters.map((c) => {
+                      const isCurrent = c.characterId === session?.characterId;
+                      return (
+                        <div
+                          key={c.characterId}
+                          onClick={() => !isCurrent && handleSwitchCharacter(c.characterId)}
+                          className={`flex items-center gap-2 px-2.5 py-1 rounded-lg border text-xs cursor-pointer transition-colors ${
+                            isCurrent
+                              ? 'bg-amber-500/15 border-amber-500/40 text-amber-200'
+                              : 'bg-slate-900 border-slate-800 hover:border-slate-700 text-slate-300'
+                          }`}
+                          title={isCurrent ? 'Personnage actuellement sélectionné' : 'Cliquer pour basculer sur ce personnage'}
+                        >
+                          <img
+                            src={c.portraitUrl}
+                            alt={c.characterName}
+                            className="w-5 h-5 rounded object-cover border border-slate-700"
+                          />
+                          <span className="font-medium">{c.characterName}</span>
+                          {isCurrent ? (
+                            <span className="text-[9px] font-mono text-amber-400 bg-amber-400/20 px-1 py-0.2 rounded">ACTIF</span>
+                          ) : (
+                            <span className="text-[9px] font-mono text-slate-500">BASCULER</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Financial KPIs */}
+                {roiSummary && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-1">
+                      <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
+                        <ArrowUpRight className="w-4 h-4 text-emerald-400" />
+                        Chiffre d&apos;Affaires Brut
+                      </span>
+                      <div className="text-xl font-bold text-emerald-400">
+                        {formatIsk(roiSummary.gross_revenue_isk)}
+                      </div>
+                      <div className="text-xs text-slate-400 font-mono">
+                        {roiSummary.total_sales_volume.toLocaleString()} unités vendues ({roiSummary.period_label})
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-1">
+                      <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
+                        <Coins className="w-4 h-4 text-sky-400" />
+                        Coût Alloué TTC
+                      </span>
+                      <div className="text-xl font-bold text-sky-400">
+                        {formatIsk(roiSummary.total_allocated_investment_ttc)}
+                      </div>
+                      <div className="text-xs text-slate-400 font-mono">
+                        Achats: {formatIsk(roiSummary.allocated_buy_cost_isk)} + Frais: {formatIsk(roiSummary.allocated_buy_fees_isk)}
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-1">
+                      <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
+                        <TrendingUp className="w-4 h-4 text-amber-400" />
+                        Profit Réalisé TTC
+                      </span>
+                      <div className={`text-xl font-bold ${
+                        roiSummary.realized_profit_ttc_isk === null
+                          ? 'text-slate-500'
+                          : roiSummary.realized_profit_ttc_isk >= 0
+                          ? 'text-emerald-400'
+                          : 'text-rose-400'
+                      }`}>
+                        {roiSummary.realized_profit_ttc_isk !== null
+                          ? formatIsk(roiSummary.realized_profit_ttc_isk)
+                          : 'INCONNU'}
+                      </div>
+                      <div className="text-xs text-slate-400 font-mono">
+                        Net de taxes de cession ({formatIsk(roiSummary.attributable_sell_fees_isk)})
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
+                          <Percent className="w-4 h-4 text-purple-400" />
+                          ROI Réalisé TTC
+                        </span>
+                        <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                          roiSummary.coverage_status === 'COMPLETE'
+                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                            : roiSummary.coverage_status === 'PARTIAL'
+                            ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                            : roiSummary.coverage_status === 'UNKNOWN'
+                            ? 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                            : 'bg-slate-800 text-slate-400 border-slate-700'
+                        }`}>
+                          {roiSummary.coverage_status === 'COMPLETE'
+                            ? '100% COUVERT'
+                            : roiSummary.coverage_status === 'PARTIAL'
+                            ? `${roiSummary.coverage_percent}% COUVERT`
+                            : roiSummary.coverage_status === 'UNKNOWN'
+                            ? 'PREUVES MANQUANTES'
+                            : 'VIDE'}
+                        </span>
+                      </div>
+                      <div className="text-xl font-bold text-slate-100">
+                        {roiSummary.roi_percent_ttc !== null ? `${roiSummary.roi_percent_ttc} %` : 'NON CALCULABLE'}
+                      </div>
+                      <div className="text-xs text-slate-400 font-mono">
+                        {roiSummary.allocated_sales_volume} / {roiSummary.total_sales_volume} unités allouées
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Capital Immobilisé & Invendus Card */}
+                {roiSummary && (
+                  <div className="p-4 rounded-xl border border-amber-500/20 bg-amber-500/5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                    <div className="flex items-center space-x-3">
+                      <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400">
+                        <Scale className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-mono uppercase text-amber-400 font-semibold">
+                          Capital Immobilisé (Stock Invendu Non Alloué)
+                        </div>
+                        <div className="text-lg font-bold text-slate-100">
+                          {formatIsk(roiSummary.tied_up_capital_isk)}
+                        </div>
+                        <div className="text-xs text-slate-400">
+                          {roiSummary.unsold_items_count} lots d&apos;achats conservent du capital immobilisé sans profit fictif anticipé.
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex flex-col sm:flex-row items-end sm:items-center gap-2 w-full md:w-auto">
+                      {reconcileMessage && (
+                        <div className="text-xs text-sky-400 font-mono flex items-center gap-1.5 mr-2">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-sky-400" />
+                          {reconcileMessage}
+                        </div>
+                      )}
+                      <button
+                        onClick={handleAutoReconcile}
+                        disabled={isReconciling}
+                        className="px-3 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 text-xs font-semibold flex items-center gap-1.5 shadow disabled:opacity-50"
+                        title="Rapproche automatiquement les ventes avec les achats antérieurs du même objet par ordre chronologique"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${isReconciling ? 'animate-spin' : ''}`} />
+                        {isReconciling ? 'Rapprochement FIFO...' : 'Rapprochement FIFO Automatique'}
+                      </button>
+                      <button
+                        onClick={() => setShowAddAllocationModal(true)}
+                        className="px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold flex items-center gap-1.5 shadow"
+                      >
+                        <Link2 className="w-3.5 h-3.5" />
+                        Allocation Manuelle
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Hub Pairs Performance Table */}
+                <div className="rounded-xl border border-slate-800 bg-slate-900/40 overflow-hidden">
+                  <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                        <Layers className="w-4 h-4 text-amber-400" />
+                        Performance par Paire de Hubs (Hub Achat → Hub Vente)
+                      </h3>
+                      <p className="text-xs text-slate-400">
+                        Calculs financiers basés uniquement sur les flux vérifiables avec frais TTC attribués.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-800 bg-slate-950/60 font-mono text-slate-400">
+                          <th className="py-2.5 px-4">Hub Achat Source</th>
+                          <th className="py-2.5 px-4">Hub Vente Cible</th>
+                          <th className="py-2.5 px-4 text-right">Volume Alloué</th>
+                          <th className="py-2.5 px-4 text-right">Chiffre d&apos;Affaires</th>
+                          <th className="py-2.5 px-4 text-right">Investissement TTC</th>
+                          <th className="py-2.5 px-4 text-right">Profit Réalisé TTC</th>
+                          <th className="py-2.5 px-4 text-right">ROI TTC (%)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {!roiSummary?.hub_pairs || roiSummary.hub_pairs.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="py-8 text-center text-slate-500 font-mono">
+                              Aucune allocation de paire de hubs enregistrée. Rapprochez des transactions pour afficher les flux.
+                            </td>
+                          </tr>
+                        ) : (
+                          roiSummary.hub_pairs.map((pair, idx) => (
+                            <tr key={idx} className="hover:bg-slate-800/40">
+                              <td className="py-2.5 px-4 font-medium text-sky-400">
+                                {pair.buy_hub_name}
+                              </td>
+                              <td className="py-2.5 px-4 font-medium text-emerald-400">
+                                {pair.sell_hub_name}
+                              </td>
+                              <td className="py-2.5 px-4 text-right font-mono text-slate-300">
+                                {pair.sold_volume_allocated.toLocaleString()}
+                              </td>
+                              <td className="py-2.5 px-4 text-right font-mono text-slate-200 font-semibold">
+                                {formatIsk(pair.gross_revenue)}
+                              </td>
+                              <td className="py-2.5 px-4 text-right font-mono text-slate-300">
+                                {formatIsk(pair.allocated_buy_cost + pair.allocated_buy_fees)}
+                              </td>
+                              <td className={`py-2.5 px-4 text-right font-mono font-bold ${
+                                (pair.realized_profit_ttc || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                              }`}>
+                                {pair.realized_profit_ttc !== null ? formatIsk(pair.realized_profit_ttc) : '—'}
+                              </td>
+                              <td className="py-2.5 px-4 text-right font-mono text-purple-300 font-semibold">
+                                {pair.roi_percent_ttc !== null ? `${pair.roi_percent_ttc} %` : '—'}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Hub Configuration & Location Mappings Section */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Configured Hubs */}
+                  <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <MapPin className="w-4 h-4 text-amber-400" />
+                        <h4 className="text-sm font-bold text-slate-100">Hubs Commerciaux Configurés</h4>
+                      </div>
+                      <button
+                        onClick={() => setShowAddHubModal(true)}
+                        className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium flex items-center gap-1"
+                      >
+                        <Plus className="w-3 h-3" /> Nouveau Hub
+                      </button>
+                    </div>
+
+                    <div className="space-y-2">
+                      {hubsList.map((h) => (
+                        <div key={h.id} className="p-3 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between">
+                          <div>
+                            <div className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                              {h.name}
+                              {h.is_system_default && (
+                                <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 border border-slate-700">Défaut EVE</span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-slate-400 font-mono">
+                              Système : {h.system_name || 'N/A'} {h.notes ? `• ${h.notes}` : ''}
+                            </div>
+                          </div>
+                          {!h.is_system_default && (
+                            <button
+                              onClick={() => handleDeleteHub(h.id)}
+                              className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-slate-800"
+                              title="Supprimer le hub"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Location Mappings */}
+                  <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <Building2 className="w-4 h-4 text-amber-400" />
+                        <h4 className="text-sm font-bold text-slate-100">Rattachement Stations / Structures</h4>
+                      </div>
+                      <button
+                        onClick={() => setShowAddMappingModal(true)}
+                        className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium flex items-center gap-1"
+                      >
+                        <Plus className="w-3 h-3" /> Associer
+                      </button>
+                    </div>
+
+                    <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                      {hubsMappings.map((m) => {
+                        const hub = hubsList.find((h) => h.id === m.hub_id);
+                        return (
+                          <div key={m.location_id} className="p-3 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between">
+                            <div className="max-w-[80%]">
+                              <div className="text-xs font-medium text-slate-200 truncate" title={m.location_name}>
+                                {m.location_name}
+                              </div>
+                              <div className="text-[11px] text-sky-400 font-mono">
+                                ID {m.location_id} → {hub?.name || m.hub_id}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => handleDeleteMapping(m.location_id)}
+                              className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-slate-800"
+                              title="Supprimer l'association"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Explicit Cost Allocations List */}
+                <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                        <Link2 className="w-4 h-4 text-amber-400" />
+                        Rapprochements &amp; Allocations Explicites Enregistrées
+                      </h4>
+                      <p className="text-xs text-slate-400">
+                        Chaque allocation lie formellement une vente à un achat avec preuve sans FIFO/coût moyen implicite.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 max-h-80 overflow-y-auto">
+                    {allocations.length === 0 ? (
+                      <div className="p-6 text-center text-slate-500 font-mono text-xs">
+                        Aucun rapprochement enregistré. Cliquez sur « Allouer Coût d&apos;Achat » pour en créer un.
+                      </div>
+                    ) : (
+                      allocations.map((a) => (
+                        <div key={a.id} className="p-3 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between text-xs">
+                          <div className="space-y-1">
+                            <div className="font-semibold text-slate-200">
+                              {a.type_name} — {a.quantity_allocated.toLocaleString()} unités
+                            </div>
+                            <div className="text-[11px] text-slate-400 font-mono">
+                              Vente #{a.sell_transaction_id} ({a.sell_hub_name}) ← Achat #{a.buy_transaction_id} ({a.buy_hub_name} @ {formatIsk(a.unit_buy_price)})
+                            </div>
+                            <div className="text-[11px] text-slate-500 font-mono">
+                              Coût: {formatIsk(a.allocated_buy_cost)} | Frais Achat: {formatIsk(a.allocated_buy_fees)} | Frais Vente: {formatIsk(a.allocated_sell_fees)}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleDeleteAllocation(a.id)}
+                            className="p-1.5 rounded text-slate-400 hover:text-rose-400 hover:bg-slate-800"
+                            title="Supprimer le rapprochement"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1864,6 +2680,262 @@ export default function App() {
                   className="px-4 py-2 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold shadow"
                 >
                   Enregistrer l&apos;Article
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Custom Hub Modal (Phase 05) */}
+      {showAddHubModal && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center space-x-2">
+                <MapPin className="w-5 h-5 text-amber-400" />
+                <h3 className="text-base font-bold text-white">Ajouter un Hub Commercial</h3>
+              </div>
+              <button
+                onClick={() => setShowAddHubModal(false)}
+                className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateHub} className="space-y-3 text-xs">
+              <div className="space-y-1">
+                <label className="text-slate-400 font-medium">Nom du Hub</label>
+                <input
+                  type="text"
+                  required
+                  value={newHubForm.name}
+                  onChange={(e) => setNewHubForm({ ...newHubForm, name: e.target.value })}
+                  placeholder="ex: Staging Nullsec 1DQ1-A"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-slate-400 font-medium">Nom du Système Solaire</label>
+                <input
+                  type="text"
+                  value={newHubForm.system_name}
+                  onChange={(e) => setNewHubForm({ ...newHubForm, system_name: e.target.value })}
+                  placeholder="ex: 1DQ1-A, Jita..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-slate-400 font-medium">Notes</label>
+                <input
+                  type="text"
+                  value={newHubForm.notes}
+                  onChange={(e) => setNewHubForm({ ...newHubForm, notes: e.target.value })}
+                  placeholder="ex: Base principale d'alliance"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200"
+                />
+              </div>
+
+              <div className="pt-3 border-t border-slate-800 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddHubModal(false)}
+                  className="px-4 py-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold shadow"
+                >
+                  Créer le Hub
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Location Mapping Modal (Phase 05) */}
+      {showAddMappingModal && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center space-x-2">
+                <Building2 className="w-5 h-5 text-amber-400" />
+                <h3 className="text-base font-bold text-white">Associer Station / Structure à un Hub</h3>
+              </div>
+              <button
+                onClick={() => setShowAddMappingModal(false)}
+                className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateMapping} className="space-y-3 text-xs">
+              <div className="space-y-1">
+                <label className="text-slate-400 font-medium">Location ID EVE (Station / Structure)</label>
+                <input
+                  type="number"
+                  required
+                  value={newMappingForm.location_id || ''}
+                  onChange={(e) => setNewMappingForm({ ...newMappingForm, location_id: Number(e.target.value) })}
+                  placeholder="ex: 60003760 ou 1029384756..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200 font-mono"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-slate-400 font-medium">Nom de l&apos;Emplacement</label>
+                <input
+                  type="text"
+                  required
+                  value={newMappingForm.location_name}
+                  onChange={(e) => setNewMappingForm({ ...newMappingForm, location_name: e.target.value })}
+                  placeholder="ex: Jita IV - Moon 4 CNAP..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-slate-400 font-medium">Hub Cible</label>
+                <select
+                  value={newMappingForm.hub_id}
+                  onChange={(e) => setNewMappingForm({ ...newMappingForm, hub_id: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200"
+                >
+                  {hubsList.map((h) => (
+                    <option key={h.id} value={h.id}>
+                      {h.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="pt-3 border-t border-slate-800 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddMappingModal(false)}
+                  className="px-4 py-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold shadow"
+                >
+                  Enregistrer l&apos;Association
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Explicit Cost Allocation Modal (Phase 05) */}
+      {showAddAllocationModal && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-lg w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center space-x-2">
+                <Link2 className="w-5 h-5 text-amber-400" />
+                <h3 className="text-base font-bold text-white">Rapprocher une Vente avec un Achat (ROI TTC)</h3>
+              </div>
+              <button
+                onClick={() => setShowAddAllocationModal(false)}
+                className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateAllocation} className="space-y-3 text-xs">
+              <p className="text-slate-400 leading-relaxed text-[11px]">
+                En vertu des règles de gestion EVE Trade Dashboard, le coût d&apos;acquisition doit être explicitement désigné sans heuristique FIFO/LIFO implicite.
+              </p>
+
+              <div className="space-y-1">
+                <label className="text-slate-400 font-medium">Transaction de Vente (Sell Tx ID)</label>
+                <select
+                  required
+                  value={newAllocForm.sell_transaction_id || ''}
+                  onChange={(e) => setNewAllocForm({ ...newAllocForm, sell_transaction_id: Number(e.target.value) })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200 font-mono"
+                >
+                  <option value="">Sélectionnez une vente...</option>
+                  {transactions.filter((t) => !t.isBuy).map((t) => (
+                    <option key={t.transactionId} value={t.transactionId}>
+                      #{t.transactionId} — {t.typeName} ({t.quantity} un. @ {formatIsk(t.unitPrice)}) - {new Date(t.date).toLocaleDateString('fr-FR')}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-slate-400 font-medium">Transaction d&apos;Achat Source (Buy Tx ID)</label>
+                <select
+                  required
+                  value={newAllocForm.buy_transaction_id || ''}
+                  onChange={(e) => {
+                    const buyId = Number(e.target.value);
+                    const inv = unsoldInventory.find((i) => i.buy_transaction_id === buyId);
+                    setNewAllocForm({
+                      ...newAllocForm,
+                      buy_transaction_id: buyId,
+                      quantity_to_allocate: inv ? inv.remaining_quantity : newAllocForm.quantity_to_allocate,
+                    });
+                  }}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200 font-mono"
+                >
+                  <option value="">Sélectionnez un achat...</option>
+                  {unsoldInventory.map((i) => (
+                    <option key={i.buy_transaction_id} value={i.buy_transaction_id}>
+                      #{i.buy_transaction_id} — {i.type_name} ({i.remaining_quantity} un. dispo @ {formatIsk(i.unit_buy_price)}) - {i.hub_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-slate-400 font-medium">Quantité à Rapprocher / Allouer</label>
+                <input
+                  type="number"
+                  required
+                  min="1"
+                  value={newAllocForm.quantity_to_allocate || ''}
+                  onChange={(e) => setNewAllocForm({ ...newAllocForm, quantity_to_allocate: Number(e.target.value) })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200 font-mono"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-slate-400 font-medium">Notes &amp; Justification</label>
+                <input
+                  type="text"
+                  value={newAllocForm.notes}
+                  onChange={(e) => setNewAllocForm({ ...newAllocForm, notes: e.target.value })}
+                  placeholder="ex: Lot importé de Jita pour vente Dodixie..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200"
+                />
+              </div>
+
+              <div className="pt-3 border-t border-slate-800 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddAllocationModal(false)}
+                  className="px-4 py-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold shadow"
+                >
+                  Valider l&apos;Allocation
                 </button>
               </div>
             </form>

@@ -13,7 +13,7 @@ Un seul chantier actif, une phase, une branche, un PR. Jamais sur main. Petits l
 | 02 | Client ESI résilient | 00–01 | Terminé |
 | 03 | Transactions et grand livre | 01–02 | Terminé |
 | 04 | Cycle de vie des ordres, listes de réassort | 01–03 | Terminé |
-| 05 | Hubs et ROI TTC | 03–04 | Planifiée |
+| 05 | Hubs et ROI TTC | 03–04 | Terminé |
 | 06 | Dashboard intégré | 03–05 | Planifiée |
 | H01 | Hardening sécurité | 00–06 | Planifiée |
 | H02 | Hardening intégrité et résilience | 02–06 | Planifiée |

@@ -25,8 +25,19 @@ export interface CharacterIdentity {
   scopes: string[];
 }
 
+export interface LinkedCharacter {
+  characterId: number;
+  characterName: string;
+  scopes: string[];
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+  createdAt: number;
+}
+
 export interface UserSession {
   sessionId: string;
+  activeCharacterId: number;
   characterId: number;
   characterName: string;
   scopes: string[];
@@ -34,6 +45,16 @@ export interface UserSession {
   refreshToken: string;
   expiresAt: number; // UNIX timestamp in ms
   createdAt: number;
+  characters: Record<number, LinkedCharacter>;
+}
+
+export interface PublicCharacterInfo {
+  characterId: number;
+  characterName: string;
+  portraitUrl: string;
+  scopes: string[];
+  expiresAt: number;
+  isActive: boolean;
 }
 
 export interface PublicSessionInfo {
@@ -45,6 +66,7 @@ export interface PublicSessionInfo {
     scopes: string[];
     expiresAt: number;
   };
+  characters?: PublicCharacterInfo[];
 }
 
 export interface AuthConfig {

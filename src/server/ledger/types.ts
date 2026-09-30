@@ -46,7 +46,7 @@ export interface CharacterWalletJournalEntry {
 export type LedgerFilterType = 'ALL' | 'SELL' | 'BUY';
 
 export interface LedgerQueryFilters {
-  characterId: number;
+  characterId?: number;
   type?: LedgerFilterType;
   typeId?: number;
   search?: string;

@@ -139,6 +139,13 @@ export class UniverseService {
   }
 
   /**
+   * Resolves a station or structure ID synchronously from cache or fallback
+   */
+  public resolveStationName(id: number): string {
+    return this.getNameSync(id, 'Station');
+  }
+
+  /**
    * Clears internal memory cache (retaining well known items)
    */
   public clearCache(): void {
@@ -151,3 +158,4 @@ export class UniverseService {
 }
 
 export const defaultUniverseService = new UniverseService();
+export const universeService = defaultUniverseService;

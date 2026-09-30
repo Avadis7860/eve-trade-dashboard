@@ -39,6 +39,7 @@ interface HubsRoiViewProps {
   onOpenAddMappingModal: () => void;
   onDeleteMapping: (locationId: number) => void;
   onAutoDiscoverHubs: () => void;
+  onOpenProduct360?: (typeId: number) => void;
 }
 
 export const HubsRoiView: React.FC<HubsRoiViewProps> = ({
@@ -58,6 +59,7 @@ export const HubsRoiView: React.FC<HubsRoiViewProps> = ({
   onOpenAddMappingModal,
   onDeleteMapping,
   onAutoDiscoverHubs,
+  onOpenProduct360,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'pairs' | 'unsold' | 'allocations' | 'hubs-config'>('pairs');
 
@@ -325,7 +327,14 @@ export const HubsRoiView: React.FC<HubsRoiViewProps> = ({
                         {new Date(item.buy_date).toLocaleDateString('fr-FR')}
                       </td>
                       <td className="py-3 px-4 font-medium text-slate-200">
-                        {item.type_name}
+                        <button
+                          type="button"
+                          onClick={() => onOpenProduct360 && onOpenProduct360(item.type_id)}
+                          className="hover:text-amber-300 transition-colors text-left font-semibold cursor-pointer underline-offset-2 hover:underline"
+                          title="Ouvrir la fiche Product 360"
+                        >
+                          {item.type_name}
+                        </button>
                         {item.source_type === 'OPENING_BALANCE' && (
                           <span className="ml-2 text-[10px] font-mono px-1.5 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded">
                             Stock Initial

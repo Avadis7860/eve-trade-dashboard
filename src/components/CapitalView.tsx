@@ -24,12 +24,14 @@ interface CapitalViewProps {
   formatIsk: (val: number | null | undefined) => string;
   characterIds?: number[];
   activeCharacterId?: number;
+  onOpenProduct360?: (typeId: number) => void;
 }
 
 export const CapitalView: React.FC<CapitalViewProps> = ({
   formatIsk,
   characterIds,
   activeCharacterId,
+  onOpenProduct360,
 }) => {
   const [data, setData] = useState<CapitalBreakdownResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -368,8 +370,15 @@ export const CapitalView: React.FC<CapitalViewProps> = ({
                   return (
                     <tr key={pos.id} className="hover:bg-slate-800/30 transition-colors">
                       {/* Article */}
-                      <td className="py-3 px-4">
-                        <div className="font-semibold text-slate-200">{pos.typeName}</div>
+                       <td className="py-3 px-4">
+                        <button
+                          type="button"
+                          onClick={() => onOpenProduct360 && onOpenProduct360(pos.typeId)}
+                          className="font-semibold text-slate-200 hover:text-amber-300 text-left transition-colors cursor-pointer underline-offset-2 hover:underline"
+                          title="Ouvrir la fiche Product 360"
+                        >
+                          {pos.typeName}
+                        </button>
                         <div className="text-[10px] text-slate-500 font-mono">ID: {pos.typeId}</div>
                       </td>
 

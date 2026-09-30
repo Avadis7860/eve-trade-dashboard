@@ -229,6 +229,56 @@ export function positionsToCsv(positions: Array<{
   return [headers.join(','), ...rows].join('\r\n');
 }
 
+export function timeSeriesToCsv(dataPoints: Array<{
+  period_label: string;
+  period_start: string;
+  period_end: string;
+  units_sold: number;
+  units_bought: number;
+  gross_revenue_isk: number;
+  buy_spend_isk: number;
+  realized_profit_ttc_isk: number;
+  fees_and_taxes_isk: number;
+  cumulative_profit_ttc_isk: number;
+  cumulative_gross_revenue_isk: number;
+  sales_count: number;
+  buys_count: number;
+}>): string {
+  const headers = [
+    'Periode',
+    'DateDebut',
+    'DateFin',
+    'UnitesVendues',
+    'UnitesAchetees',
+    'CABrutISK',
+    'DepensesAchatsISK',
+    'ProfitRealiseTTC_ISK',
+    'FraisEtTaxesISK',
+    'ProfitCumuleTTC_ISK',
+    'CACumuleISK',
+    'NombreVentes',
+    'NombreAchats',
+  ];
+
+  const rows = dataPoints.map((dp) => [
+    escapeCsvField(dp.period_label),
+    escapeCsvField(dp.period_start),
+    escapeCsvField(dp.period_end),
+    escapeCsvField(dp.units_sold),
+    escapeCsvField(dp.units_bought),
+    escapeCsvField(dp.gross_revenue_isk),
+    escapeCsvField(dp.buy_spend_isk),
+    escapeCsvField(dp.realized_profit_ttc_isk),
+    escapeCsvField(dp.fees_and_taxes_isk),
+    escapeCsvField(dp.cumulative_profit_ttc_isk),
+    escapeCsvField(dp.cumulative_gross_revenue_isk),
+    escapeCsvField(dp.sales_count),
+    escapeCsvField(dp.buys_count),
+  ].join(','));
+
+  return [headers.join(','), ...rows].join('\r\n');
+}
+
 export function triggerCsvDownload(filename: string, content: string): void {
   const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);

@@ -643,5 +643,278 @@ describe('App Component (Phase 06 Integrated Dashboard)', () => {
       expect(screen.getByText(/Total Unités Physiques/i)).toBeInTheDocument();
       expect(screen.getByText(/Trésorerie \+ Stocks/i)).toBeInTheDocument();
     });
+
+    // Switch to Product 360 & Séries Tab
+    const analyticsTabBtn = screen.getAllByText(/Product 360 & Séries/i)[0];
+    await act(async () => {
+      fireEvent.click(analyticsTabBtn);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Analyses Financières & Inspection Produit/i)).toBeInTheDocument();
+      expect(screen.getByPlaceholderText(/Rechercher par nom d'article/i)).toBeInTheDocument();
+    });
+  });
+
+  it('opens Product 360 modal upon clicking item name and allows tab navigation and close', async () => {
+    global.fetch = vi.fn((url: string | URL | Request) => {
+      const urlStr = url.toString();
+      const pathname = new URL(urlStr, 'http://localhost').pathname;
+
+      if (pathname === '/api/health') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ status: 'ok', service: 'eve-trade-dashboard', timestamp: new Date().toISOString(), version: '0.1.0' }),
+        } as Response);
+      }
+      if (pathname === '/api/auth/status') {
+        return Promise.resolve({ ok: true, json: async () => ({ configured: true }) } as Response);
+      }
+      if (pathname === '/api/auth/session') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            authenticated: true,
+            character: {
+              characterId: 2119876543,
+              characterName: 'Captain Trader',
+              portraitUrl: 'https://images.evetech.net/characters/2119876543/portrait?size=128',
+              scopes: ['esi-wallet.read_character_wallet.v1'],
+              expiresAt: Date.now() + 1200000,
+            },
+            characters: [
+              {
+                characterId: 2119876543,
+                characterName: 'Captain Trader',
+                portraitUrl: 'https://images.evetech.net/characters/2119876543/portrait?size=128',
+                scopes: ['esi-wallet.read_character_wallet.v1'],
+                expiresAt: Date.now() + 1200000,
+              },
+            ],
+          }),
+        } as Response);
+      }
+      if (pathname === '/api/analytics/product/34') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            type_id: 34,
+            type_name: 'Tritanium',
+            image_url: 'https://images.evetech.net/types/34/icon?size=64',
+            as_of: new Date().toISOString(),
+            timeframe: '90d',
+            kpis: {
+              gross_revenue_isk: 500000,
+              cogs_allocated_isk: 300000,
+              allocated_sell_fees_isk: 20000,
+              realized_profit_ttc_isk: 180000,
+              roi_percent_ttc: 60.0,
+              units_sold: 100000,
+              units_bought: 120000,
+              sales_transactions_count: 5,
+              buy_transactions_count: 2,
+              velocity_daily: 1111.11,
+              velocity_observation_days: 90,
+              average_holding_days: 12.5,
+              coverage_ratio_holding_days: 1.0,
+              yield_per_capital_day_percent: 4.8,
+              committed_capital_isk: 60000,
+              stock_summary: {
+                total_quantity: 20000,
+                committed_sell_order_qty: 10000,
+                free_hub_stock_qty: 10000,
+                remote_dormant_stock_qty: 0,
+                in_transit_stock_qty: 0,
+                unreconciled_stock_qty: 0,
+                total_cost_isk: 60000,
+                total_notional_sell_isk: 120000,
+              },
+            },
+            locations_breakdown: [
+              {
+                location_id: 60003760,
+                location_name: 'Jita IV - Moon 4 CNAP',
+                hub_id: 'jita',
+                hub_name: 'Jita',
+                classification: 'FREE_HUB_STOCK',
+                quantity: 10000,
+                cost_basis_unit_isk: 3.0,
+                cost_basis_total_isk: 30000,
+                notional_unit_price_isk: 6.0,
+                notional_total_isk: 60000,
+                days_inactive: 2,
+                is_dormant: false,
+              },
+            ],
+            open_orders: [
+              {
+                order_id: 12345,
+                character_id: 2119876543,
+                character_name: 'Captain Trader',
+                is_buy_order: false,
+                price: 6.0,
+                volume_remain: 10000,
+                volume_total: 10000,
+                location_id: 60003760,
+                location_name: 'Jita IV - Moon 4 CNAP',
+                hub_id: 'jita',
+                hub_name: 'Jita',
+                issued_at: new Date().toISOString(),
+                duration_days: 90,
+                progress_percent: 0,
+                total_value_isk: 60000,
+                state: 'ACTIVE',
+              },
+            ],
+            transactions_history: [
+              {
+                transaction_id: 888,
+                character_id: 2119876543,
+                date: new Date().toISOString(),
+                is_buy: false,
+                quantity: 100000,
+                unit_price: 5.0,
+                total_amount_isk: 500000,
+                location_id: 60003760,
+                location_name: 'Jita IV - Moon 4 CNAP',
+                hub_id: 'jita',
+                hub_name: 'Jita',
+                reconciliation_status: 'COMPLETE',
+                allocated_buy_cost_isk: 300000,
+                allocated_profit_ttc_isk: 180000,
+                proof: null,
+              },
+            ],
+            timeseries: {
+              timeframe: '90d',
+              group_by: 'day',
+              type_id: 34,
+              type_name: 'Tritanium',
+              start_date: new Date(Date.now() - 90 * 86400000).toISOString(),
+              end_date: new Date().toISOString(),
+              observed_days: 90,
+              as_of: new Date().toISOString(),
+              freshness_status: 'FRESH',
+              data_points: [
+                {
+                  period_label: '2026-09-30',
+                  period_start: new Date().toISOString(),
+                  period_end: new Date().toISOString(),
+                  units_sold: 100000,
+                  units_bought: 0,
+                  gross_revenue_isk: 500000,
+                  buy_spend_isk: 0,
+                  realized_profit_ttc_isk: 180000,
+                  fees_and_taxes_isk: 20000,
+                  cumulative_profit_ttc_isk: 180000,
+                  cumulative_gross_revenue_isk: 500000,
+                  sales_count: 5,
+                  buys_count: 0,
+                },
+              ],
+              lot_age_distribution: [
+                { bracket: '0-14d', label: '0 à 14 jours (Frais)', quantity: 20000, cost_isk: 60000, lots_count: 1, percentage_of_capital: 100 },
+              ],
+              hub_flows: [],
+              uncertainty_notes: [],
+            },
+          }),
+        } as Response);
+      }
+      if (pathname === '/api/analytics/timeseries') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            timeframe: '90d',
+            group_by: 'day',
+            start_date: new Date(Date.now() - 90 * 86400000).toISOString(),
+            end_date: new Date().toISOString(),
+            observed_days: 90,
+            as_of: new Date().toISOString(),
+            freshness_status: 'FRESH',
+            data_points: [],
+            lot_age_distribution: [],
+            hub_flows: [],
+            uncertainty_notes: [],
+          }),
+        } as Response);
+      }
+      if (pathname === '/api/ledger/filter-options') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            types: [{ id: 34, name: 'Tritanium' }],
+            locations: [{ id: 60003760, name: 'Jita IV - Moon 4 CNAP', count: 1 }],
+          }),
+        } as Response);
+      }
+
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({}),
+      } as Response);
+    });
+
+    render(<App />);
+
+    // Go to Analytics tab
+    await waitFor(() => {
+      expect(screen.getAllByText(/Product 360 & Séries/i).length).toBeGreaterThanOrEqual(1);
+    });
+
+    const analyticsTabBtn = screen.getAllByText(/Product 360 & Séries/i)[0];
+    await act(async () => {
+      fireEvent.click(analyticsTabBtn);
+    });
+
+    // Search for Tritanium
+    const searchInput = await screen.findByPlaceholderText(/Rechercher par nom d'article/i);
+    await act(async () => {
+      fireEvent.change(searchInput, { target: { value: 'Trit' } });
+    });
+
+    // Click "Ouvrir Product 360"
+    const openBtn = await screen.findByText(/Ouvrir Product 360/i);
+    await act(async () => {
+      fireEvent.click(openBtn);
+    });
+
+    // Verify Product 360 modal opened
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByText('PRODUCT 360')).toBeInTheDocument();
+      expect(screen.getByText(/CA Brut Observé/i)).toBeInTheDocument();
+      expect(screen.getByText(/Vélocité Journalière/i)).toBeInTheDocument();
+      expect(screen.getByText(/Gain \/ Capital-Jour/i)).toBeInTheDocument();
+    });
+
+    // Switch tabs within Product 360 modal
+    const stocksTab = screen.getByRole('button', { name: /Stocks par Emplacement/i });
+    await act(async () => {
+      fireEvent.click(stocksTab);
+    });
+    expect(screen.getByText(/Stock Libre Hub/i)).toBeInTheDocument();
+
+    const ordersTab = screen.getByRole('button', { name: /Ordres de Marché Ouverts/i });
+    await act(async () => {
+      fireEvent.click(ordersTab);
+    });
+    expect(screen.getByText('Progression')).toBeInTheDocument();
+
+    const txTab = screen.getByRole('button', { name: /Grand Livre & Preuves/i });
+    await act(async () => {
+      fireEvent.click(txTab);
+    });
+    expect(screen.getByText(/Statut Rapprochement/i)).toBeInTheDocument();
+
+    // Close modal
+    const closeBtn = screen.getByTitle(/Fermer la fiche Product 360/i);
+    await act(async () => {
+      fireEvent.click(closeBtn);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
   });
 });

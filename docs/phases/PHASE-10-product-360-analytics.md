@@ -1,6 +1,6 @@
 # PHASE-10 — Product 360 et visualisations temporelles
 
-**Type :** analyse financière & interface produit · **Dépendances :** 07, 08, 09 · **État :** Planifiée
+**Type :** analyse financière & interface produit · **Dépendances :** 07, 08, 09 · **État :** Terminé
 
 ---
 
@@ -64,11 +64,11 @@
 
 ## 6. Critères d'acceptation mesurables
 
-- [ ] Tout clic sur un nom d'article dans n'importe quel tableau ou carte ouvre la fiche Product 360 avec les données exactes de cet article.
-- [ ] Les graphiques temporels affichent clairement la période couverte, la date de début des données et les zones d'incertitude (périodes sans synchronisation).
-- [ ] Chaque graphique dispose d'un bouton d'alternative tabulaire accessible affichant les données brutes sous forme de table.
-- [ ] La durée moyenne de détention et la vélocité sont calculées sans extrapolation arbitraire.
-- [ ] Suite de tests complète validée (`vitest run`).
+- [x] Tout clic sur un nom d'article dans n'importe quel tableau ou carte ouvre la fiche Product 360 avec les données exactes de cet article.
+- [x] Les graphiques temporels affichent clairement la période couverte, la date de début des données et les zones d'incertitude (périodes sans synchronisation).
+- [x] Chaque graphique dispose d'un bouton d'alternative tabulaire accessible affichant les données brutes sous forme de table.
+- [x] La durée moyenne de détention et la vélocité sont calculées sans extrapolation arbitraire.
+- [x] Suite de tests complète validée (`vitest run`).
 
 ---
 

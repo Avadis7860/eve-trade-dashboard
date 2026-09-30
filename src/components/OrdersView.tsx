@@ -29,6 +29,7 @@ interface OrdersViewProps {
   onOrdersPageChange: (page: number) => void;
   onSelectOrder: (order: CharacterOrderSnapshot) => void;
   onQuickAddRestock?: (order: CharacterOrderSnapshot) => void;
+  onOpenProduct360?: (typeId: number) => void;
 }
 
 export const OrdersView: React.FC<OrdersViewProps> = ({
@@ -45,6 +46,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   onOrdersPageChange,
   onSelectOrder,
   onQuickAddRestock,
+  onOpenProduct360,
 }) => {
   const formatIsk = (val: number | null | undefined) => {
     if (val === null || val === undefined) return '—';
@@ -290,7 +292,19 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                       </td>
                       <td className="py-3 px-4 font-medium text-slate-200">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <span>{o.typeName || `Type #${o.typeId}`}</span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              if (onOpenProduct360) {
+                                e.stopPropagation();
+                                onOpenProduct360(o.typeId);
+                              }
+                            }}
+                            className="hover:text-amber-300 transition-colors text-left font-semibold cursor-pointer underline-offset-2 hover:underline"
+                            title="Ouvrir la fiche Product 360"
+                          >
+                            {o.typeName || `Type #${o.typeId}`}
+                          </button>
                           {o.inStockQuantity !== undefined && o.inStockQuantity > 0 && (
                             <span
                               className="px-1.5 py-0.5 rounded font-mono text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"

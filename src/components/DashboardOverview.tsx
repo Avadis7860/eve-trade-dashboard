@@ -43,7 +43,8 @@ interface DashboardOverviewProps {
   orders: CharacterOrderSnapshot[];
   restockItems: RestockItem[];
   iskDisplayMode: 'full' | 'compact';
-  onNavigateTab: (tab: 'ledger' | 'orders' | 'restock' | 'hubs-roi' | 'journal') => void;
+  onNavigateTab: (tab: 'ledger' | 'orders' | 'restock' | 'hubs-roi' | 'journal' | 'analytics') => void;
+  onOpenProduct360?: (typeId: number) => void;
   onSync: () => void;
   isSyncing: boolean;
   onAutoReconcile: () => void;
@@ -58,6 +59,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   restockItems,
   iskDisplayMode,
   onNavigateTab,
+  onOpenProduct360,
   onSync,
   isSyncing,
   onAutoReconcile,
@@ -282,11 +284,12 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               return activeOrders.slice(0, 3).map((o) => (
                 <div
                   key={o.id}
-                  onClick={() => onNavigateTab('orders')}
-                  className="p-2.5 rounded-lg bg-slate-950 hover:bg-slate-900 border border-slate-800/80 flex items-center justify-between text-xs cursor-pointer transition-colors"
+                  onClick={() => (onOpenProduct360 ? onOpenProduct360(o.typeId) : onNavigateTab('orders'))}
+                  className="p-2.5 rounded-lg bg-slate-950 hover:bg-slate-900 border border-slate-800/80 flex items-center justify-between text-xs cursor-pointer transition-colors group"
+                  title="Cliquer pour ouvrir la fiche Product 360"
                 >
                   <div>
-                    <div className="font-medium text-slate-200 flex items-center gap-2">
+                    <div className="font-medium text-slate-200 group-hover:text-amber-300 flex items-center gap-2">
                       <span>{o.typeName || `Type #${o.typeId}`}</span>
                       {o.inStockQuantity !== undefined && o.inStockQuantity > 0 && (
                         <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" title="Quantité physique présente dans les actifs à cette station">
@@ -351,10 +354,12 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               {pendingRestock.slice(0, 4).map((item) => (
                 <div
                   key={item.id}
-                  className="p-3 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between text-xs"
+                  onClick={() => onOpenProduct360 && onOpenProduct360(item.typeId)}
+                  className="p-3 rounded-lg bg-slate-950 hover:bg-slate-900 border border-slate-800 flex items-center justify-between text-xs cursor-pointer transition-colors group"
+                  title="Cliquer pour ouvrir la fiche Product 360"
                 >
                   <div className="space-y-0.5">
-                    <div className="font-semibold text-slate-200">{item.typeName}</div>
+                    <div className="font-semibold text-slate-200 group-hover:text-amber-300">{item.typeName}</div>
                     <div className="text-[11px] text-slate-400 font-mono">
                       {item.targetBuyHubName.split(' - ')[0]} → {item.sellHubName.split(' - ')[0]}
                     </div>

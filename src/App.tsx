@@ -29,6 +29,8 @@ import { CapitalView } from './components/CapitalView';
 import { JournalView } from './components/JournalView';
 import { SystemRoadmapView } from './components/SystemRoadmapView';
 import { PreferencesModal } from './components/PreferencesModal';
+import { Product360Modal } from './components/Product360Modal';
+import { AnalyticsView } from './components/AnalyticsView';
 
 import {
   loadPreferences,
@@ -399,9 +401,12 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
 
   // Active Tab View
-  const [activeTab, setActiveTab] = useState<'overview' | 'ledger' | 'orders' | 'restock' | 'hubs-roi' | 'capital' | 'journal' | 'roadmap'>(
+  const [activeTab, setActiveTab] = useState<'overview' | 'analytics' | 'ledger' | 'orders' | 'restock' | 'hubs-roi' | 'capital' | 'journal' | 'roadmap'>(
     preferences.defaultLandingTab || 'overview'
   );
+
+  // Product 360 Inspection Modal State
+  const [selectedProduct360TypeId, setSelectedProduct360TypeId] = useState<number | null>(null);
 
   // Ledger state
   const [transactions, setTransactions] = useState<CharacterTransaction[]>([]);
@@ -857,7 +862,7 @@ export default function App() {
     }
 
     const safeJson = async (res: Response) => {
-      const contentType = res.headers.get('content-type') || '';
+      const contentType = res.headers?.get?.('content-type') ?? 'application/json';
       if (res.ok && contentType.includes('application/json')) {
         return res.json();
       }
@@ -889,7 +894,7 @@ export default function App() {
   const checkSession = useCallback(async () => {
     try {
       const res = await fetch('/api/auth/session');
-      const contentType = res.headers.get('content-type') || '';
+      const contentType = res.headers?.get?.('content-type') ?? 'application/json';
       if (res.ok && contentType.includes('application/json')) {
         const data: AuthSessionResponse = await res.json();
         if (data.authenticated && data.character) {
@@ -1014,6 +1019,16 @@ export default function App() {
                 }`}
               >
                 Vue d&apos;Ensemble
+              </button>
+              <button
+                onClick={() => setActiveTab('analytics')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  activeTab === 'analytics'
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                }`}
+              >
+                Product 360 &amp; Séries
               </button>
               <button
                 onClick={() => setActiveTab('ledger')}
@@ -1329,7 +1344,7 @@ export default function App() {
                   <div className="text-xs text-slate-400 flex items-center gap-2">
                     <span>
                       Dernière synchro :{' '}
-                      {syncStatus?.transactions.lastSyncCompletedAt
+                      {syncStatus?.transactions?.lastSyncCompletedAt
                         ? new Date(syncStatus.transactions.lastSyncCompletedAt).toLocaleString('fr-FR')
                         : 'Jamais'}
                     </span>
@@ -1374,10 +1389,20 @@ export default function App() {
                 restockItems={restockItems}
                 iskDisplayMode={preferences.iskDisplayMode}
                 onNavigateTab={(t) => setActiveTab(t)}
+                onOpenProduct360={(typeId) => setSelectedProduct360TypeId(typeId)}
                 onSync={handleSync}
                 isSyncing={isSyncing}
                 onAutoReconcile={handleAutoReconcile}
                 isReconciling={isReconciling}
+              />
+            )}
+
+            {/* TAB 0.5: PRODUCT 360 & ANALYTICS */}
+            {activeTab === 'analytics' && (
+              <AnalyticsView
+                preferences={preferences}
+                onOpenProduct360={(typeId) => setSelectedProduct360TypeId(typeId)}
+                characterIds={linkedCharacters.length > 1 ? linkedCharacters.map((c) => c.characterId) : undefined}
               />
             )}
 
@@ -1401,6 +1426,7 @@ export default function App() {
                 onPageChange={setPage}
                 onInspectTransaction={handleInspectTransaction}
                 onQuickAllocate={handleQuickAllocate}
+                onOpenProduct360={(typeId) => setSelectedProduct360TypeId(typeId)}
               />
             )}
 
@@ -1420,6 +1446,7 @@ export default function App() {
                 onOrdersPageChange={setOrdersPage}
                 onSelectOrder={setSelectedOrder}
                 onQuickAddRestock={handleQuickAddRestock}
+                onOpenProduct360={(typeId) => setSelectedProduct360TypeId(typeId)}
               />
             )}
 
@@ -1432,6 +1459,7 @@ export default function App() {
                 onOpenAddModal={() => setShowAddRestockModal(true)}
                 onUpdateStatus={handleUpdateRestockStatus}
                 onDeleteItem={handleDeleteRestockItem}
+                onOpenProduct360={(typeId) => setSelectedProduct360TypeId(typeId)}
               />
             )}
 
@@ -1454,6 +1482,7 @@ export default function App() {
                 onOpenAddMappingModal={() => setShowAddMappingModal(true)}
                 onDeleteMapping={handleDeleteMapping}
                 onAutoDiscoverHubs={handleAutoDiscoverHubs}
+                onOpenProduct360={(typeId) => setSelectedProduct360TypeId(typeId)}
               />
             )}
 
@@ -1463,6 +1492,7 @@ export default function App() {
                 formatIsk={formatIsk}
                 characterIds={linkedCharacters.length > 1 ? linkedCharacters.map((c) => c.characterId) : undefined}
                 activeCharacterId={session?.characterId}
+                onOpenProduct360={(typeId) => setSelectedProduct360TypeId(typeId)}
               />
             )}
 
@@ -2051,6 +2081,16 @@ export default function App() {
           preferences={preferences}
           onSave={handleSavePreferences}
           onClose={() => setShowPreferencesModal(false)}
+        />
+      )}
+
+      {/* Product 360 Inspection Modal */}
+      {selectedProduct360TypeId !== null && (
+        <Product360Modal
+          typeId={selectedProduct360TypeId}
+          onClose={() => setSelectedProduct360TypeId(null)}
+          preferences={preferences}
+          characterIds={linkedCharacters.length > 1 ? linkedCharacters.map((c) => c.characterId) : undefined}
         />
       )}
     </div>

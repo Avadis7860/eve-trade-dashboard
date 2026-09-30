@@ -22,12 +22,18 @@ describe('Server API Endpoints', () => {
 
     const infoRes = await request(app).get('/api/info');
     expect(infoRes.status).toBe(200);
-    expect(infoRes.body.phase).toBe('PHASE-09-capital-and-inventory');
+    expect(infoRes.body.phase).toBe('PHASE-10-product-360-analytics');
   });
 
-  it('protects /api/capital routes against unauthenticated requests', async () => {
-    const res = await request(app).get('/api/capital/summary');
-    expect(res.status).toBe(401);
+  it('protects /api/capital and /api/analytics routes against unauthenticated requests', async () => {
+    const capRes = await request(app).get('/api/capital/summary');
+    expect(capRes.status).toBe(401);
+
+    const analyticsProductRes = await request(app).get('/api/analytics/product/34');
+    expect(analyticsProductRes.status).toBe(401);
+
+    const analyticsTsRes = await request(app).get('/api/analytics/timeseries');
+    expect(analyticsTsRes.status).toBe(401);
   });
 });
 

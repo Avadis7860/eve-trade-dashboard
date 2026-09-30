@@ -54,6 +54,7 @@ interface LedgerViewProps {
   onPageChange: (page: number) => void;
   onInspectTransaction: (tx: CharacterTransaction) => void;
   onQuickAllocate?: (tx: CharacterTransaction) => void;
+  onOpenProduct360?: (typeId: number) => void;
 }
 
 export const LedgerView: React.FC<LedgerViewProps> = ({
@@ -74,6 +75,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   onPageChange,
   onInspectTransaction,
   onQuickAllocate,
+  onOpenProduct360,
 }) => {
   const formatIsk = (val: number | null | undefined) => {
     if (val === null || val === undefined) return '—';
@@ -308,7 +310,19 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                         </span>
                       </td>
                       <td className="py-3 px-4 font-medium text-slate-200">
-                        {tx.typeName || `Type #${tx.typeId}`}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            if (onOpenProduct360) {
+                              e.stopPropagation();
+                              onOpenProduct360(tx.typeId);
+                            }
+                          }}
+                          className="hover:text-amber-300 transition-colors text-left font-semibold cursor-pointer underline-offset-2 hover:underline"
+                          title="Ouvrir la fiche Product 360"
+                        >
+                          {tx.typeName || `Type #${tx.typeId}`}
+                        </button>
                       </td>
                       <td className="py-3 px-4 text-right font-mono text-slate-300">
                         {tx.quantity.toLocaleString()}

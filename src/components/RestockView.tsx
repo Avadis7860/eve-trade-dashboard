@@ -20,6 +20,7 @@ interface RestockViewProps {
   onOpenAddModal: () => void;
   onUpdateStatus: (item: RestockItem, status: RestockItemStatus) => void;
   onDeleteItem: (id: string) => void;
+  onOpenProduct360?: (typeId: number) => void;
 }
 
 export const RestockView: React.FC<RestockViewProps> = ({
@@ -29,6 +30,7 @@ export const RestockView: React.FC<RestockViewProps> = ({
   onOpenAddModal,
   onUpdateStatus,
   onDeleteItem,
+  onOpenProduct360,
 }) => {
   const [copiedHub, setCopiedHub] = useState<string | null>(null);
   const [selectedHubFilter, setSelectedHubFilter] = useState<string>('ALL');
@@ -172,7 +174,14 @@ export const RestockView: React.FC<RestockViewProps> = ({
             >
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <span className="text-xs font-bold text-slate-100 block">{item.typeName}</span>
+                  <button
+                    type="button"
+                    onClick={() => onOpenProduct360 && onOpenProduct360(item.typeId)}
+                    className="text-xs font-bold text-slate-100 hover:text-amber-300 block text-left transition-colors cursor-pointer underline-offset-2 hover:underline"
+                    title="Ouvrir la fiche Product 360"
+                  >
+                    {item.typeName}
+                  </button>
                   <span className="text-[10px] text-slate-400 font-mono">Type ID: #{item.typeId}</span>
                 </div>
                 <span

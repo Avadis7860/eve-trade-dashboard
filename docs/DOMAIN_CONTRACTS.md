@@ -29,7 +29,7 @@ Pour tout article dans une station ou structure donnée :
    Stock physique sans transaction d'achat ni lot d'inventaire initial tracé.
 
 ## 4. États du Capital Monétaire
-1. **Liquidités disponibles (`LIQUID_WALLET_BALANCE`)** : Trésorerie ISK immédiatement utilisable.
+1. **Liquidités disponibles (`LIQUID_WALLET_BALANCE`)** : Trésorerie ISK immédiatement utilisable, issue des soldes réels ESI (`GET /characters/{character_id}/wallet` et `GET /corporations/{corporation_id}/wallets` dédupliqué par `(corporation_id, division)`). Les écritures de journal de corporation sont strictement isolées des journaux personnels et ne peuvent jamais remplacer le solde d'un personnage. L'utilisateur choisit dans les paramètres s'il synchronise et comptabilise les portefeuilles des personnages, des divisions de corporation ou les deux, avec exclusion granulaire possible par personnage (ex. personnage porteur d'une dette) ou par division.
 2. **Escrow ordres d'achat (`MARKET_BUY_ESCROW`)** : Trésorerie ISK bloquée par le marché pour couvrir les buy orders ouverts.
 3. **Capital immobilisé en stocks invendus (`INVENTORY_COST_VALUE`)** : Somme des coûts d'acquisition et frais de courtage des reliquats physiques non vendus.
 4. **Valeur notionnelle de vente (`NOTIONAL_MARKET_ASK_VALUE`)** : Valeur théorique brute de vente des ordres en cours ($\sum \text{prix} \times \text{volume\_remain}$). Cette valeur n'est **jamais** traitée comme de la liquidité ou du bénéfice.

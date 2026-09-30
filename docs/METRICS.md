@@ -38,7 +38,7 @@ Toutes les métriques produites par l'application sont déterministes, auditable
 - **Principe** : Le reliquat invendu reste strictement du capital immobilisé et n'est jamais transformé en profit réalisé.
 
 ### 2.2. Répartition Mutuellement Exclusive du Capital
-- **Liquidités ($Cap_{libre}$)** : Solde de portefeuille immédiat.
+- **Liquidités ($Cap_{libre}$)** : Somme des soldes réels de portefeuille collectés directement depuis l'ESI (`GET /characters/{character_id}/wallet` pour les personnages et `GET /corporations/{corporation_id}/wallets` pour les divisions `1..7` de corporation, dédupliquées par `(corporation_id, division)`), filtrée selon les paramètres de synchronisation et d'inclusion définis par l'utilisateur (`CHARACTERS_ONLY`, `CORPORATION_ONLY` ou `BOTH`, avec possibilité d'exclure individuellement un personnage endetté ou une division spécifique).
 - **Escrow Marché ($Cap_{escrow}$)** : Somme bloquée pour les buy orders en cours.
 - **Valeur de Revient Stocks Vente ($Cap_{stock\_vente}$)** : Coût des actifs posés en sell orders.
 - **Valeur de Revient Stocks Libres ($Cap_{stock\_libre}$)** : Coût des actifs en station disponibles.

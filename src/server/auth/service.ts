@@ -2,6 +2,7 @@ import { generateCodeVerifier, generateCodeChallenge, generateState } from './pk
 import { extractAndValidateCharacterIdentity } from './jwt.ts';
 import { SessionStore, defaultSessionStore } from './sessionStore.ts';
 import type { AuthConfig, UserSession, EveTokenResponse, PublicSessionInfo } from './types.ts';
+import { logger } from '../utils/logger.ts';
 
 export const DEFAULT_SCOPES = [
   'esi-wallet.read_character_wallet.v1',
@@ -25,7 +26,7 @@ export function getAuthConfigFromEnv(): AuthConfig {
 }
 
 export class AuthService {
-  private config: AuthConfig;
+  private customConfig?: Partial<AuthConfig>;
   private sessionStore: SessionStore;
   private fetchFn: typeof fetch;
 
@@ -34,9 +35,13 @@ export class AuthService {
     sessionStore: SessionStore = defaultSessionStore,
     fetchFn: typeof fetch = globalThis.fetch
   ) {
-    this.config = { ...getAuthConfigFromEnv(), ...config };
+    this.customConfig = config;
     this.sessionStore = sessionStore;
     this.fetchFn = fetchFn;
+  }
+
+  public get config(): AuthConfig {
+    return { ...getAuthConfigFromEnv(), ...this.customConfig };
   }
 
   /**
@@ -253,7 +258,7 @@ export class AuthService {
     });
 
     if (!response.ok) {
-      console.warn(`[Auth] Token refresh failed for character ${characterId}`);
+      logger.warn(`[Auth] Token refresh failed for character ${characterId}`);
       return null;
     }
 
@@ -287,7 +292,7 @@ export class AuthService {
       try {
         return await this.refreshSessionTokens(session);
       } catch (err) {
-        console.warn('[Auth] Automatic token refresh failed:', err);
+        logger.warn('[Auth] Automatic token refresh failed:', err);
         return null;
       }
     }

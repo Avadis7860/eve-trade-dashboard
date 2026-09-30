@@ -6,7 +6,7 @@ import {
   UnsoldInventoryItem,
   AutoReconciliationResult,
 } from './types';
-import { ledgerRepository } from '../ledger/repository';
+import { defaultLedgerRepository, type ILedgerRepository } from '../ledger/repository';
 import { hubsService } from '../hubs/service';
 import { RoiCalculator, roundIsk } from './calculator';
 import type { CharacterTransaction } from '../ledger/types';
@@ -16,7 +16,8 @@ import { defaultAssetsService } from '../assets/service';
 export class RoiService {
   constructor(
     private repo: RoiRepository = roiRepository,
-    private assetsService: AssetsService = defaultAssetsService
+    private assetsService: AssetsService = defaultAssetsService,
+    private ledgerRepo: ILedgerRepository = defaultLedgerRepository
   ) {}
 
   /**
@@ -26,7 +27,7 @@ export class RoiService {
     if (tx.tax !== undefined && tx.brokerFee !== undefined && (tx.tax > 0 || tx.brokerFee > 0)) {
       return tx.isBuy ? (tx.brokerFee || 0) : ((tx.tax || 0) + (tx.brokerFee || 0));
     }
-    const { tax, brokerFee } = ledgerRepository.getJournalEntriesForTransaction(
+    const { tax, brokerFee } = this.ledgerRepo.getJournalEntriesForTransaction(
       tx.characterId,
       tx.transactionId,
       tx.journalRefId,
@@ -60,12 +61,12 @@ export class RoiService {
     }
 
     // 1. Fetch transactions
-    const sellTx = ledgerRepository.getTransactionById(sellCharId, sell_transaction_id);
+    const sellTx = this.ledgerRepo.getTransactionById(sellCharId, sell_transaction_id);
     if (!sellTx || sellTx.isBuy) {
       return { success: false, error: 'Transaction de vente introuvable ou invalide pour ce personnage' };
     }
 
-    const buyTx = ledgerRepository.getTransactionById(buyCharId, buy_transaction_id);
+    const buyTx = this.ledgerRepo.getTransactionById(buyCharId, buy_transaction_id);
     if (!buyTx || !buyTx.isBuy) {
       return { success: false, error: "Transaction d'achat introuvable ou invalide pour ce personnage" };
     }
@@ -167,7 +168,7 @@ export class RoiService {
   } = {}): AutoReconciliationResult {
     // 1. Fetch ALL candidate transactions across single character or ecosystem without pagination cap
     const effectiveCharId = params.characterIds && params.characterIds.length > 0 ? undefined : params.characterId;
-    let allTransactions = ledgerRepository.getAllTransactions(effectiveCharId, params.characterIds);
+    let allTransactions = this.ledgerRepo.getAllTransactions(effectiveCharId, params.characterIds);
     if (params.typeId !== undefined) {
       allTransactions = allTransactions.filter((t) => t.typeId === params.typeId);
     }
@@ -372,7 +373,7 @@ export class RoiService {
 
     // Filter transactions using canonical ledger repository without pagination cap
     const effectiveCharId = character_ids && character_ids.length > 0 ? undefined : character_id;
-    let transactions: CharacterTransaction[] = ledgerRepository.getAllTransactions(effectiveCharId, character_ids);
+    let transactions: CharacterTransaction[] = this.ledgerRepo.getAllTransactions(effectiveCharId, character_ids);
 
     if (character_ids && character_ids.length > 0) {
       const set = new Set(character_ids);

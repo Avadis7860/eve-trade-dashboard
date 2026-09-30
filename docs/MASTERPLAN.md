@@ -15,8 +15,8 @@ Un seul chantier actif, une phase, une branche, un PR. Jamais sur main. Petits l
 | 04 | Cycle de vie des ordres, listes de réassort | 01–03 | Terminé |
 | 05 | Hubs et ROI TTC | 03–04 | Terminé |
 | 06 | Dashboard intégré | 03–05 | Terminé |
-| H01 | Hardening sécurité | 00–06 | Planifiée |
-| H02 | Hardening intégrité et résilience | 02–06 | Planifiée |
+| H01 | Hardening sécurité | 00–06 | Terminé |
+| H02 | Hardening intégrité et résilience | 02–06 | Terminé |
 | H03 | Hardening UX, performance et release | H01–H02 | Planifiée |
 
 Chaque phase possède un fichier dédié dans docs/phases. Fin de phase : critères propres satisfaits, tests ajoutés et verts, docs/index code à jour, PR vérifiable, aucun secret. Le statut « terminé » requiert merge et revalidation de main.

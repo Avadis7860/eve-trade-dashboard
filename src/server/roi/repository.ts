@@ -1,11 +1,13 @@
 import { ExplicitCostAllocation, UnsoldInventoryItem } from './types';
-import { ledgerRepository } from '../ledger/repository';
+import { defaultLedgerRepository, type ILedgerRepository } from '../ledger/repository';
 import { hubsService } from '../hubs/service';
 import { roundIsk } from './calculator';
 
 export class RoiRepository {
   // Map of allocation_id -> ExplicitCostAllocation
   private allocations = new Map<string, ExplicitCostAllocation>();
+
+  constructor(private ledgerRepo: ILedgerRepository = defaultLedgerRepository) {}
 
   reset(): void {
     this.allocations.clear();
@@ -80,7 +82,7 @@ export class RoiRepository {
    */
   getUnsoldInventory(characterId?: number, characterIds?: number[]): UnsoldInventoryItem[] {
     const effectiveCharId = characterIds && characterIds.length > 0 ? undefined : characterId;
-    const { items: transactions } = ledgerRepository.getTransactions({
+    const { items: transactions } = this.ledgerRepo.getTransactions({
       characterId: effectiveCharId,
       pageSize: 100000,
     });
@@ -103,7 +105,7 @@ export class RoiRepository {
         const tiedCapital = roundIsk(remainingQty * buyTx.unitPrice);
         
         // Find linked broker fees for this buy transaction
-        const { brokerFee: totalBuyFees } = ledgerRepository.getJournalEntriesForTransaction(
+        const { brokerFee: totalBuyFees } = this.ledgerRepo.getJournalEntriesForTransaction(
           buyTx.characterId,
           buyTx.transactionId,
           buyTx.journalRefId
@@ -132,6 +134,19 @@ export class RoiRepository {
     }
 
     return inventory;
+  }
+
+  dumpData(): { allocations: ExplicitCostAllocation[] } {
+    return {
+      allocations: Array.from(this.allocations.values()),
+    };
+  }
+
+  restoreData(data: { allocations: ExplicitCostAllocation[] }): void {
+    this.allocations.clear();
+    for (const alloc of data.allocations) {
+      this.allocations.set(alloc.id, alloc);
+    }
   }
 }
 

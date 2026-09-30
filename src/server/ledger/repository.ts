@@ -27,6 +27,8 @@ export interface ILedgerRepository {
   getSummary(characterId?: number, characterIds?: number[]): LedgerSummary;
   getFilterOptions(characterId: number): LedgerFilterOptions;
   clearCharacter(characterId: number): void;
+  dumpData(): { transactions: CharacterTransaction[]; journalEntries: CharacterWalletJournalEntry[] };
+  restoreData(data: { transactions: CharacterTransaction[]; journalEntries: CharacterWalletJournalEntry[] }): void;
 }
 
 export class InMemoryLedgerRepository implements ILedgerRepository {
@@ -572,6 +574,30 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
       if (jn.characterId === characterId) {
         this.journalEntries.delete(key);
       }
+    }
+  }
+
+  /**
+   * Dumps entire state for backup
+   */
+  public dumpData(): { transactions: CharacterTransaction[]; journalEntries: CharacterWalletJournalEntry[] } {
+    return {
+      transactions: Array.from(this.transactions.values()),
+      journalEntries: Array.from(this.journalEntries.values()),
+    };
+  }
+
+  /**
+   * Restores data from backup atomically
+   */
+  public restoreData(data: { transactions: CharacterTransaction[]; journalEntries: CharacterWalletJournalEntry[] }): void {
+    this.transactions.clear();
+    this.journalEntries.clear();
+    for (const tx of data.transactions) {
+      this.transactions.set(this.makeTxKey(tx.characterId, tx.transactionId), tx);
+    }
+    for (const jn of data.journalEntries) {
+      this.journalEntries.set(this.makeJournalKey(jn.characterId, jn.journalId), jn);
     }
   }
 }

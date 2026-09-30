@@ -8,6 +8,7 @@ import type { LedgerFilterType } from './types.ts';
 import { roiService } from '../roi/service.ts';
 import { hubsService } from '../hubs/service.ts';
 import { ledgerRepository } from './repository.ts';
+import { validateCharacterSessionAccess } from '../middleware/security.ts';
 
 const SESSION_COOKIE_NAME = 'eve_session_id';
 
@@ -57,9 +58,26 @@ export function createLedgerRouter(
       sortOrder,
       page,
       pageSize,
+      character_id,
+      character_ids,
     } = req.query;
 
-    const result = ledgerService.getTransactions(session.characterId, {
+    const requestedCharId = character_id ? Number(character_id) : undefined;
+    const requestedCharIds = character_ids
+      ? String(character_ids).split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n))
+      : (requestedCharId ? [requestedCharId] : undefined);
+
+    if (requestedCharIds) {
+      const access = validateCharacterSessionAccess(session, requestedCharIds);
+      if (!access.allowed) {
+        res.status(403).json({ error: 'Accès refusé pour ce personnage' });
+        return;
+      }
+    }
+
+    const targetCharId = requestedCharId || session.characterId;
+
+    const result = ledgerService.getTransactions(targetCharId, {
       type: type as LedgerFilterType,
       typeId: typeId ? Number(typeId) : undefined,
       search: search ? String(search) : undefined,
@@ -88,7 +106,20 @@ export function createLedgerRouter(
       return;
     }
 
-    const detail = ledgerService.getTransactionDetail(session.characterId, txId);
+    // Check all authorized characters in session
+    const authorizedCharIds = session.characters
+      ? Object.keys(session.characters).map(Number)
+      : [session.characterId];
+
+    let detail = null;
+    for (const charId of authorizedCharIds) {
+      const found = ledgerService.getTransactionDetail(charId, txId);
+      if (found) {
+        detail = found;
+        break;
+      }
+    }
+
     if (!detail) {
       res.status(404).json({ error: 'Transaction not found' });
       return;
@@ -103,10 +134,18 @@ export function createLedgerRouter(
    */
   router.get('/journal', requireSession, (req: Request, res: Response) => {
     const session = (req as Request & { session: NonNullable<Awaited<ReturnType<typeof authService.getValidSession>>> }).session;
+    const requestedCharId = req.query.character_id ? Number(req.query.character_id) : session.characterId;
+
+    const access = validateCharacterSessionAccess(session, requestedCharId);
+    if (!access.allowed) {
+      res.status(403).json({ error: 'Accès refusé pour ce personnage' });
+      return;
+    }
+
     const page = req.query.page ? Number(req.query.page) : 1;
     const pageSize = req.query.pageSize ? Number(req.query.pageSize) : 50;
 
-    const result = ledgerService.getJournalEntries(session.characterId, page, pageSize);
+    const result = ledgerService.getJournalEntries(requestedCharId, page, pageSize);
     res.json(result);
   });
 
@@ -123,6 +162,14 @@ export function createLedgerRouter(
       characterIds = Object.keys(session.characters).map(Number);
     }
     const requestedCharId = req.query.character_id ? Number(req.query.character_id) : (characterIds ? undefined : session.characterId);
+
+    const idsToValidate = characterIds || (requestedCharId ? [requestedCharId] : [session.characterId]);
+    const access = validateCharacterSessionAccess(session, idsToValidate);
+    if (!access.allowed) {
+      res.status(403).json({ error: 'Accès refusé pour ce personnage' });
+      return;
+    }
+
     const summary = ledgerService.getSummary(requestedCharId, characterIds);
     res.json(summary);
   });
@@ -133,7 +180,15 @@ export function createLedgerRouter(
    */
   router.get('/filter-options', requireSession, (req: Request, res: Response) => {
     const session = (req as Request & { session: NonNullable<Awaited<ReturnType<typeof authService.getValidSession>>> }).session;
-    const options = ledgerService.getFilterOptions(session.characterId);
+    const requestedCharId = req.query.character_id ? Number(req.query.character_id) : session.characterId;
+
+    const access = validateCharacterSessionAccess(session, requestedCharId);
+    if (!access.allowed) {
+      res.status(403).json({ error: 'Accès refusé pour ce personnage' });
+      return;
+    }
+
+    const options = ledgerService.getFilterOptions(requestedCharId);
     res.json(options);
   });
 
@@ -143,7 +198,15 @@ export function createLedgerRouter(
    */
   router.get('/sync-status', requireSession, (req: Request, res: Response) => {
     const session = (req as Request & { session: NonNullable<Awaited<ReturnType<typeof authService.getValidSession>>> }).session;
-    const status = syncRepo.getFullStatus(session.characterId);
+    const requestedCharId = req.query.character_id ? Number(req.query.character_id) : session.characterId;
+
+    const access = validateCharacterSessionAccess(session, requestedCharId);
+    if (!access.allowed) {
+      res.status(403).json({ error: 'Accès refusé pour ce personnage' });
+      return;
+    }
+
+    const status = syncRepo.getFullStatus(requestedCharId);
     res.json(status);
   });
 

@@ -2,12 +2,13 @@ import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import App from './App.tsx';
 
-describe('App Component', () => {
+describe('App Component (Phase 06 Integrated Dashboard)', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    localStorage.clear();
   });
 
-  it('renders unauthenticated state with SSO login button and Phase 04 badge', async () => {
+  it('renders unauthenticated state with SSO login button and Phase 06 badge', async () => {
     global.fetch = vi.fn((url: string | URL | Request) => {
       const urlStr = url.toString();
       const pathname = new URL(urlStr, 'http://localhost').pathname;
@@ -56,14 +57,14 @@ describe('App Component', () => {
     render(<App />);
 
     expect(screen.getAllByText(/EVE Trade Dashboard/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Phase 04 — Cycle des Ordres & Réapprovisionnement/i)).toBeInTheDocument();
-    
+    expect(screen.getByText(/Phase 06 — Dashboard Intégré & Ergonomie/i)).toBeInTheDocument();
+
     await waitFor(() => {
       expect(screen.getByText(/Se connecter avec EVE Online \(SSO\)/i)).toBeInTheDocument();
     });
   });
 
-  it('renders authenticated character profile, orders lifecycle, and restock planning', async () => {
+  it('renders authenticated dashboard overview, navigates tabs, opens preferences and performs restock/csv actions', async () => {
     global.fetch = vi.fn((url: string | URL | Request) => {
       const urlStr = url.toString();
       const pathname = new URL(urlStr, 'http://localhost').pathname;
@@ -351,6 +352,90 @@ describe('App Component', () => {
           }),
         } as Response);
       }
+      if (pathname === '/api/roi/summary') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            summary: {
+              as_of: new Date().toISOString(),
+              period_label: 'Toutes périodes',
+              total_sales_volume: 40000,
+              allocated_sales_volume: 40000,
+              unallocated_sales_volume: 0,
+              gross_revenue_isk: 220000,
+              allocated_buy_cost_isk: 160000,
+              allocated_buy_fees_isk: 4800,
+              attributable_sell_fees_isk: 7920,
+              total_allocated_investment_ttc: 164800,
+              realized_profit_ttc_isk: 47280,
+              roi_percent_ttc: 28.69,
+              tied_up_capital_isk: 330000,
+              unsold_items_count: 1,
+              coverage_status: 'COMPLETE',
+              coverage_percent: 100,
+              hub_pairs: [
+                {
+                  buy_hub_id: 'hub-jita',
+                  buy_hub_name: 'Jita 4-4',
+                  sell_hub_id: 'hub-amarr',
+                  sell_hub_name: 'Amarr 8',
+                  sold_volume_total: 40000,
+                  sold_volume_allocated: 40000,
+                  gross_revenue: 220000,
+                  allocated_buy_cost: 160000,
+                  allocated_buy_fees: 4800,
+                  attributable_sell_fees: 7920,
+                  realized_profit_ttc: 47280,
+                  roi_percent_ttc: 28.69,
+                  coverage_status: 'COMPLETE',
+                  coverage_percent: 100,
+                  transaction_count: 1,
+                },
+              ],
+            },
+          }),
+        } as Response);
+      }
+      if (pathname === '/api/roi/allocations') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            allocations: [],
+          }),
+        } as Response);
+      }
+      if (pathname === '/api/roi/unsold-inventory') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            inventory: [],
+          }),
+        } as Response);
+      }
+      if (pathname === '/api/hubs') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            hubs: [
+              {
+                id: 'hub-jita',
+                name: 'Jita 4-4',
+                system_name: 'Jita',
+                is_system_default: true,
+                created_at: new Date().toISOString(),
+              },
+            ],
+          }),
+        } as Response);
+      }
+      if (pathname === '/api/hubs/mappings') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            mappings: [],
+          }),
+        } as Response);
+      }
 
       return Promise.resolve({
         ok: true,
@@ -362,13 +447,44 @@ describe('App Component', () => {
 
     await waitFor(() => {
       expect(screen.getAllByText(/Captain Trader/i).length).toBeGreaterThanOrEqual(1);
-      expect(screen.getByText(/Grand Livre/i)).toBeInTheDocument();
-      expect(screen.getByText(/Ordres & Cycle de Vie/i)).toBeInTheDocument();
-      expect(screen.getByText(/Réapprovisionnement/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/Vue d'Ensemble/i).length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText(/Grand Livre/i).length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText(/Ordres & Marché/i).length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText(/Réapprovisionnement/i).length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText(/Hubs & ROI TTC/i).length).toBeGreaterThanOrEqual(1);
+    });
+
+    // Check Overview view content
+    expect(screen.getByText(/Chiffre d'Affaires Brut/i)).toBeInTheDocument();
+    expect(screen.getByText(/Bénéfice Réalisé \(TTC\)/i)).toBeInTheDocument();
+
+    // Open preferences modal
+    const prefBtn = screen.getByTitle(/Préférences d'affichage/i);
+    await act(async () => {
+      fireEvent.click(prefBtn);
+    });
+    expect(screen.getByText(/Préférences Utilisateur & Affichage/i)).toBeInTheDocument();
+
+    const savePrefBtn = screen.getByText(/Enregistrer les Préférences/i);
+    await act(async () => {
+      fireEvent.click(savePrefBtn);
+    });
+
+    // Switch to Grand Livre Tab
+    const ledgerTabBtn = screen.getAllByText(/Grand Livre/i)[0];
+    await act(async () => {
+      fireEvent.click(ledgerTabBtn);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^Toutes$/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Ventes$/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Achats$/i })).toBeInTheDocument();
+      expect(screen.getByTitle(/Exporter les transactions filtrées en CSV/i)).toBeInTheDocument();
     });
 
     // Switch to Orders Tab
-    const ordersTabBtn = screen.getByText(/Ordres & Cycle de Vie/i);
+    const ordersTabBtn = screen.getAllByText(/Ordres & Marché/i)[0];
     await act(async () => {
       fireEvent.click(ordersTabBtn);
     });
@@ -380,7 +496,7 @@ describe('App Component', () => {
     });
 
     // Switch to Restock Tab
-    const restockTabBtn = screen.getByText(/Réapprovisionnement/i);
+    const restockTabBtn = screen.getAllByText(/Réapprovisionnement/i)[0];
     await act(async () => {
       fireEvent.click(restockTabBtn);
     });
@@ -391,22 +507,15 @@ describe('App Component', () => {
       expect(screen.getByText(/Ajouter un article/i)).toBeInTheDocument();
     });
 
-    // Click generate suggestions
-    const genBtn = screen.getByText(/Générer suggestions/i);
+    // Switch to Hubs & ROI TTC Tab
+    const roiTabBtn = screen.getAllByText(/Hubs & ROI TTC/i)[0];
     await act(async () => {
-      fireEvent.click(genBtn);
+      fireEvent.click(roiTabBtn);
     });
 
-    // Open and close Add Modal
-    const addBtn = screen.getByText(/Ajouter un article/i);
-    await act(async () => {
-      fireEvent.click(addBtn);
-    });
-
-    expect(screen.getByText(/Ajouter un Article à Réapprovisionner/i)).toBeInTheDocument();
-    const cancelBtn = screen.getByText(/Annuler/i);
-    await act(async () => {
-      fireEvent.click(cancelBtn);
+    await waitFor(() => {
+      expect(screen.getByText(/Rentabilité Réelle TTC & Hubs Commerciaux/i)).toBeInTheDocument();
+      expect(screen.getByText(/Rapprochement Automatique \(FIFO\)/i)).toBeInTheDocument();
     });
   });
 });

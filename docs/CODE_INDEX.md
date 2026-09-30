@@ -1,6 +1,6 @@
 # Index canonique du code
 
-**État :** Phase 05 (Hubs commerciaux configurables, allocations explicites de coûts, métriques financières TTC et calcul de ROI) terminée et validée.
+**État :** Phase 06 (Dashboard intégré, audit ergonomie & UX, vue d'ensemble unifiée, suppression des doublons, export CSV RFC 4180, format EVE Multibuy et préférences utilisateur) terminée et validée.
 
 ## Runtime & Environnement
 - **Runtime :** Node.js 22, TypeScript strict.
@@ -59,7 +59,18 @@
 - `src/server/sync/repository.ts` — Dépôt de gestion des états de synchronisation et des curseurs par personnage et ressource — `src/server/sync/sync.test.ts`
 - `src/server/sync/service.ts` — Orchestrateur de collecte ESI (`/wallet/transactions/` via pagination `from_id`, `/wallet/journal/` via `x-pages`, `/orders/` + `/orders/history/` et portefeuilles de divisions corporation `/corporations/{id}/wallets/{div}/journal/`), enrichissement de noms et sauvegarde résiliente — `src/server/sync/sync.test.ts`
 - `src/main.tsx` — Point de montage React 19 dans le DOM — Initialisation React StrictMode — `src/App.test.tsx`
-- `src/App.tsx` — Interface utilisateur complète : Grand Livre des ventes, Ordres & Cycle de vie, Hubs & ROI TTC avec paires de flux et allocations explicites, Listes locales de réapprovisionnement, Journal des frais et Roadmap — `src/App.test.tsx`
+- `src/App.tsx` — Interface utilisateur principale et orchestrateur modulaire — Navigation, barre d'état et modales — `src/App.test.tsx`
+- `src/components/DashboardOverview.tsx` — Vue d'ensemble consolidée : KPIs financiers, rentabilité TTC, alertes d'ordres, réapprovisionnement rapide et flux commerciaux — `src/App.test.tsx`
+- `src/components/LedgerView.tsx` — Vue dédiée du Grand Livre avec filtres réactifs, pagination, inspection de transaction, lien direct d'allocation et export CSV — `src/App.test.tsx`
+- `src/components/OrdersView.tsx` — Vue de suivi de marché et cycle de vie des ordres avec barres de progression, filtres d'état, lien vers réapprovisionnement et export CSV — `src/App.test.tsx`
+- `src/components/RestockView.tsx` — Vue de préparation des listes de réapprovisionnement par hub d'achat cible avec export CSV et copie au format EVE Multibuy — `src/App.test.tsx`
+- `src/components/HubsRoiView.tsx` — Vue de gestion des hubs, calculs de rentabilité TTC, rapprochements FIFO, inventaire immobilisé et export CSV — `src/App.test.tsx`
+- `src/components/JournalView.tsx` — Vue du journal de portefeuille avec détail des prélèvements de taxes et courtage — `src/App.test.tsx`
+- `src/components/PreferencesModal.tsx` — Modale de personnalisation : vue de démarrage par défaut, format d'affichage ISK (complet / condensé), filtres d'ordres — `src/App.test.tsx`
+- `src/components/SystemRoadmapView.tsx` — Panneau d'état technique : passerelle ESI, budgets d'erreurs, état serveur et feuille de route Masterplan — `src/App.test.tsx`
+- `src/utils/csvExport.ts` — Utilitaire d'exportation CSV conforme RFC 4180 avec échappement de guillemets, virgules et retours chariot — `src/utils/csvExport.test.ts`
+- `src/utils/eveMultibuy.ts` — Utilitaire de formatage compatible avec la fenêtre Multibuy du client EVE Online (`<Nom>\t<Quantité>`) — `src/utils/eveMultibuy.test.ts`
+- `src/utils/preferences.ts` — Gestionnaire de préférences locales (`localStorage`), formattage des montants ISK condensés (K/M/B/T) et complets — `src/utils/preferences.test.ts`
 - `src/index.css` — Feuille de style Tailwind CSS — Import Tailwind et configuration de base du thème sombre — `src/App.test.tsx`
 - `src/test/setup.ts` — Configuration de l'environnement de test DOM Vitest — Configuration jest-dom matchers — N/A
 - `vite.config.ts` — Configuration du bundler Vite avec plugins React et Tailwind — Résolution et build client — N/A
@@ -69,6 +80,9 @@
 - `.env.example` — Modèle de configuration d'environnement sans secrets — Déclaration des variables — N/A
 
 ## Tests
+- `src/utils/csvExport.test.ts` — Tests d'exportation CSV RFC 4180 pour les transactions, ordres, articles de réapprovisionnement et allocations.
+- `src/utils/eveMultibuy.test.ts` — Tests de formatage au standard EVE Multibuy.
+- `src/utils/preferences.test.ts` — Tests de persistance des préférences utilisateur et de formattage ISK complet/condensé.
 - `src/server/roi/roi.test.ts` — Suite de tests complète pour le calcul du ROI TTC, réconciliation chronologique FIFO multi-personnages, achats sur sell orders directs, non double-comptage des taxes, vérification du capital immobilisé et rejet des allocations incohérentes.
 - `src/server/hubs/hubs.test.ts` — Tests de résolution des stations/structures vers les hubs, non-assignation silencieuse de hub par défaut (`UNKNOWN_HUB`), persistance des mappings et protection des hubs système.
 - `src/server/orders/orders.test.ts` — Tests exhaustifs de la machine à états de cycle de vie des ordres, diff de snapshots, transition `DISAPPEARED_UNCONFIRMED`, isolation, agrégats et listes de réapprovisionnement sans mutation ESI.
@@ -77,5 +91,5 @@
 - `src/server/universe/universe.test.ts` — Tests de résolution de noms univers EVE statiques et dynamiques.
 - `src/server/esi/esi.test.ts` — Suite complète de tests ESI (cache ETag/Expires, 304, suspension error budget 420/429, Retry-After, retries bornés 5xx, rejet 403, renouvellement 401, pagination X-Pages & from_id avec déduplication et conservation PARTIAL).
 - `src/server/auth/auth.test.ts` — Suite complète de tests unitaires SSO (PKCE S256, validation JWT CCP, protection anti-rejeu state CSRF, échange de code, rafraîchissement de tokens et purge de session).
-- `src/App.test.tsx` — Tests unitaires et d'intégration de l'interface (navigation par onglets, grand livre, ordres & cycle de vie, hubs & ROI TTC, listes de réapprovisionnement).
+- `src/App.test.tsx` — Tests unitaires et d'intégration de l'interface (Dashboard Overview, Grand Livre, Ordres & cycle, Hubs & ROI TTC, Réapprovisionnement, Export CSV, Préférences).
 - `server.test.ts` — Tests d'initialisation du serveur Express et vérification des routes API.

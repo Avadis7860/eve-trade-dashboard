@@ -14,7 +14,7 @@ Un seul chantier actif, une phase, une branche, un PR. Jamais sur main. Petits l
 | 03 | Transactions et grand livre | 01–02 | Terminé |
 | 04 | Cycle de vie des ordres, listes de réassort | 01–03 | Terminé |
 | 05 | Hubs et ROI TTC | 03–04 | Terminé |
-| 06 | Dashboard intégré | 03–05 | Planifiée |
+| 06 | Dashboard intégré | 03–05 | Terminé |
 | H01 | Hardening sécurité | 00–06 | Planifiée |
 | H02 | Hardening intégrité et résilience | 02–06 | Planifiée |
 | H03 | Hardening UX, performance et release | H01–H02 | Planifiée |

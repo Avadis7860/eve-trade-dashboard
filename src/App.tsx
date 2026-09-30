@@ -1,54 +1,49 @@
-import { useState, useEffect, useCallback } from 'react';
-import { 
-  Activity, 
-  Shield, 
-  TrendingUp, 
-  CheckCircle2, 
-  Terminal, 
-  Server, 
-  Database,
-  LogIn,
-  LogOut,
-  User,
-  AlertTriangle,
-  Key,
-  RefreshCw,
-  Search,
-  Filter,
-  ArrowDownLeft,
-  ArrowUpRight,
+import React, { useState, useEffect, useCallback } from 'react';
+import {
   Coins,
-  Building2,
-  PackageCheck,
-  ChevronLeft,
-  ChevronRight,
-  Info,
+  RefreshCw,
+  LogOut,
+  UserPlus,
+  ChevronDown,
   X,
   FileText,
-  ShoppingCart,
-  Plus,
-  Trash2,
-  CheckSquare,
-  Sparkles,
   ClipboardList,
-  Percent,
+  ShoppingCart,
   MapPin,
-  Layers,
-  Scale,
+  Building2,
   Link2,
+  AlertTriangle,
+  Key,
+  LogIn,
+  Settings,
+  Shield,
   Users,
-  UserPlus,
-  ChevronDown
 } from 'lucide-react';
 
-interface HealthStatus {
+import { DashboardOverview } from './components/DashboardOverview';
+import { LedgerView } from './components/LedgerView';
+import { OrdersView } from './components/OrdersView';
+import { RestockView } from './components/RestockView';
+import { HubsRoiView } from './components/HubsRoiView';
+import { JournalView } from './components/JournalView';
+import { SystemRoadmapView } from './components/SystemRoadmapView';
+import { PreferencesModal } from './components/PreferencesModal';
+
+import {
+  loadPreferences,
+  savePreferences,
+  UserPreferences,
+  formatIskValue,
+} from './utils/preferences';
+
+export interface HealthStatus {
   status: string;
   service: string;
   timestamp: string;
   version: string;
 }
 
-interface CharacterSession {
+export interface CharacterSession {
   characterId: number;
   characterName: string;
   portraitUrl: string;
@@ -57,17 +52,17 @@ interface CharacterSession {
   isActive?: boolean;
 }
 
-interface AuthSessionResponse {
+export interface AuthSessionResponse {
   authenticated: boolean;
   character?: CharacterSession;
   characters?: CharacterSession[];
 }
 
-interface AuthStatusResponse {
+export interface AuthStatusResponse {
   configured: boolean;
 }
 
-interface EsiStatusResponse {
+export interface EsiStatusResponse {
   rateLimit: {
     errorLimitRemain: number;
     errorLimitResetSeconds: number;
@@ -280,7 +275,7 @@ export interface RoiFinancialSummary {
   hub_pairs: HubPairPerformance[];
 }
 
-interface LedgerSummary {
+export interface LedgerSummary {
   characterId: number;
   asOf: number;
   totalTransactionsCount: number;
@@ -298,7 +293,7 @@ interface LedgerSummary {
   completeness: 'COMPLETE' | 'PARTIAL' | 'ERROR' | 'UNKNOWN' | 'ABSENT';
 }
 
-interface SyncStatusResponse {
+export interface SyncStatusResponse {
   characterId: number;
   transactions: {
     status: 'IDLE' | 'SYNCING' | 'COMPLETE' | 'PARTIAL' | 'ERROR';
@@ -317,14 +312,10 @@ interface SyncStatusResponse {
   freshness: 'FRESH' | 'STALE' | 'UNKNOWN';
 }
 
-function formatIsk(amount: number): string {
-  return new Intl.NumberFormat('fr-FR', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount) + ' ISK';
-}
-
 export default function App() {
+  const [preferences, setPreferences] = useState<UserPreferences>(loadPreferences());
+  const [showPreferencesModal, setShowPreferencesModal] = useState(false);
+
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [authConfigured, setAuthConfigured] = useState<boolean | null>(null);
   const [esiStatus, setEsiStatus] = useState<EsiStatusResponse | null>(null);
@@ -335,7 +326,9 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
 
   // Active Tab View
-  const [activeTab, setActiveTab] = useState<'ledger' | 'orders' | 'restock' | 'hubs-roi' | 'journal' | 'overview'>('ledger');
+  const [activeTab, setActiveTab] = useState<'overview' | 'ledger' | 'orders' | 'restock' | 'hubs-roi' | 'journal' | 'roadmap'>(
+    preferences.defaultLandingTab || 'overview'
+  );
 
   // Ledger state
   const [transactions, setTransactions] = useState<CharacterTransaction[]>([]);
@@ -359,7 +352,7 @@ export default function App() {
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
 
-  // Orders State (Phase 04)
+  // Orders State
   const [orders, setOrders] = useState<CharacterOrderSnapshot[]>([]);
   const [orderSummary, setOrderSummary] = useState<OrderSummaryMetrics | null>(null);
   const [orderStateFilter, setOrderStateFilter] = useState<string>('ALL');
@@ -369,7 +362,7 @@ export default function App() {
   const [ordersSearch, setOrdersSearch] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<CharacterOrderSnapshot | null>(null);
 
-  // Restock State (Phase 04)
+  // Restock State
   const [restockItems, setRestockItems] = useState<RestockItem[]>([]);
   const [isGeneratingRestock, setIsGeneratingRestock] = useState(false);
   const [showAddRestockModal, setShowAddRestockModal] = useState(false);
@@ -386,7 +379,7 @@ export default function App() {
     notes: '',
   });
 
-  // Hubs & ROI TTC State (Phase 05)
+  // Hubs & ROI TTC State
   const [roiSummary, setRoiSummary] = useState<RoiFinancialSummary | null>(null);
   const [allocations, setAllocations] = useState<ExplicitCostAllocation[]>([]);
   const [unsoldInventory, setUnsoldInventory] = useState<UnsoldInventoryItem[]>([]);
@@ -413,7 +406,7 @@ export default function App() {
     try {
       const params = new URLSearchParams({
         page: String(page),
-        pageSize: '25',
+        pageSize: String(preferences.tablePageSize || 25),
         type: filterType,
         ...(searchQuery ? { search: searchQuery } : {}),
         ...(selectedLocation ? { locationId: selectedLocation } : {}),
@@ -428,7 +421,7 @@ export default function App() {
         fetch(`/api/ledger/summary${charIdsQuery}`).then((r) => (r.ok ? r.json() : null)),
         fetch('/api/ledger/sync-status').then((r) => (r.ok ? r.json() : null)),
         fetch('/api/ledger/filter-options').then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/ledger/journal?pageSize=25').then((r) => (r.ok ? r.json() : null)),
+        fetch('/api/ledger/journal?pageSize=50').then((r) => (r.ok ? r.json() : null)),
       ]);
 
       if (txRes) {
@@ -445,14 +438,14 @@ export default function App() {
     } finally {
       setLedgerLoading(false);
     }
-  }, [session, page, filterType, searchQuery, selectedLocation]);
+  }, [session, page, filterType, searchQuery, selectedLocation, preferences.tablePageSize, linkedCharacters]);
 
   const fetchOrdersData = useCallback(async () => {
     if (!session) return;
     try {
       const params = new URLSearchParams({
         page: String(ordersPage),
-        pageSize: '25',
+        pageSize: String(preferences.tablePageSize || 25),
         ...(orderStateFilter !== 'ALL' ? { state: orderStateFilter } : {}),
         ...(ordersSearch ? { search: ordersSearch } : {}),
       });
@@ -464,7 +457,11 @@ export default function App() {
       ]);
 
       if (ordersRes) {
-        setOrders(ordersRes.items || []);
+        let items: CharacterOrderSnapshot[] = ordersRes.items || [];
+        if (preferences.hideCompletedOrders) {
+          items = items.filter((o) => o.state === 'ACTIVE' || o.state === 'PARTIALLY_FILLED' || o.state === 'DISAPPEARED_UNCONFIRMED');
+        }
+        setOrders(items);
         setOrdersTotalPages(ordersRes.totalPages || 1);
         setOrdersTotalCount(ordersRes.total || 0);
       }
@@ -473,7 +470,7 @@ export default function App() {
     } catch (err) {
       console.error('Failed to load orders data:', err);
     }
-  }, [session, ordersPage, orderStateFilter, ordersSearch]);
+  }, [session, ordersPage, orderStateFilter, ordersSearch, preferences.tablePageSize, preferences.hideCompletedOrders]);
 
   const fetchRoiAndHubsData = useCallback(async () => {
     if (!session) return;
@@ -595,39 +592,31 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const errorParam = urlParams.get('auth_error');
-    const successParam = urlParams.get('auth');
-
-    if (errorParam) {
-      setAuthError(decodeURIComponent(errorParam));
-    }
-    if (successParam || errorParam) {
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
-
-    Promise.all([
-      fetch('/api/health').then((res) => (res.ok ? res.json() : null)).catch(() => null),
-      fetch('/api/auth/status').then((res) => (res.ok ? res.json() : null)).catch(() => null),
-      fetch('/api/auth/session').then((res) => (res.ok ? res.json() : null)).catch(() => null),
-      fetch('/api/esi/status').then((res) => (res.ok ? res.json() : null)).catch(() => null),
-    ]).then(([healthData, authStatusData, sessionData, esiData]) => {
-      if (healthData) setHealth(healthData);
-      if (authStatusData) setAuthConfigured((authStatusData as AuthStatusResponse).configured);
-      if (sessionData && (sessionData as AuthSessionResponse).authenticated) {
-        const authData = sessionData as AuthSessionResponse;
-        if (authData.character) {
-          setSession(authData.character);
-        }
-        if (authData.characters) {
-          setLinkedCharacters(authData.characters);
-        }
-      }
-      if (esiData) setEsiStatus(esiData as EsiStatusResponse);
-      setLoading(false);
+  const handleQuickAllocate = (tx: CharacterTransaction) => {
+    setNewAllocForm({
+      sell_transaction_id: tx.transactionId,
+      buy_transaction_id: 0,
+      quantity_to_allocate: tx.quantity,
+      notes: `Rapprochement direct pour vente #${tx.transactionId} (${tx.typeName})`,
     });
-  }, []);
+    setShowAddAllocationModal(true);
+  };
+
+  const handleQuickAddRestock = (order: CharacterOrderSnapshot) => {
+    setNewRestockForm({
+      typeId: order.typeId,
+      typeName: order.typeName || `Type #${order.typeId}`,
+      targetBuyHubId: 60003760,
+      targetBuyHubName: 'Jita IV - Moon 4 - Caldari Navy Assembly Plant',
+      sellHubId: order.locationId,
+      sellHubName: order.locationName || `Station #${order.locationId}`,
+      suggestedQuantity: order.volumeTotal,
+      targetQuantity: order.volumeTotal,
+      justification: `Réapprovisionnement suite à l'ordre #${order.orderId}`,
+      notes: '',
+    });
+    setShowAddRestockModal(true);
+  };
 
   const handleCreateHub = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -764,13 +753,44 @@ export default function App() {
     }
   };
 
+  const handleSavePreferences = (updated: Partial<UserPreferences>) => {
+    const saved = savePreferences(updated);
+    setPreferences(saved);
+  };
+
   useEffect(() => {
-    if (session) {
-      fetchLedgerData();
-      fetchOrdersData();
-      fetchRoiAndHubsData();
+    const urlParams = new URLSearchParams(window.location.search);
+    const errorParam = urlParams.get('auth_error');
+    const successParam = urlParams.get('auth');
+
+    if (errorParam) {
+      setAuthError(decodeURIComponent(errorParam));
     }
-  }, [session, activeTab, fetchLedgerData, fetchOrdersData, fetchRoiAndHubsData]);
+    if (successParam || errorParam) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    Promise.all([
+      fetch('/api/health').then((res) => (res.ok ? res.json() : null)).catch(() => null),
+      fetch('/api/auth/status').then((res) => (res.ok ? res.json() : null)).catch(() => null),
+      fetch('/api/auth/session').then((res) => (res.ok ? res.json() : null)).catch(() => null),
+      fetch('/api/esi/status').then((res) => (res.ok ? res.json() : null)).catch(() => null),
+    ]).then(([healthData, authStatusData, sessionData, esiData]) => {
+      if (healthData) setHealth(healthData);
+      if (authStatusData) setAuthConfigured((authStatusData as AuthStatusResponse).configured);
+      if (sessionData && (sessionData as AuthSessionResponse).authenticated) {
+        const authData = sessionData as AuthSessionResponse;
+        if (authData.character) {
+          setSession(authData.character);
+        }
+        if (authData.characters) {
+          setLinkedCharacters(authData.characters);
+        }
+      }
+      if (esiData) setEsiStatus(esiData as EsiStatusResponse);
+      setLoading(false);
+    });
+  }, []);
 
   const checkSession = useCallback(async () => {
     try {
@@ -779,9 +799,7 @@ export default function App() {
         const data: AuthSessionResponse = await res.json();
         if (data.authenticated && data.character) {
           setSession(data.character);
-          if (data.characters) {
-            setLinkedCharacters(data.characters);
-          }
+          if (data.characters) setLinkedCharacters(data.characters);
         } else {
           setSession(null);
           setLinkedCharacters([]);
@@ -832,7 +850,6 @@ export default function App() {
     }
   };
 
-  // Listen for window focus / visibility change to auto-detect session after OAuth login in new tab
   useEffect(() => {
     const onFocus = () => {
       checkSession();
@@ -862,151 +879,148 @@ export default function App() {
     }
   };
 
-  const phases = [
-    { id: '00', name: 'Fondations & CI', status: 'Terminé', desc: 'React, Vite, Express, TypeScript, Vitest, CI' },
-    { id: '01', name: 'EVE SSO & Identité', status: session ? 'Connecté' : 'Terminé', desc: 'OAuth 2.0 PKCE, gestion sécurisée des sessions et tokens' },
-    { id: '02', name: 'Passerelle ESI Résiliente', status: 'Terminé', desc: 'Cache 304, rate limits (420/429), gestion des erreurs et pagination' },
-    { id: '03', name: 'Transactions & Grand Livre', status: 'Terminé', desc: 'Sync wallet idempotente, pagination from_id, grand livre des ventes' },
-    { id: '04', name: 'Ordres & Réapprovisionnement', status: 'Terminé', desc: 'Snapshots ordres de marché, cycle de vie et listes locales' },
-    { id: '05', name: 'Hubs & ROI TTC', status: 'Actif', desc: 'Taxes, frais de courtage, rentabilité réelle et allocations explicites' },
-    { id: '06', name: 'Dashboard Intégré', status: 'Planifiée', desc: 'Vue unifiée, filtres et métriques consolidées' },
-  ];
-
-  const getOrderStatusBadge = (state: OrderLifecycleState) => {
-    switch (state) {
-      case 'ACTIVE':
-        return <span className="px-2 py-0.5 rounded font-mono text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">ACTIF (100%)</span>;
-      case 'PARTIALLY_FILLED':
-        return <span className="px-2 py-0.5 rounded font-mono text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/20">PARTIEL</span>;
-      case 'COMPLETED_CONFIRMED':
-        return <span className="px-2 py-0.5 rounded font-mono text-[10px] bg-purple-500/10 text-purple-300 border border-purple-500/20">COMPLÉTÉ</span>;
-      case 'DISAPPEARED_UNCONFIRMED':
-        return <span className="px-2 py-0.5 rounded font-mono text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20">DISPARU (NON CONFIRMÉ)</span>;
-      case 'CANCELLED_CONFIRMED':
-        return <span className="px-2 py-0.5 rounded font-mono text-[10px] bg-rose-500/10 text-rose-400 border border-rose-500/20">ANNULÉ</span>;
-      case 'EXPIRED_CONFIRMED':
-        return <span className="px-2 py-0.5 rounded font-mono text-[10px] bg-slate-800 text-slate-400 border border-slate-700">EXPIRÉ</span>;
-      default:
-        return <span className="px-2 py-0.5 rounded font-mono text-[10px] bg-slate-800 text-slate-500">INCONNU</span>;
+  useEffect(() => {
+    if (session) {
+      fetchLedgerData();
+      fetchOrdersData();
+      fetchRoiAndHubsData();
     }
+  }, [session, activeTab, fetchLedgerData, fetchOrdersData, fetchRoiAndHubsData]);
+
+  const formatIsk = (val: number | null | undefined) => {
+    if (val === null || val === undefined) return '—';
+    return formatIskValue(val, preferences.iskDisplayMode);
   };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-amber-500/30 selection:text-amber-200">
-      {/* Top Navigation */}
-      <header className="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur sticky top-0 z-50">
+      {/* Top Bar Contract: Zone 1 (Brand), Zone 2 (Clean Nav Links), Zone 3 (Actions & User) */}
+      <header className="border-b border-slate-800/80 bg-slate-900/70 backdrop-blur sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center space-x-6">
-            <div className="flex items-center space-x-3">
-              <div className="w-9 h-9 rounded bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-mono font-bold text-lg">
-                Ω
-              </div>
-              <div>
-                <span className="font-semibold tracking-wider text-slate-100 uppercase text-sm">EVE Trade Dashboard</span>
-                <span className="ml-2 text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono border border-slate-700">v0.1.0</span>
-              </div>
+          {/* Zone 1: Wordmark */}
+          <div className="flex items-center space-x-3">
+            <div className="w-8 h-8 rounded bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-mono font-bold text-base">
+              Ω
             </div>
-
-            {/* Navigation Tabs */}
-            {session && (
-              <nav className="hidden md:flex items-center space-x-1 pl-4 border-l border-slate-800">
-                <button
-                  onClick={() => setActiveTab('ledger')}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                    activeTab === 'ledger'
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                  }`}
-                >
-                  Grand Livre
-                </button>
-                <button
-                  onClick={() => setActiveTab('orders')}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                    activeTab === 'orders'
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                  }`}
-                >
-                  Ordres &amp; Cycle de Vie
-                </button>
-                <button
-                  onClick={() => setActiveTab('restock')}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 ${
-                    activeTab === 'restock'
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                  }`}
-                >
-                  <ShoppingCart className="w-3.5 h-3.5" />
-                  Réapprovisionnement
-                </button>
-                <button
-                  onClick={() => setActiveTab('hubs-roi')}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 ${
-                    activeTab === 'hubs-roi'
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                  }`}
-                >
-                  <Scale className="w-3.5 h-3.5" />
-                  Hubs &amp; ROI TTC
-                </button>
-                <button
-                  onClick={() => setActiveTab('journal')}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                    activeTab === 'journal'
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                  }`}
-                >
-                  Journal &amp; Frais
-                </button>
-                <button
-                  onClick={() => setActiveTab('overview')}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                    activeTab === 'overview'
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                  }`}
-                >
-                  Système &amp; Roadmap
-                </button>
-              </nav>
-            )}
+            <a href="/" className="text-base font-bold tracking-tight text-white hover:text-amber-300 transition-colors">
+              EVE Trade Dashboard
+            </a>
           </div>
 
-          {/* User / Session Area in Header */}
-          <div className="flex items-center space-x-3">
+          {/* Zone 2: Navigation Links */}
+          {session && (
+            <nav className="hidden lg:flex items-center space-x-1">
+              <button
+                onClick={() => setActiveTab('overview')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  activeTab === 'overview'
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                }`}
+              >
+                Vue d&apos;Ensemble
+              </button>
+              <button
+                onClick={() => setActiveTab('ledger')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  activeTab === 'ledger'
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                }`}
+              >
+                Grand Livre
+              </button>
+              <button
+                onClick={() => setActiveTab('orders')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  activeTab === 'orders'
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                }`}
+              >
+                Ordres &amp; Marché
+              </button>
+              <button
+                onClick={() => setActiveTab('restock')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  activeTab === 'restock'
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                }`}
+              >
+                Réapprovisionnement
+              </button>
+              <button
+                onClick={() => setActiveTab('hubs-roi')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  activeTab === 'hubs-roi'
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                }`}
+              >
+                Hubs &amp; ROI TTC
+              </button>
+              <button
+                onClick={() => setActiveTab('journal')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  activeTab === 'journal'
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                }`}
+              >
+                Journal &amp; Frais
+              </button>
+              <button
+                onClick={() => setActiveTab('roadmap')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  activeTab === 'roadmap'
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                }`}
+              >
+                Système
+              </button>
+            </nav>
+          )}
+
+          {/* Zone 3: Actions, Preferences & Profile */}
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setShowPreferencesModal(true)}
+              className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-amber-300 border border-slate-800 transition-colors cursor-pointer"
+              title="Préférences d'affichage et format ISK"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+
             {session ? (
               <div className="relative">
                 <div className="flex items-center space-x-2">
                   <div
                     onClick={() => setShowCharacterDropdown(!showCharacterDropdown)}
-                    className="flex items-center space-x-2.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-amber-500/40 rounded-lg px-2.5 py-1.5 cursor-pointer transition-colors"
+                    className="flex items-center space-x-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-amber-500/40 rounded-lg px-2.5 py-1.5 cursor-pointer transition-colors"
                   >
                     <img
                       src={session.portraitUrl}
                       alt={session.characterName}
-                      className="w-7 h-7 rounded border border-amber-500/40 bg-slate-800 object-cover"
+                      className="w-6 h-6 rounded border border-amber-500/40 bg-slate-800 object-cover"
                     />
                     <div className="text-left hidden sm:block">
-                      <div className="text-xs font-semibold text-slate-200 leading-tight flex items-center gap-1.5">
+                      <div className="text-xs font-semibold text-slate-200 leading-tight flex items-center gap-1">
                         {session.characterName}
                         {linkedCharacters.length > 1 && (
-                          <span className="text-[10px] font-mono px-1.5 py-0.2 bg-amber-500/20 text-amber-300 rounded border border-amber-500/30">
-                            {linkedCharacters.length} persos
+                          <span className="text-[10px] font-mono px-1 bg-amber-500/20 text-amber-300 rounded border border-amber-500/30">
+                            {linkedCharacters.length}
                           </span>
                         )}
                       </div>
-                      <div className="text-[10px] text-slate-400 font-mono">ID: {session.characterId}</div>
                     </div>
-                    <ChevronDown className="w-3.5 h-3.5 text-slate-400 ml-1" />
+                    <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
                   </div>
 
                   <a
                     href="/api/auth/login"
-                    title="Lier un autre personnage EVE SSO à cette session"
+                    title="Lier un autre personnage EVE SSO"
                     className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-sky-500/40 text-slate-300 hover:text-sky-300 text-xs font-medium flex items-center gap-1.5 transition-colors"
                   >
                     <UserPlus className="w-3.5 h-3.5 text-sky-400" />
@@ -1101,7 +1115,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Content */}
+      {/* Main Content Viewport */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
         {/* Auth Error Banner */}
         {authError && (
@@ -1120,58 +1134,67 @@ export default function App() {
           </div>
         )}
 
-        {/* If Not Authenticated -> Show Connection Hero */}
+        {/* If Not Authenticated -> Show Connection Hero & Roadmap */}
         {!session ? (
-          <section className="relative overflow-hidden rounded-xl border border-slate-800 bg-gradient-to-b from-slate-900/90 to-slate-950 p-6 md:p-8 space-y-6">
-            <div className="relative z-10 max-w-3xl space-y-4">
-              <div className="inline-flex items-center space-x-2 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-medium">
-                <Shield className="w-3.5 h-3.5" />
-                <span>Phase 04 — Cycle des Ordres &amp; Réapprovisionnement</span>
-              </div>
-              
-              <h1 className="text-2xl md:text-4xl font-bold tracking-tight text-white">
-                EVE Online Trade Dashboard
-              </h1>
-              
-              <p className="text-slate-400 text-sm md:text-base leading-relaxed">
-                Connectez votre personnage EVE Online pour suivre le cycle de vie de vos ordres de marché, détecter les ruptures de stock imminentes et préparer des listes de réapprovisionnement par hub d&apos;achat et de vente sans manipulation en jeu.
-              </p>
-
-              <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-5 max-w-xl space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
-                    <User className="w-4 h-4 text-amber-400" />
-                    Authentification EVE SSO
-                  </span>
-                  {authConfigured === false && (
-                    <span className="text-xs px-2 py-0.5 rounded bg-amber-950 text-amber-400 border border-amber-800 font-mono flex items-center gap-1">
-                      <Key className="w-3 h-3" /> Clés à configurer
-                    </span>
-                  )}
+          <div className="space-y-6">
+            <section className="relative overflow-hidden rounded-xl border border-slate-800 bg-gradient-to-b from-slate-900/90 to-slate-950 p-6 md:p-8 space-y-6">
+              <div className="relative z-10 max-w-3xl space-y-4">
+                <div className="inline-flex items-center space-x-2 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-medium">
+                  <Shield className="w-3.5 h-3.5" />
+                  <span>Phase 06 — Dashboard Intégré &amp; Ergonomie</span>
                 </div>
-                
-                <p className="text-xs text-slate-400">
-                  Le navigateur ne reçoit aucun token d&apos;accès ou secret. Tout transite par la passerelle sécurisée du serveur.
+
+                <h1 className="text-2xl md:text-4xl font-bold tracking-tight text-white">
+                  EVE Online Trade Dashboard
+                </h1>
+
+                <p className="text-slate-400 text-sm md:text-base leading-relaxed">
+                  Tableau de bord de trading pour EVE Online : suivi consolidé des ventes, gestion du cycle de vie des ordres, préparation de réapprovisionnements sans manipulation en jeu et calcul rigoureux du ROI TTC.
                 </p>
 
-                <div className="flex flex-wrap items-center gap-3 pt-1">
-                  <a
-                    href="/api/auth/login"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-sm transition-all duration-200 shadow-md hover:shadow-amber-500/20 inline-flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <LogIn className="w-4 h-4" />
-                    Se connecter avec EVE Online (SSO)
-                  </a>
+                <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-5 max-w-xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
+                      <Shield className="w-4 h-4 text-amber-400" />
+                      Authentification Sécurisée EVE SSO (PKCE)
+                    </span>
+                    {authConfigured === false && (
+                      <span className="text-xs px-2 py-0.5 rounded bg-amber-950 text-amber-400 border border-amber-800 font-mono flex items-center gap-1">
+                        <Key className="w-3 h-3" /> Clés à configurer
+                      </span>
+                    )}
+                  </div>
+
+                  <p className="text-xs text-slate-400">
+                    Le navigateur ne reçoit aucun token d&apos;accès ou secret OAuth. Tout transite par la passerelle sécurisée du serveur.
+                  </p>
+
+                  <div className="flex flex-wrap items-center gap-3 pt-1">
+                    <a
+                      href="/api/auth/login"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-sm transition-all duration-200 shadow-md hover:shadow-amber-500/20 inline-flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <LogIn className="w-4 h-4" />
+                      Se connecter avec EVE Online (SSO)
+                    </a>
+                  </div>
                 </div>
               </div>
-            </div>
-          </section>
+            </section>
+
+            <SystemRoadmapView
+              health={health}
+              esiStatus={esiStatus}
+              loading={loading}
+              sessionExists={false}
+            />
+          </div>
         ) : (
-          /* Authenticated Dashboard Interface */
+          /* Authenticated Dashboard View */
           <div className="space-y-6">
-            {/* Top Sync & Status Bar */}
+            {/* Sync & Freshness Status Bar */}
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 rounded-xl border border-slate-800 bg-slate-900/60 backdrop-blur">
               <div className="flex items-center space-x-3">
                 <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400">
@@ -1190,7 +1213,11 @@ export default function App() {
                             : 'bg-slate-800 text-slate-400 border-slate-700'
                         }`}
                       >
-                        {syncStatus.freshness === 'FRESH' ? 'DONNÉES FRAÎCHES' : syncStatus.freshness === 'STALE' ? 'PÉRIMÉ' : 'NON SYNCHRONISÉ'}
+                        {syncStatus.freshness === 'FRESH'
+                          ? 'DONNÉES FRAÎCHES'
+                          : syncStatus.freshness === 'STALE'
+                          ? 'PÉRIMÉ'
+                          : 'NON SYNCHRONISÉ'}
                       </span>
                     )}
                   </div>
@@ -1217,1265 +1244,117 @@ export default function App() {
               </div>
             </div>
 
+            {/* TAB 0: OVERVIEW (CENTRAL DASHBOARD) */}
+            {activeTab === 'overview' && (
+              <DashboardOverview
+                summary={summary}
+                roiSummary={roiSummary}
+                orderSummary={orderSummary}
+                orders={orders}
+                restockItems={restockItems}
+                iskDisplayMode={preferences.iskDisplayMode}
+                onNavigateTab={(t) => setActiveTab(t)}
+                onSync={handleSync}
+                isSyncing={isSyncing}
+                onAutoReconcile={handleAutoReconcile}
+                isReconciling={isReconciling}
+              />
+            )}
+
             {/* TAB 1: SALES LEDGER */}
             {activeTab === 'ledger' && (
-              <div className="space-y-6">
-                {/* Summary Metrics Cards */}
-                {summary && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-                    <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-1">
-                      <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
-                        <ArrowUpRight className="w-4 h-4 text-emerald-400" />
-                        Chiffre d&apos;Affaires Brut
-                      </span>
-                      <div className="text-xl font-bold text-emerald-400">
-                        {formatIsk(summary.totalGrossSalesIsk)}
-                      </div>
-                      <div className="text-xs text-slate-400 font-mono">
-                        {summary.sellTransactionsCount} ventes ({summary.totalSellVolume.toLocaleString()} unités)
-                      </div>
-                    </div>
-
-                    <div className="p-4 rounded-xl border border-rose-500/20 bg-rose-500/5 space-y-1">
-                      <span className="text-xs font-mono uppercase text-rose-400 flex items-center gap-1.5">
-                        <Percent className="w-4 h-4 text-rose-400" />
-                        Taxes &amp; Frais ESI
-                      </span>
-                      <div className="text-xl font-bold text-rose-400">
-                        {formatIsk((summary.totalTaxesIsk || 0) + (summary.totalBrokerFeesIsk || 0))}
-                      </div>
-                      <div className="text-xs text-slate-400 font-mono">
-                        Taxes: {formatIsk(summary.totalTaxesIsk || 0)} | Frais: {formatIsk(summary.totalBrokerFeesIsk || 0)}
-                      </div>
-                    </div>
-
-                    <div className="p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 space-y-1">
-                      <span className="text-xs font-mono uppercase text-emerald-300 flex items-center gap-1.5">
-                        <Coins className="w-4 h-4 text-emerald-300" />
-                        Ventes Nettes (TTC)
-                      </span>
-                      <div className="text-xl font-bold text-emerald-300">
-                        {formatIsk(summary.totalNetSalesIsk !== undefined ? summary.totalNetSalesIsk : summary.totalGrossSalesIsk)}
-                      </div>
-                      <div className="text-xs text-slate-400 font-mono">
-                        Net encaissé après taxes
-                      </div>
-                    </div>
-
-                    <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-1">
-                      <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
-                        <ArrowDownLeft className="w-4 h-4 text-sky-400" />
-                        Dépenses d&apos;Achats
-                      </span>
-                      <div className="text-xl font-bold text-sky-400">
-                        {formatIsk(summary.totalBuySpendIsk)}
-                      </div>
-                      <div className="text-xs text-slate-400 font-mono">
-                        {summary.buyTransactionsCount} achats ({summary.totalBuyVolume.toLocaleString()} unités)
-                      </div>
-                    </div>
-
-                    <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-1">
-                      <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
-                        <PackageCheck className="w-4 h-4 text-amber-400" />
-                        Objets &amp; Hubs
-                      </span>
-                      <div className="text-xl font-bold text-slate-100">
-                        {summary.distinctItemsCount} types
-                      </div>
-                      <div className="text-xs text-slate-400 font-mono">
-                        {summary.distinctLocationsCount} stations observées
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Search & Filter Toolbar */}
-                <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col md:flex-row gap-3 items-center justify-between">
-                  <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
-                    <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-800">
-                      <button
-                        onClick={() => { setFilterType('ALL'); setPage(1); }}
-                        className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                          filterType === 'ALL' ? 'bg-slate-800 text-white shadow' : 'text-slate-400 hover:text-slate-200'
-                        }`}
-                      >
-                        Toutes
-                      </button>
-                      <button
-                        onClick={() => { setFilterType('SELL'); setPage(1); }}
-                        className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                          filterType === 'SELL' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800 shadow' : 'text-slate-400 hover:text-slate-200'
-                        }`}
-                      >
-                        Ventes
-                      </button>
-                      <button
-                        onClick={() => { setFilterType('BUY'); setPage(1); }}
-                        className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                          filterType === 'BUY' ? 'bg-sky-950 text-sky-300 border border-sky-800 shadow' : 'text-slate-400 hover:text-slate-200'
-                        }`}
-                      >
-                        Achats
-                      </button>
-                    </div>
-
-                    {distinctLocations.length > 0 && (
-                      <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs">
-                        <Filter className="w-3.5 h-3.5 text-slate-400" />
-                        <select
-                          value={selectedLocation}
-                          onChange={(e) => { setSelectedLocation(e.target.value); setPage(1); }}
-                          className="bg-transparent text-slate-200 text-xs focus:outline-none cursor-pointer max-w-[180px] truncate"
-                        >
-                          <option value="" className="bg-slate-900 text-slate-200">Tous les emplacements</option>
-                          {distinctLocations.map((loc) => (
-                            <option key={loc.id} value={loc.id} className="bg-slate-900 text-slate-200">
-                              {loc.name} ({loc.count})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="relative w-full md:w-72">
-                    <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      placeholder="Rechercher objet, station, ID..."
-                      value={searchQuery}
-                      onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:border-amber-500/50 focus:outline-none"
-                    />
-                  </div>
-                </div>
-
-                {/* Transactions Table */}
-                <div className="rounded-xl border border-slate-800 bg-slate-900/40 overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-800 bg-slate-950/60 font-mono text-slate-400">
-                          <th className="py-3 px-4">Date (UTC)</th>
-                          <th className="py-3 px-4">Type</th>
-                          <th className="py-3 px-4">Objet</th>
-                          <th className="py-3 px-4 text-right">Quantité</th>
-                          <th className="py-3 px-4 text-right">Prix Unitaire</th>
-                          <th className="py-3 px-4 text-right">Montant Brut</th>
-                          <th className="py-3 px-4 text-right">Taxes &amp; Frais</th>
-                          <th className="py-3 px-4 text-right">Net (TTC)</th>
-                          <th className="py-3 px-4">Emplacement / Station</th>
-                          <th className="py-3 px-4 text-center">Détail</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/60">
-                        {ledgerLoading ? (
-                          <tr>
-                            <td colSpan={10} className="py-8 text-center text-slate-500 font-mono">
-                              Chargement des transactions...
-                            </td>
-                          </tr>
-                        ) : transactions.length === 0 ? (
-                          <tr>
-                            <td colSpan={10} className="py-12 text-center text-slate-400 space-y-2">
-                              <Info className="w-8 h-8 text-slate-600 mx-auto" />
-                              <div className="text-sm font-medium">Aucune transaction trouvée</div>
-                              <div className="text-xs text-slate-500">
-                                {summary?.totalTransactionsCount === 0
-                                  ? 'Cliquez sur « Synchroniser avec ESI » pour importer vos transactions.'
-                                  : 'Aucune transaction ne correspond à vos filtres actuels.'}
-                              </div>
-                            </td>
-                          </tr>
-                        ) : (
-                          transactions.map((tx) => {
-                            const totalFees = (tx.tax || 0) + (tx.brokerFee || 0);
-                            return (
-                              <tr
-                                key={tx.id}
-                                className="hover:bg-slate-800/40 transition-colors cursor-pointer"
-                                onClick={() => handleInspectTransaction(tx)}
-                              >
-                                <td className="py-3 px-4 font-mono text-slate-400 whitespace-nowrap">
-                                  {new Date(tx.date).toLocaleDateString('fr-FR')} {new Date(tx.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-                                </td>
-                                <td className="py-3 px-4 whitespace-nowrap">
-                                  <span
-                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-mono text-[11px] font-semibold border ${
-                                      tx.isBuy
-                                        ? 'bg-sky-950/60 text-sky-400 border-sky-800/60'
-                                        : 'bg-emerald-950/60 text-emerald-400 border-emerald-800/60'
-                                    }`}
-                                  >
-                                    {tx.isBuy ? <ArrowDownLeft className="w-3 h-3" /> : <ArrowUpRight className="w-3 h-3" />}
-                                    {tx.isBuy ? 'ACHAT' : 'VENTE'}
-                                  </span>
-                                </td>
-                                <td className="py-3 px-4 font-medium text-slate-200">
-                                  {tx.typeName || `Type #${tx.typeId}`}
-                                </td>
-                                <td className="py-3 px-4 text-right font-mono text-slate-300">
-                                  {tx.quantity.toLocaleString()}
-                                </td>
-                                <td className="py-3 px-4 text-right font-mono text-slate-400">
-                                  {formatIsk(tx.unitPrice)}
-                                </td>
-                                <td
-                                  className={`py-3 px-4 text-right font-mono font-semibold ${
-                                    tx.isBuy ? 'text-sky-400' : 'text-slate-200'
-                                  }`}
-                                >
-                                  {formatIsk(tx.totalValue)}
-                                </td>
-                                <td className="py-3 px-4 text-right font-mono whitespace-nowrap">
-                                  {totalFees > 0 ? (
-                                    <div>
-                                      <span className="text-rose-400 font-medium">-{formatIsk(totalFees)}</span>
-                                      {tx.tax !== undefined && tx.tax > 0 && (
-                                        <div className="text-[10px] text-slate-500">Taxe: {formatIsk(tx.tax)}</div>
-                                      )}
-                                    </div>
-                                  ) : (
-                                    <span className="text-slate-600">—</span>
-                                  )}
-                                </td>
-                                <td className="py-3 px-4 text-right font-mono font-bold whitespace-nowrap">
-                                  <span className={tx.isBuy ? 'text-sky-400' : 'text-emerald-400'}>
-                                    {formatIsk(tx.netValue !== undefined ? tx.netValue : tx.totalValue)}
-                                  </span>
-                                </td>
-                                <td className="py-3 px-4 text-slate-400 truncate max-w-[200px]" title={tx.locationName}>
-                                  {tx.locationName || `Location #${tx.locationId}`}
-                                </td>
-                                <td className="py-3 px-4 text-center">
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); handleInspectTransaction(tx); }}
-                                    className="p-1 rounded bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-300 transition-colors"
-                                    title="Inspecter preuves ESI"
-                                  >
-                                    <FileText className="w-3.5 h-3.5" />
-                                  </button>
-                                </td>
-                              </tr>
-                            );
-                          })
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {totalPages > 1 && (
-                    <div className="flex items-center justify-between p-3 border-t border-slate-800 bg-slate-950/40 text-xs">
-                      <span className="text-slate-400 font-mono">
-                        Page {page} sur {totalPages} ({totalCount} transactions)
-                      </span>
-                      <div className="flex items-center space-x-2">
-                        <button
-                          onClick={() => setPage((p) => Math.max(1, p - 1))}
-                          disabled={page <= 1}
-                          className="p-1.5 rounded border border-slate-800 bg-slate-900 disabled:opacity-40 text-slate-300 hover:bg-slate-800"
-                        >
-                          <ChevronLeft className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                          disabled={page >= totalPages}
-                          className="p-1.5 rounded border border-slate-800 bg-slate-900 disabled:opacity-40 text-slate-300 hover:bg-slate-800"
-                        >
-                          <ChevronRight className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
+              <LedgerView
+                transactions={transactions}
+                summary={summary}
+                loading={ledgerLoading}
+                page={page}
+                totalPages={totalPages}
+                totalCount={totalCount}
+                filterType={filterType}
+                searchQuery={searchQuery}
+                selectedLocation={selectedLocation}
+                distinctLocations={distinctLocations}
+                iskDisplayMode={preferences.iskDisplayMode}
+                onFilterTypeChange={(type) => { setFilterType(type); setPage(1); }}
+                onSearchChange={(search) => { setSearchQuery(search); setPage(1); }}
+                onLocationChange={(loc) => { setSelectedLocation(loc); setPage(1); }}
+                onPageChange={setPage}
+                onInspectTransaction={handleInspectTransaction}
+                onQuickAllocate={handleQuickAllocate}
+              />
             )}
 
-            {/* TAB 2: MARKET ORDERS & LIFECYCLE (PHASE 04) */}
+            {/* TAB 2: MARKET ORDERS & LIFECYCLE */}
             {activeTab === 'orders' && (
-              <div className="space-y-6">
-                {/* Orders Summary Cards */}
-                {orderSummary && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-1">
-                      <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
-                        <ClipboardList className="w-4 h-4 text-emerald-400" />
-                        Ordres Actifs en Marché
-                      </span>
-                      <div className="text-xl font-bold text-emerald-400">
-                        {orderSummary.activeOrdersCount + orderSummary.partiallyFilledCount}
-                      </div>
-                      <div className="text-xs text-slate-400 font-mono">
-                        {orderSummary.partiallyFilledCount} partiellement exécutés
-                      </div>
-                    </div>
-
-                    <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-1">
-                      <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
-                        <Coins className="w-4 h-4 text-amber-400" />
-                        Valeur Active en Vente
-                      </span>
-                      <div className="text-xl font-bold text-amber-300">
-                        {formatIsk(orderSummary.totalActiveIskValue)}
-                      </div>
-                      <div className="text-xs text-slate-400 font-mono">
-                        Capital en ordres de vente
-                      </div>
-                    </div>
-
-                    <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-1">
-                      <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
-                        <Building2 className="w-4 h-4 text-sky-400" />
-                        Caution Escrow (Achats)
-                      </span>
-                      <div className="text-xl font-bold text-sky-400">
-                        {formatIsk(orderSummary.totalActiveEscrowIsk)}
-                      </div>
-                      <div className="text-xs text-slate-400 font-mono">
-                        Fonds bloqués en ordres d&apos;achat
-                      </div>
-                    </div>
-
-                    <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-1">
-                      <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
-                        <AlertTriangle className="w-4 h-4 text-amber-400" />
-                        Ordres Disparus Non Confirmés
-                      </span>
-                      <div className="text-xl font-bold text-amber-400">
-                        {orderSummary.disappearedCount}
-                      </div>
-                      <div className="text-xs text-slate-400 font-mono">
-                        Vente ou annulation à confirmer
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Filter Toolbar */}
-                <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col md:flex-row gap-3 items-center justify-between">
-                  <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
-                    <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-800">
-                      <button
-                        onClick={() => { setOrderStateFilter('ALL'); setOrdersPage(1); }}
-                        className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                          orderStateFilter === 'ALL' ? 'bg-slate-800 text-white shadow' : 'text-slate-400 hover:text-slate-200'
-                        }`}
-                      >
-                        Tous
-                      </button>
-                      <button
-                        onClick={() => { setOrderStateFilter('ACTIVE_ALL'); setOrdersPage(1); }}
-                        className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                          orderStateFilter === 'ACTIVE_ALL' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800 shadow' : 'text-slate-400 hover:text-slate-200'
-                        }`}
-                      >
-                        En Cours (Actifs &amp; Partiels)
-                      </button>
-                      <button
-                        onClick={() => { setOrderStateFilter('COMPLETED_CONFIRMED'); setOrdersPage(1); }}
-                        className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                          orderStateFilter === 'COMPLETED_CONFIRMED' ? 'bg-purple-950 text-purple-300 border border-purple-800 shadow' : 'text-slate-400 hover:text-slate-200'
-                        }`}
-                      >
-                        Complétés
-                      </button>
-                      <button
-                        onClick={() => { setOrderStateFilter('DISAPPEARED_UNCONFIRMED'); setOrdersPage(1); }}
-                        className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                          orderStateFilter === 'DISAPPEARED_UNCONFIRMED' ? 'bg-amber-950 text-amber-300 border border-amber-800 shadow' : 'text-slate-400 hover:text-slate-200'
-                        }`}
-                      >
-                        Disparus
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="relative w-full md:w-72">
-                    <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      placeholder="Filtrer ordre, article, station..."
-                      value={ordersSearch}
-                      onChange={(e) => { setOrdersSearch(e.target.value); setOrdersPage(1); }}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:border-amber-500/50 focus:outline-none"
-                    />
-                  </div>
-                </div>
-
-                {/* Orders Table */}
-                <div className="rounded-xl border border-slate-800 bg-slate-900/40 overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-800 bg-slate-950/60 font-mono text-slate-400">
-                          <th className="py-3 px-4">Émis le (UTC)</th>
-                          <th className="py-3 px-4">Sens</th>
-                          <th className="py-3 px-4">Objet</th>
-                          <th className="py-3 px-4 text-center">Progression Volume</th>
-                          <th className="py-3 px-4 text-right">Prix Unitaire</th>
-                          <th className="py-3 px-4">Emplacement</th>
-                          <th className="py-3 px-4">État &amp; Traçabilité</th>
-                          <th className="py-3 px-4 text-center">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/60">
-                        {orders.length === 0 ? (
-                          <tr>
-                            <td colSpan={8} className="py-12 text-center text-slate-400 space-y-2">
-                              <ClipboardList className="w-8 h-8 text-slate-600 mx-auto" />
-                              <div className="text-sm font-medium">Aucun ordre de marché trouvé</div>
-                              <div className="text-xs text-slate-500">
-                                Cliquez sur « Synchroniser avec ESI » pour charger vos ordres actifs et récents.
-                              </div>
-                            </td>
-                          </tr>
-                        ) : (
-                          orders.map((o) => {
-                            const percentFilled = o.volumeTotal > 0 ? Math.round((o.volumeFilled / o.volumeTotal) * 100) : 0;
-                            return (
-                              <tr
-                                key={o.id}
-                                className="hover:bg-slate-800/40 transition-colors cursor-pointer"
-                                onClick={() => setSelectedOrder(o)}
-                              >
-                                <td className="py-3 px-4 font-mono text-slate-400 whitespace-nowrap">
-                                  {new Date(o.issued).toLocaleDateString('fr-FR')} {new Date(o.issued).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-                                </td>
-                                <td className="py-3 px-4 whitespace-nowrap">
-                                  <span
-                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-mono text-[11px] font-semibold border ${
-                                      o.isBuyOrder
-                                        ? 'bg-sky-950/60 text-sky-400 border-sky-800/60'
-                                        : 'bg-emerald-950/60 text-emerald-400 border-emerald-800/60'
-                                    }`}
-                                  >
-                                    {o.isBuyOrder ? 'ACHAT' : 'VENTE'}
-                                  </span>
-                                </td>
-                                <td className="py-3 px-4 font-medium text-slate-200">
-                                  {o.typeName || `Type #${o.typeId}`}
-                                </td>
-                                <td className="py-3 px-4 min-w-[160px]">
-                                  <div className="space-y-1">
-                                    <div className="flex justify-between text-[11px] font-mono text-slate-400">
-                                      <span>{o.volumeFilled.toLocaleString()} / {o.volumeTotal.toLocaleString()}</span>
-                                      <span>{percentFilled}%</span>
-                                    </div>
-                                    <div className="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden border border-slate-800">
-                                      <div
-                                        className={`h-full rounded-full transition-all ${
-                                          percentFilled === 100 ? 'bg-purple-400' : percentFilled > 0 ? 'bg-sky-400' : 'bg-slate-700'
-                                        }`}
-                                        style={{ width: `${percentFilled}%` }}
-                                      />
-                                    </div>
-                                  </div>
-                                </td>
-                                <td className="py-3 px-4 text-right font-mono text-slate-300">
-                                  {formatIsk(o.price)}
-                                </td>
-                                <td className="py-3 px-4 text-slate-400 truncate max-w-[180px]" title={o.locationName}>
-                                  {o.locationName || `Location #${o.locationId}`}
-                                </td>
-                                <td className="py-3 px-4">
-                                  {getOrderStatusBadge(o.state)}
-                                </td>
-                                <td className="py-3 px-4 text-center">
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); setSelectedOrder(o); }}
-                                    className="p-1 rounded bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-300 transition-colors"
-                                    title="Détails de l'ordre"
-                                  >
-                                    <FileText className="w-3.5 h-3.5" />
-                                  </button>
-                                </td>
-                              </tr>
-                            );
-                          })
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {ordersTotalPages > 1 && (
-                    <div className="flex items-center justify-between p-3 border-t border-slate-800 bg-slate-950/40 text-xs">
-                      <span className="text-slate-400 font-mono">
-                        Page {ordersPage} sur {ordersTotalPages} ({ordersTotalCount} ordres)
-                      </span>
-                      <div className="flex items-center space-x-2">
-                        <button
-                          onClick={() => setOrdersPage((p) => Math.max(1, p - 1))}
-                          disabled={ordersPage <= 1}
-                          className="p-1.5 rounded border border-slate-800 bg-slate-900 disabled:opacity-40 text-slate-300 hover:bg-slate-800"
-                        >
-                          <ChevronLeft className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => setOrdersPage((p) => Math.min(ordersTotalPages, p + 1))}
-                          disabled={ordersPage >= ordersTotalPages}
-                          className="p-1.5 rounded border border-slate-800 bg-slate-900 disabled:opacity-40 text-slate-300 hover:bg-slate-800"
-                        >
-                          <ChevronRight className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
+              <OrdersView
+                orders={orders}
+                orderSummary={orderSummary}
+                orderStateFilter={orderStateFilter}
+                ordersSearch={ordersSearch}
+                ordersPage={ordersPage}
+                ordersTotalPages={ordersTotalPages}
+                ordersTotalCount={ordersTotalCount}
+                iskDisplayMode={preferences.iskDisplayMode}
+                onOrderStateFilterChange={(state) => { setOrderStateFilter(state); setOrdersPage(1); }}
+                onOrdersSearchChange={(search) => { setOrdersSearch(search); setOrdersPage(1); }}
+                onOrdersPageChange={setOrdersPage}
+                onSelectOrder={setSelectedOrder}
+                onQuickAddRestock={handleQuickAddRestock}
+              />
             )}
 
-            {/* TAB 3: RESTOCK LISTS / RÉAPPROVISIONNEMENT (PHASE 04) */}
+            {/* TAB 3: RESTOCK LISTS */}
             {activeTab === 'restock' && (
-              <div className="space-y-6">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 rounded-xl border border-slate-800 bg-slate-900/60">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-                      <ShoppingCart className="w-4 h-4 text-amber-400" />
-                      Listes de Réapprovisionnement Locales
-                    </h3>
-                    <p className="text-xs text-slate-400">
-                      Préparez vos listes d&apos;achats par hub cible avant vos déplacements. Projection locale modifiable, sans mutation en jeu.
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 w-full sm:w-auto">
-                    <button
-                      onClick={handleGenerateRestock}
-                      disabled={isGeneratingRestock}
-                      className="px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 font-medium text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
-                    >
-                      <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                      {isGeneratingRestock ? 'Analyse en cours...' : 'Générer suggestions'}
-                    </button>
-                    <button
-                      onClick={() => setShowAddRestockModal(true)}
-                      className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      Ajouter un article
-                    </button>
-                  </div>
-                </div>
-
-                {/* Restock Items Grouped by Hub */}
-                {restockItems.length === 0 ? (
-                  <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-12 text-center space-y-3">
-                    <ShoppingCart className="w-10 h-10 text-slate-600 mx-auto" />
-                    <h4 className="text-sm font-semibold text-slate-300">Aucun article dans la liste de réapprovisionnement</h4>
-                    <p className="text-xs text-slate-500 max-w-md mx-auto">
-                      Cliquez sur « Générer suggestions » pour détecter automatiquement les articles épuisés ou en stock faible, ou ajoutez un article manuellement.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {restockItems.map((item) => (
-                        <div
-                          key={item.id}
-                          className={`p-4 rounded-xl border transition-colors space-y-3 ${
-                            item.status === 'PURCHASED'
-                              ? 'border-emerald-800/40 bg-emerald-950/20 opacity-75'
-                              : item.status === 'PLANNED'
-                              ? 'border-sky-800/50 bg-sky-950/20'
-                              : 'border-slate-800 bg-slate-900/40'
-                          }`}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div>
-                              <span className="text-xs font-bold text-slate-100 block">{item.typeName}</span>
-                              <span className="text-[10px] text-slate-400 font-mono">Type ID: #{item.typeId}</span>
-                            </div>
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold border ${
-                                item.status === 'PURCHASED'
-                                  ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
-                                  : item.status === 'PLANNED'
-                                  ? 'bg-sky-950 text-sky-300 border-sky-800'
-                                  : 'bg-amber-950 text-amber-300 border-amber-800'
-                              }`}
-                            >
-                              {item.status === 'SUGGESTED' ? 'SUGGÉRÉ' : item.status === 'PLANNED' ? 'PLANIFIÉ' : 'ACHETÉ'}
-                            </span>
-                          </div>
-
-                          <div className="space-y-1 text-xs text-slate-300">
-                            <div className="flex justify-between">
-                              <span className="text-slate-400">Hub d&apos;achat cible :</span>
-                              <span className="font-medium text-slate-200 truncate max-w-[160px]" title={item.targetBuyHubName}>
-                                {item.targetBuyHubName}
-                              </span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-slate-400">Station de revente :</span>
-                              <span className="font-medium text-slate-200 truncate max-w-[160px]" title={item.sellHubName}>
-                                {item.sellHubName}
-                              </span>
-                            </div>
-                            <div className="flex justify-between font-mono">
-                              <span className="text-slate-400">Quantité cible :</span>
-                              <span className="font-bold text-amber-300">{item.targetQuantity.toLocaleString()} unités</span>
-                            </div>
-                          </div>
-
-                          <div className="text-[11px] text-slate-400 italic bg-slate-950/60 p-2 rounded border border-slate-800/80">
-                            {item.justification}
-                          </div>
-
-                          {item.notes && (
-                            <div className="text-[11px] text-sky-300 bg-sky-950/30 p-2 rounded border border-sky-900/40">
-                              Note : {item.notes}
-                            </div>
-                          )}
-
-                          <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between">
-                            <div className="flex items-center gap-1.5">
-                              {item.status !== 'PURCHASED' ? (
-                                <button
-                                  onClick={() => handleUpdateRestockStatus(item, 'PURCHASED')}
-                                  className="px-2 py-1 rounded bg-emerald-950/80 hover:bg-emerald-800 text-emerald-300 text-[11px] font-medium border border-emerald-800 flex items-center gap-1 transition-colors"
-                                >
-                                  <CheckSquare className="w-3 h-3" />
-                                  Marquer acheté
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={() => handleUpdateRestockStatus(item, 'PLANNED')}
-                                  className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-medium transition-colors"
-                                >
-                                  Repasser en planifié
-                                </button>
-                              )}
-                            </div>
-
-                            <button
-                              onClick={() => handleDeleteRestockItem(item.id)}
-                              className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-slate-800 transition-colors"
-                              title="Supprimer de la liste"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
+              <RestockView
+                restockItems={restockItems}
+                isGenerating={isGeneratingRestock}
+                onGenerateRestock={handleGenerateRestock}
+                onOpenAddModal={() => setShowAddRestockModal(true)}
+                onUpdateStatus={handleUpdateRestockStatus}
+                onDeleteItem={handleDeleteRestockItem}
+              />
             )}
 
-            {/* TAB 4: WALLET JOURNAL */}
-            {activeTab === 'journal' && (
-              <div className="rounded-xl border border-slate-800 bg-slate-900/40 overflow-hidden space-y-4 p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-                      <Coins className="w-4 h-4 text-amber-400" />
-                      Journal de Portefeuille (Frais &amp; Taxes CCP)
-                    </h3>
-                    <p className="text-xs text-slate-400">
-                      Entrées de journal ESI pour traçabilité des commissions de courtage (brokers fee) et taxes de vente.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead>
-                      <tr className="border-b border-slate-800 bg-slate-950/60 font-mono text-slate-400">
-                        <th className="py-2.5 px-4">Date (UTC)</th>
-                        <th className="py-2.5 px-4">Type de Réf</th>
-                        <th className="py-2.5 px-4">Description</th>
-                        <th className="py-2.5 px-4 text-right">Montant (ISK)</th>
-                        <th className="py-2.5 px-4 text-right">Taxe (ISK)</th>
-                        <th className="py-2.5 px-4 text-right">Solde</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60">
-                      {journalEntries.length === 0 ? (
-                        <tr>
-                          <td colSpan={6} className="py-8 text-center text-slate-500 font-mono">
-                            Aucune entrée de journal enregistrée.
-                          </td>
-                        </tr>
-                      ) : (
-                        journalEntries.map((jn) => (
-                          <tr key={jn.id} className="hover:bg-slate-800/40">
-                            <td className="py-2.5 px-4 font-mono text-slate-400">
-                              {new Date(jn.date).toLocaleDateString('fr-FR')} {new Date(jn.date).toLocaleTimeString('fr-FR')}
-                            </td>
-                            <td className="py-2.5 px-4 font-mono text-amber-400">
-                              {jn.refType}
-                            </td>
-                            <td className="py-2.5 px-4 text-slate-300">
-                              {jn.description}
-                            </td>
-                            <td className={`py-2.5 px-4 text-right font-mono font-medium ${
-                              (jn.amount || 0) < 0 ? 'text-rose-400' : 'text-emerald-400'
-                            }`}>
-                              {jn.amount !== undefined ? formatIsk(jn.amount) : '—'}
-                            </td>
-                            <td className="py-2.5 px-4 text-right font-mono text-slate-400">
-                              {jn.tax ? formatIsk(jn.tax) : '—'}
-                            </td>
-                            <td className="py-2.5 px-4 text-right font-mono text-slate-400">
-                              {jn.balance !== undefined ? formatIsk(jn.balance) : '—'}
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* TAB: HUBS & ROI TTC (PHASE 05) */}
+            {/* TAB 4: HUBS & ROI TTC */}
             {activeTab === 'hubs-roi' && (
-              <div className="space-y-6">
-                {/* Multi-Character Trading Ecosystem Card */}
-                <div className="p-4 rounded-xl border border-sky-500/25 bg-gradient-to-r from-sky-950/30 via-slate-900/60 to-slate-900/30 space-y-3">
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                    <div className="flex items-center space-x-3">
-                      <div className="p-2.5 rounded-lg bg-sky-500/10 border border-sky-500/30 text-sky-400">
-                        <Users className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <div className="text-xs font-mono uppercase text-sky-400 font-semibold flex items-center gap-2">
-                          <span>Écosystème Commercial Multi-Personnages</span>
-                          <span className="px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 text-[10px] font-mono border border-sky-500/30">
-                            {linkedCharacters.length} personnage{linkedCharacters.length > 1 ? 's' : ''} connecté{linkedCharacters.length > 1 ? 's' : ''}
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-300 mt-0.5 max-w-2xl">
-                          {linkedCharacters.length > 1
-                            ? 'Tous les achats et ventes de vos personnages sont regroupés dans un même pool chronologique (FIFO). Les achats du Personnage A (ex: acheteur Jita) alimentent automatiquement les ventes du Personnage B (ex: vendeur régional).'
-                            : 'Un seul personnage est actuellement lié à cette session. Si vous utilisez un personnage acheteur (ex: Jita) et un personnage vendeur (ex: Dodixie / Amarr), liez votre second personnage pour que la réconciliation FIFO couvre 100% de vos flux au lieu d\'un taux partiel.'}
-                        </p>
-                      </div>
-                    </div>
+              <HubsRoiView
+                roiSummary={roiSummary}
+                allocations={allocations}
+                unsoldInventory={unsoldInventory}
+                hubsList={hubsList}
+                hubsMappings={hubsMappings}
+                iskDisplayMode={preferences.iskDisplayMode}
+                isReconciling={isReconciling}
+                reconcileMessage={reconcileMessage}
+                onAutoReconcile={handleAutoReconcile}
+                onOpenAddAllocationModal={() => setShowAddAllocationModal(true)}
+                onDeleteAllocation={handleDeleteAllocation}
+                onOpenAddHubModal={() => setShowAddHubModal(true)}
+                onDeleteHub={handleDeleteHub}
+                onOpenAddMappingModal={() => setShowAddMappingModal(true)}
+                onDeleteMapping={handleDeleteMapping}
+                onAutoDiscoverHubs={handleAutoDiscoverHubs}
+              />
+            )}
 
-                    <a
-                      href="/api/auth/login"
-                      className="px-3.5 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 text-xs font-bold flex items-center gap-2 shadow-lg shadow-sky-500/10 shrink-0 transition-transform active:scale-95"
-                    >
-                      <UserPlus className="w-4 h-4" />
-                      + Lier un Personnage EVE SSO
-                    </a>
-                  </div>
+            {/* TAB 5: JOURNAL & FEES */}
+            {activeTab === 'journal' && (
+              <JournalView
+                journalEntries={journalEntries}
+                iskDisplayMode={preferences.iskDisplayMode}
+              />
+            )}
 
-                  {/* Badges of all participating characters */}
-                  <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-800/80">
-                    <span className="text-[11px] font-mono text-slate-400 mr-1">Personnages du pool :</span>
-                    {linkedCharacters.map((c) => {
-                      const isCurrent = c.characterId === session?.characterId;
-                      return (
-                        <div
-                          key={c.characterId}
-                          onClick={() => !isCurrent && handleSwitchCharacter(c.characterId)}
-                          className={`flex items-center gap-2 px-2.5 py-1 rounded-lg border text-xs cursor-pointer transition-colors ${
-                            isCurrent
-                              ? 'bg-amber-500/15 border-amber-500/40 text-amber-200'
-                              : 'bg-slate-900 border-slate-800 hover:border-slate-700 text-slate-300'
-                          }`}
-                          title={isCurrent ? 'Personnage actuellement sélectionné' : 'Cliquer pour basculer sur ce personnage'}
-                        >
-                          <img
-                            src={c.portraitUrl}
-                            alt={c.characterName}
-                            className="w-5 h-5 rounded object-cover border border-slate-700"
-                          />
-                          <span className="font-medium">{c.characterName}</span>
-                          {isCurrent ? (
-                            <span className="text-[9px] font-mono text-amber-400 bg-amber-400/20 px-1 py-0.2 rounded">ACTIF</span>
-                          ) : (
-                            <span className="text-[9px] font-mono text-slate-500">BASCULER</span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Financial KPIs */}
-                {roiSummary && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-1">
-                      <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
-                        <ArrowUpRight className="w-4 h-4 text-emerald-400" />
-                        Chiffre d&apos;Affaires Brut
-                      </span>
-                      <div className="text-xl font-bold text-emerald-400">
-                        {formatIsk(roiSummary.gross_revenue_isk)}
-                      </div>
-                      <div className="text-xs text-slate-400 font-mono">
-                        {roiSummary.total_sales_volume.toLocaleString()} unités vendues ({roiSummary.period_label})
-                      </div>
-                    </div>
-
-                    <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-1">
-                      <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
-                        <Coins className="w-4 h-4 text-sky-400" />
-                        Coût Alloué TTC
-                      </span>
-                      <div className="text-xl font-bold text-sky-400">
-                        {formatIsk(roiSummary.total_allocated_investment_ttc)}
-                      </div>
-                      <div className="text-xs text-slate-400 font-mono">
-                        Achats: {formatIsk(roiSummary.allocated_buy_cost_isk)} + Frais: {formatIsk(roiSummary.allocated_buy_fees_isk)}
-                      </div>
-                    </div>
-
-                    <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-1">
-                      <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
-                        <TrendingUp className="w-4 h-4 text-amber-400" />
-                        Profit Réalisé TTC
-                      </span>
-                      <div className={`text-xl font-bold ${
-                        roiSummary.realized_profit_ttc_isk === null
-                          ? 'text-slate-500'
-                          : roiSummary.realized_profit_ttc_isk >= 0
-                          ? 'text-emerald-400'
-                          : 'text-rose-400'
-                      }`}>
-                        {roiSummary.realized_profit_ttc_isk !== null
-                          ? formatIsk(roiSummary.realized_profit_ttc_isk)
-                          : 'INCONNU'}
-                      </div>
-                      <div className="text-xs text-slate-400 font-mono">
-                        Net de taxes de cession ({formatIsk(roiSummary.attributable_sell_fees_isk)})
-                      </div>
-                    </div>
-
-                    <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
-                          <Percent className="w-4 h-4 text-purple-400" />
-                          ROI Réalisé TTC
-                        </span>
-                        <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
-                          roiSummary.coverage_status === 'COMPLETE'
-                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                            : roiSummary.coverage_status === 'PARTIAL'
-                            ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                            : roiSummary.coverage_status === 'UNKNOWN'
-                            ? 'bg-rose-500/10 text-rose-400 border-rose-500/20'
-                            : 'bg-slate-800 text-slate-400 border-slate-700'
-                        }`}>
-                          {roiSummary.coverage_status === 'COMPLETE'
-                            ? '100% COUVERT'
-                            : roiSummary.coverage_status === 'PARTIAL'
-                            ? `${roiSummary.coverage_percent}% COUVERT`
-                            : roiSummary.coverage_status === 'UNKNOWN'
-                            ? 'PREUVES MANQUANTES'
-                            : 'VIDE'}
-                        </span>
-                      </div>
-                      <div className="text-xl font-bold text-slate-100">
-                        {roiSummary.roi_percent_ttc !== null ? `${roiSummary.roi_percent_ttc} %` : 'NON CALCULABLE'}
-                      </div>
-                      <div className="text-xs text-slate-400 font-mono">
-                        {roiSummary.allocated_sales_volume} / {roiSummary.total_sales_volume} unités allouées
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Capital Immobilisé & Invendus Card */}
-                {roiSummary && (
-                  <div className="p-4 rounded-xl border border-amber-500/20 bg-amber-500/5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-                    <div className="flex items-center space-x-3">
-                      <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400">
-                        <Scale className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <div className="text-xs font-mono uppercase text-amber-400 font-semibold">
-                          Capital Immobilisé (Stock Invendu Non Alloué)
-                        </div>
-                        <div className="text-lg font-bold text-slate-100">
-                          {formatIsk(roiSummary.tied_up_capital_isk)}
-                        </div>
-                        <div className="text-xs text-slate-400">
-                          {roiSummary.unsold_items_count} lots d&apos;achats conservent du capital immobilisé sans profit fictif anticipé.
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex flex-col sm:flex-row items-end sm:items-center gap-2 w-full md:w-auto">
-                      {reconcileMessage && (
-                        <div className="text-xs text-sky-400 font-mono flex items-center gap-1.5 mr-2">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-sky-400" />
-                          {reconcileMessage}
-                        </div>
-                      )}
-                      <button
-                        onClick={handleAutoReconcile}
-                        disabled={isReconciling}
-                        className="px-3 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 text-xs font-semibold flex items-center gap-1.5 shadow disabled:opacity-50"
-                        title="Rapproche automatiquement les ventes avec les achats antérieurs du même objet par ordre chronologique"
-                      >
-                        <RefreshCw className={`w-3.5 h-3.5 ${isReconciling ? 'animate-spin' : ''}`} />
-                        {isReconciling ? 'Rapprochement FIFO...' : 'Rapprochement FIFO Automatique'}
-                      </button>
-                      <button
-                        onClick={() => setShowAddAllocationModal(true)}
-                        className="px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold flex items-center gap-1.5 shadow"
-                      >
-                        <Link2 className="w-3.5 h-3.5" />
-                        Allocation Manuelle
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Hub Pairs Performance Table */}
-                <div className="rounded-xl border border-slate-800 bg-slate-900/40 overflow-hidden">
-                  <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-                        <Layers className="w-4 h-4 text-amber-400" />
-                        Performance par Paire de Hubs (Hub Achat → Hub Vente)
-                      </h3>
-                      <p className="text-xs text-slate-400">
-                        Calculs financiers basés uniquement sur les flux vérifiables avec frais TTC attribués.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-800 bg-slate-950/60 font-mono text-slate-400">
-                          <th className="py-2.5 px-4">Hub Achat Source</th>
-                          <th className="py-2.5 px-4">Hub Vente Cible</th>
-                          <th className="py-2.5 px-4 text-right">Volume Alloué</th>
-                          <th className="py-2.5 px-4 text-right">Chiffre d&apos;Affaires</th>
-                          <th className="py-2.5 px-4 text-right">Investissement TTC</th>
-                          <th className="py-2.5 px-4 text-right">Profit Réalisé TTC</th>
-                          <th className="py-2.5 px-4 text-right">ROI TTC (%)</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/60">
-                        {!roiSummary?.hub_pairs || roiSummary.hub_pairs.length === 0 ? (
-                          <tr>
-                            <td colSpan={7} className="py-8 text-center text-slate-500 font-mono">
-                              Aucune allocation de paire de hubs enregistrée. Rapprochez des transactions pour afficher les flux.
-                            </td>
-                          </tr>
-                        ) : (
-                          roiSummary.hub_pairs.map((pair, idx) => (
-                            <tr key={idx} className="hover:bg-slate-800/40">
-                              <td className="py-2.5 px-4 font-medium text-sky-400">
-                                {pair.buy_hub_name}
-                              </td>
-                              <td className="py-2.5 px-4 font-medium text-emerald-400">
-                                {pair.sell_hub_name}
-                              </td>
-                              <td className="py-2.5 px-4 text-right font-mono text-slate-300">
-                                {pair.sold_volume_allocated.toLocaleString()}
-                              </td>
-                              <td className="py-2.5 px-4 text-right font-mono text-slate-200 font-semibold">
-                                {formatIsk(pair.gross_revenue)}
-                              </td>
-                              <td className="py-2.5 px-4 text-right font-mono text-slate-300">
-                                {formatIsk(pair.allocated_buy_cost + pair.allocated_buy_fees)}
-                              </td>
-                              <td className={`py-2.5 px-4 text-right font-mono font-bold ${
-                                (pair.realized_profit_ttc || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                              }`}>
-                                {pair.realized_profit_ttc !== null ? formatIsk(pair.realized_profit_ttc) : '—'}
-                              </td>
-                              <td className="py-2.5 px-4 text-right font-mono text-purple-300 font-semibold">
-                                {pair.roi_percent_ttc !== null ? `${pair.roi_percent_ttc} %` : '—'}
-                              </td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                {/* Hub Configuration & Location Mappings Section */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Configured Hubs */}
-                  <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
-                        <MapPin className="w-4 h-4 text-amber-400" />
-                        <h4 className="text-sm font-bold text-slate-100">Hubs Commerciaux Configurés</h4>
-                      </div>
-                      <button
-                        onClick={() => setShowAddHubModal(true)}
-                        className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium flex items-center gap-1"
-                      >
-                        <Plus className="w-3 h-3" /> Nouveau Hub
-                      </button>
-                    </div>
-
-                    <div className="space-y-2">
-                      {hubsList.map((h) => (
-                        <div key={h.id} className="p-3 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between">
-                          <div>
-                            <div className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-                              {h.name}
-                              {h.is_system_default && (
-                                <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 border border-slate-700">Défaut EVE</span>
-                              )}
-                            </div>
-                            <div className="text-[11px] text-slate-400 font-mono">
-                              Système : {h.system_name || 'N/A'} {h.notes ? `• ${h.notes}` : ''}
-                            </div>
-                          </div>
-                          {!h.is_system_default && (
-                            <button
-                              onClick={() => handleDeleteHub(h.id)}
-                              className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-slate-800"
-                              title="Supprimer le hub"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Location Mappings */}
-                  <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
-                        <Building2 className="w-4 h-4 text-amber-400" />
-                        <h4 className="text-sm font-bold text-slate-100">Rattachement Stations / Structures</h4>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={handleAutoDiscoverHubs}
-                          className="px-2.5 py-1 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-medium flex items-center gap-1 transition-colors"
-                          title="Auto-détecter les hubs et stations observées dans les transactions"
-                        >
-                          <Sparkles className="w-3 h-3 text-amber-400" /> Auto-découvrir
-                        </button>
-                        <button
-                          onClick={() => setShowAddMappingModal(true)}
-                          className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium flex items-center gap-1"
-                        >
-                          <Plus className="w-3 h-3" /> Associer
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                      {hubsMappings.map((m) => {
-                        const hub = hubsList.find((h) => h.id === m.hub_id);
-                        return (
-                          <div key={m.location_id} className="p-3 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between">
-                            <div className="max-w-[80%]">
-                              <div className="text-xs font-medium text-slate-200 truncate" title={m.location_name}>
-                                {m.location_name}
-                              </div>
-                              <div className="text-[11px] text-sky-400 font-mono">
-                                ID {m.location_id} → {hub?.name || m.hub_id}
-                              </div>
-                            </div>
-                            <button
-                              onClick={() => handleDeleteMapping(m.location_id)}
-                              className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-slate-800"
-                              title="Supprimer l'association"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Explicit Cost Allocations List */}
-                <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-                        <Link2 className="w-4 h-4 text-amber-400" />
-                        Rapprochements &amp; Allocations Explicites Enregistrées
-                      </h4>
-                      <p className="text-xs text-slate-400">
-                        Chaque allocation lie formellement une vente à un achat avec preuve sans FIFO/coût moyen implicite.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2 max-h-80 overflow-y-auto">
-                    {allocations.length === 0 ? (
-                      <div className="p-6 text-center text-slate-500 font-mono text-xs">
-                        Aucun rapprochement enregistré. Cliquez sur « Allouer Coût d&apos;Achat » pour en créer un.
-                      </div>
-                    ) : (
-                      allocations.map((a) => (
-                        <div key={a.id} className="p-3 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between text-xs">
-                          <div className="space-y-1">
-                            <div className="font-semibold text-slate-200">
-                              {a.type_name} — {a.quantity_allocated.toLocaleString()} unités
-                            </div>
-                            <div className="text-[11px] text-slate-400 font-mono">
-                              Vente #{a.sell_transaction_id} ({a.sell_hub_name}) ← Achat #{a.buy_transaction_id} ({a.buy_hub_name} @ {formatIsk(a.unit_buy_price)})
-                            </div>
-                            <div className="text-[11px] text-slate-500 font-mono">
-                              Coût: {formatIsk(a.allocated_buy_cost)} | Frais Achat: {formatIsk(a.allocated_buy_fees)} | Frais Vente: {formatIsk(a.allocated_sell_fees)}
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => handleDeleteAllocation(a.id)}
-                            className="p-1.5 rounded text-slate-400 hover:text-rose-400 hover:bg-slate-800"
-                            title="Supprimer le rapprochement"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              </div>
+            {/* TAB 6: ROADMAP & SYSTEM */}
+            {activeTab === 'roadmap' && (
+              <SystemRoadmapView
+                health={health}
+                esiStatus={esiStatus}
+                loading={loading}
+                sessionExists={true}
+              />
             )}
           </div>
-        )}
-
-        {/* System & Architecture Overview (Active when Overview tab is selected or unauthenticated) */}
-        {(activeTab === 'overview' || !session) && (
-          <section className="space-y-6 pt-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
-                    <Server className="w-4 h-4 text-sky-400" />
-                    Backend &amp; SSO
-                  </span>
-                  <span className="text-xs px-2 py-0.5 rounded bg-sky-950 text-sky-400 border border-sky-800 font-mono">
-                    Port 3000
-                  </span>
-                </div>
-                <div className="text-sm font-medium text-slate-200">
-                  {loading ? (
-                    <span className="text-slate-500">Chargement...</span>
-                  ) : health ? (
-                    <span className="text-emerald-400 flex items-center gap-1.5">
-                      <CheckCircle2 className="w-4 h-4" /> Connecté (v{health.version})
-                    </span>
-                  ) : (
-                    <span className="text-rose-400">Serveur indisponible</span>
-                  )}
-                </div>
-                <div className="text-xs text-slate-500 font-mono">
-                  GET /api/health — {health?.timestamp ? new Date(health.timestamp).toLocaleTimeString() : 'N/A'}
-                </div>
-              </div>
-
-              <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
-                    <Terminal className="w-4 h-4 text-emerald-400" />
-                    Passerelle ESI
-                  </span>
-                  <span className="text-xs px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono">
-                    {esiStatus?.rateLimit ? `${esiStatus.rateLimit.errorLimitRemain}/100 Budget` : 'Actif'}
-                  </span>
-                </div>
-                <div className="text-sm font-medium text-slate-200 flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  Cache ETag &amp; 304
-                </div>
-                <div className="text-xs text-slate-500">
-                  {esiStatus?.cacheSize !== undefined ? `Entrées en cache : ${esiStatus.cacheSize} | Retries bornés 5xx` : 'Gestion 420/429 & Retry-After'}
-                </div>
-              </div>
-
-              <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
-                    <Shield className="w-4 h-4 text-amber-400" />
-                    Sécurité Sessions
-                  </span>
-                  <span className="text-xs px-2 py-0.5 rounded bg-amber-950 text-amber-400 border border-amber-800 font-mono">
-                    PKCE S256
-                  </span>
-                </div>
-                <div className="text-sm font-medium text-slate-200 flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  Cookie HttpOnly &amp; SameSite
-                </div>
-                <div className="text-xs text-slate-500">
-                  Protection anti-CSRF par state aléatoire à usage unique
-                </div>
-              </div>
-
-              <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-mono uppercase text-slate-400 flex items-center gap-1.5">
-                    <Database className="w-4 h-4 text-purple-400" />
-                    Cycle des Ordres
-                  </span>
-                  <span className="text-xs px-2 py-0.5 rounded bg-purple-950 text-purple-400 border border-purple-800 font-mono">
-                    Phase 04
-                  </span>
-                </div>
-                <div className="text-sm font-medium text-slate-200">
-                  Machine à États &amp; Diff
-                </div>
-                <div className="text-xs text-slate-500">
-                  Traçabilité des disparitions et listes locales
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <Activity className="w-5 h-5 text-amber-400" />
-                  <h2 className="text-lg font-semibold text-slate-100">Feuille de Route (Masterplan)</h2>
-                </div>
-                <span className="text-xs text-slate-400 font-mono">Phases de développement</span>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {phases.map((p) => (
-                  <div
-                    key={p.id}
-                    className="p-4 rounded-lg border border-slate-800 bg-slate-900/30 hover:border-slate-700 transition-colors space-y-2"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
-                        Phase {p.id}
-                      </span>
-                      <span
-                        className={`text-xs font-medium px-2 py-0.5 rounded ${
-                          p.id === '00' || p.id === '01' || p.id === '02' || p.id === '03' || (p.id === '04' && p.status === 'Actif')
-                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                            : 'bg-slate-800/50 text-slate-500 border border-slate-800'
-                        }`}
-                      >
-                        {p.status}
-                      </span>
-                    </div>
-                    <h3 className="font-medium text-slate-200 text-sm">{p.name}</h3>
-                    <p className="text-xs text-slate-400 leading-relaxed">{p.desc}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-lg border border-slate-800 bg-slate-900/20 p-5 space-y-3">
-              <h3 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-amber-400" />
-                Règles &amp; Invariants Métier EVE
-              </h3>
-              <ul className="text-xs text-slate-400 space-y-1.5 list-disc list-inside">
-                <li>La disparition d&apos;un order_id d&apos;un snapshot ESI ne prouve pas une vente complète (état DISAPPEARED_UNCONFIRMED).</li>
-                <li>Les listes de réapprovisionnement sont des projections locales privées sans écriture sur le marché ESI.</li>
-                <li>Tokens OAuth, secrets et requêtes privées strictement gérés côté serveur.</li>
-                <li>Aucun calcul implicite FIFO non explicite ; distinction nette des états UNKNOWN, PARTIAL, ERROR, ABSENT.</li>
-              </ul>
-            </div>
-          </section>
         )}
       </main>
 
@@ -2525,7 +1404,6 @@ export default function App() {
                   <span className="text-slate-200">{formatIsk(selectedTx.unitPrice)}</span>
                 </div>
 
-                {/* Tax & Fee Details */}
                 <div className="p-2 rounded bg-slate-900 border border-slate-800">
                   <span className="text-rose-400 block text-[11px]">Taxe de Transaction (CCP) :</span>
                   <span className="text-slate-200 font-semibold">
@@ -2534,7 +1412,7 @@ export default function App() {
                 </div>
 
                 <div className="p-2 rounded bg-slate-900 border border-slate-800">
-                  <span className="text-rose-400 block text-[11px]">Frais de Courtage (Brokers Fee) :</span>
+                  <span className="text-rose-400 block text-[11px]">Frais de Courtage :</span>
                   <span className="text-slate-200 font-semibold">
                     {selectedTx.brokerFee !== undefined && selectedTx.brokerFee > 0 ? formatIsk(selectedTx.brokerFee) : '0.00 ISK'}
                   </span>
@@ -2542,8 +1420,8 @@ export default function App() {
 
                 <div className="col-span-2 p-2.5 rounded bg-amber-500/10 border border-amber-500/30 flex justify-between items-center">
                   <div>
-                    <span className="text-amber-300 block text-[11px] font-sans font-semibold">Montant Net Encaissé / Décaissé (TTC) :</span>
-                    <span className="text-[10px] text-slate-400">Après déduction des taxes et commissions de courtage ESI</span>
+                    <span className="text-amber-300 block text-[11px] font-sans font-semibold">Montant Net TTC :</span>
+                    <span className="text-[10px] text-slate-400">Après déduction des taxes et commissions de courtage</span>
                   </div>
                   <span className={`text-base font-bold ${selectedTx.isBuy ? 'text-sky-400' : 'text-emerald-400'}`}>
                     {formatIsk(selectedTx.netValue !== undefined ? selectedTx.netValue : selectedTx.totalValue)}
@@ -2552,15 +1430,14 @@ export default function App() {
 
                 <div className="col-span-2">
                   <span className="text-slate-500 block">Article :</span>
-                  <span className="text-slate-200 font-medium">{selectedTx.typeName} (Type ID #{selectedTx.typeId})</span>
+                  <span className="text-slate-200 font-medium">{selectedTx.typeName} (Type #{selectedTx.typeId})</span>
                 </div>
                 <div className="col-span-2">
                   <span className="text-slate-500 block">Emplacement :</span>
-                  <span className="text-slate-200">{selectedTx.locationName} (Location ID #{selectedTx.locationId})</span>
+                  <span className="text-slate-200">{selectedTx.locationName} (Location #{selectedTx.locationId})</span>
                 </div>
               </div>
 
-              {/* Linked Journal Entries */}
               <div>
                 <h4 className="font-semibold text-slate-300 mb-2">Entrées de Journal Portefeuille Associées</h4>
                 {selectedTxDetail && selectedTxDetail.relatedJournalEntries.length > 0 ? (
@@ -2581,7 +1458,7 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="p-3 bg-slate-950/50 rounded border border-slate-800 text-slate-500 italic">
-                    Aucune taxe ou commission de courtage supplémentaire liée à cette transaction immédiate.
+                    Aucune taxe ou commission de courtage supplémentaire liée à cette transaction.
                   </div>
                 )}
               </div>
@@ -2599,7 +1476,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Order Detail Modal (Phase 04) */}
+      {/* Order Detail Modal */}
       {selectedOrder && (
         <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-xl w-full p-6 space-y-5 shadow-2xl">
@@ -2624,12 +1501,12 @@ export default function App() {
                 </div>
                 <div>
                   <span className="text-slate-500 block">État du Cycle :</span>
-                  <div>{getOrderStatusBadge(selectedOrder.state)}</div>
+                  <span className="text-amber-300 font-semibold">{selectedOrder.state}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block">Sens de l&apos;Ordre :</span>
+                  <span className="text-slate-500 block">Sens :</span>
                   <span className={selectedOrder.isBuyOrder ? 'text-sky-400' : 'text-emerald-400'}>
-                    {selectedOrder.isBuyOrder ? 'Ordre d\'Achat' : 'Ordre de Vente'}
+                    {selectedOrder.isBuyOrder ? 'Achat' : 'Vente'}
                   </span>
                 </div>
                 <div>
@@ -2643,22 +1520,6 @@ export default function App() {
                 <div>
                   <span className="text-slate-500 block">Volume Restant :</span>
                   <span className="text-amber-300 font-semibold">{selectedOrder.volumeRemain.toLocaleString()}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500 block">Date d&apos;Émission (UTC) :</span>
-                  <span className="text-slate-200">{selectedOrder.issued}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500 block">Expiration Estimée :</span>
-                  <span className="text-slate-200">{selectedOrder.expiresAt}</span>
-                </div>
-                <div className="col-span-2">
-                  <span className="text-slate-500 block">Article :</span>
-                  <span className="text-slate-200 font-medium">{selectedOrder.typeName} (Type #{selectedOrder.typeId})</span>
-                </div>
-                <div className="col-span-2">
-                  <span className="text-slate-500 block">Emplacement :</span>
-                  <span className="text-slate-200">{selectedOrder.locationName}</span>
                 </div>
               </div>
 
@@ -2680,7 +1541,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Add Restock Item Modal (Phase 04) */}
+      {/* Add Restock Item Modal */}
       {showAddRestockModal && (
         <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-lg w-full p-6 space-y-5 shadow-2xl">
@@ -2793,7 +1654,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Add Custom Hub Modal (Phase 05) */}
+      {/* Add Custom Hub Modal */}
       {showAddHubModal && (
         <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
@@ -2865,7 +1726,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Add Location Mapping Modal (Phase 05) */}
+      {/* Add Location Mapping Modal */}
       {showAddMappingModal && (
         <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
@@ -2942,7 +1803,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Add Explicit Cost Allocation Modal (Phase 05) */}
+      {/* Add Explicit Cost Allocation Modal */}
       {showAddAllocationModal && (
         <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-lg w-full p-6 space-y-4 shadow-2xl">
@@ -3047,6 +1908,15 @@ export default function App() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Preferences Modal */}
+      {showPreferencesModal && (
+        <PreferencesModal
+          preferences={preferences}
+          onSave={handleSavePreferences}
+          onClose={() => setShowPreferencesModal(false)}
+        />
       )}
     </div>
   );

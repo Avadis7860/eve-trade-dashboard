@@ -1,6 +1,6 @@
 # PHASE-09 — Positions de capital et inventaire mutuellement exclusif
 
-**Type :** modélisation de capital & inventaire · **Dépendances :** 07, 08 · **État :** Planifiée
+**Type :** modélisation de capital & inventaire · **Dépendances :** 07, 08 · **État :** Terminé
 
 ---
 
@@ -63,11 +63,11 @@
 
 ## 6. Critères d'acceptation mesurables
 
-- [ ] Pour tout type et emplacement, la somme des stocks décomposés est strictement égale à la quantité retournée par l'ESI.
-- [ ] La valeur notionnelle de vente n'est en aucun cas présentée comme de la trésorerie disponible.
-- [ ] Le calcul du capital total distingue de manière transparente la part de liquidité immédiate, la part engagée en escrow et la part immobilisée en stocks physiques.
-- [ ] Les stocks dormants (hors hub sans vente depuis plus de 30 jours) sont identifiés avec leur localisation exacte et leur valeur de revient.
-- [ ] Tests automatisés complets au vert (`vitest run`).
+- [x] Pour tout type et emplacement, la somme des stocks décomposés est strictement égale à la quantité retournée par l'ESI.
+- [x] La valeur notionnelle de vente n'est en aucun cas présentée comme de la trésorerie disponible.
+- [x] Le calcul du capital total distingue de manière transparente la part de liquidité immédiate, la part engagée en escrow et la part immobilisée en stocks physiques.
+- [x] Les stocks dormants (hors hub sans vente depuis plus de 30 jours) sont identifiés avec leur localisation exacte et leur valeur de revient.
+- [x] Tests automatisés complets au vert (`vitest run`).
 
 ---
 

@@ -25,6 +25,7 @@ import { LedgerView } from './components/LedgerView';
 import { OrdersView } from './components/OrdersView';
 import { RestockView } from './components/RestockView';
 import { HubsRoiView } from './components/HubsRoiView';
+import { CapitalView } from './components/CapitalView';
 import { JournalView } from './components/JournalView';
 import { SystemRoadmapView } from './components/SystemRoadmapView';
 import { PreferencesModal } from './components/PreferencesModal';
@@ -398,7 +399,7 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
 
   // Active Tab View
-  const [activeTab, setActiveTab] = useState<'overview' | 'ledger' | 'orders' | 'restock' | 'hubs-roi' | 'journal' | 'roadmap'>(
+  const [activeTab, setActiveTab] = useState<'overview' | 'ledger' | 'orders' | 'restock' | 'hubs-roi' | 'capital' | 'journal' | 'roadmap'>(
     preferences.defaultLandingTab || 'overview'
   );
 
@@ -855,11 +856,19 @@ export default function App() {
       window.history.replaceState({}, document.title, window.location.pathname);
     }
 
+    const safeJson = async (res: Response) => {
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        return res.json();
+      }
+      return null;
+    };
+
     Promise.all([
-      fetch('/api/health').then((res) => (res.ok ? res.json() : null)).catch(() => null),
-      fetch('/api/auth/status').then((res) => (res.ok ? res.json() : null)).catch(() => null),
-      fetch('/api/auth/session').then((res) => (res.ok ? res.json() : null)).catch(() => null),
-      fetch('/api/esi/status').then((res) => (res.ok ? res.json() : null)).catch(() => null),
+      fetch('/api/health').then(safeJson).catch(() => null),
+      fetch('/api/auth/status').then(safeJson).catch(() => null),
+      fetch('/api/auth/session').then(safeJson).catch(() => null),
+      fetch('/api/esi/status').then(safeJson).catch(() => null),
     ]).then(([healthData, authStatusData, sessionData, esiData]) => {
       if (healthData) setHealth(healthData);
       if (authStatusData) setAuthConfigured((authStatusData as AuthStatusResponse).configured);
@@ -880,7 +889,8 @@ export default function App() {
   const checkSession = useCallback(async () => {
     try {
       const res = await fetch('/api/auth/session');
-      if (res.ok) {
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
         const data: AuthSessionResponse = await res.json();
         if (data.authenticated && data.character) {
           setSession(data.character);
@@ -891,7 +901,7 @@ export default function App() {
         }
       }
     } catch (err) {
-      console.error('Session check failed:', err);
+      console.warn('Session check warning:', (err as Error).message);
     }
   }, []);
 
@@ -1044,6 +1054,16 @@ export default function App() {
                 }`}
               >
                 Hubs &amp; ROI TTC
+              </button>
+              <button
+                onClick={() => setActiveTab('capital')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  activeTab === 'capital'
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                }`}
+              >
+                Capital &amp; Stocks
               </button>
               <button
                 onClick={() => setActiveTab('journal')}
@@ -1437,7 +1457,16 @@ export default function App() {
               />
             )}
 
-            {/* TAB 5: JOURNAL & FEES */}
+            {/* TAB 5: CAPITAL POSITIONS & INVENTORY */}
+            {activeTab === 'capital' && (
+              <CapitalView
+                formatIsk={formatIsk}
+                characterIds={linkedCharacters.length > 1 ? linkedCharacters.map((c) => c.characterId) : undefined}
+                activeCharacterId={session?.characterId}
+              />
+            )}
+
+            {/* TAB 6: JOURNAL & FEES */}
             {activeTab === 'journal' && (
               <JournalView
                 journalEntries={journalEntries}

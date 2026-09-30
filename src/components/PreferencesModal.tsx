@@ -55,6 +55,7 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
               <option value="orders">Ordres de Marché &amp; Cycle de Vie</option>
               <option value="restock">Listes de Réapprovisionnement</option>
               <option value="hubs-roi">Hubs &amp; Rentabilité ROI TTC</option>
+              <option value="capital">Capital &amp; Stocks (Positions &amp; Dormant)</option>
               <option value="journal">Journal de Portefeuille &amp; Frais</option>
             </select>
           </div>

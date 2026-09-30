@@ -436,6 +436,120 @@ describe('App Component (Phase 06 Integrated Dashboard)', () => {
           }),
         } as Response);
       }
+      if (pathname === '/api/capital/summary') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            asOf: Date.now(),
+            characterCount: 1,
+            characterIds: [2119876543],
+            monetary: {
+              liquidWalletBalanceIsk: 50000000,
+              marketBuyEscrowIsk: 15000000,
+              inventoryCostValueIsk: 20000000,
+              netRealCapitalIsk: 85000000,
+              notionalMarketAskValueIsk: 80000000,
+              unreconciledStockUnitsCount: 0,
+              unreconciledStockEstimatedValueStatus: 'KNOWN',
+            },
+            physicalSummary: {
+              totalItemsTracked: 1,
+              distinctTypes: 1,
+              distinctLocations: 1,
+              totalUnits: 1000,
+              committedSellOrderUnits: 400,
+              freeHubStockUnits: 600,
+              remoteDormantStockUnits: 0,
+              inTransitStockUnits: 0,
+              unreconciledCostUnits: 0,
+            },
+            dormantSummary: {
+              dormantItemsCount: 0,
+              dormantTotalUnits: 0,
+              dormantCostValueIsk: 0,
+              dormantLocationsCount: 0,
+            },
+          }),
+        } as Response);
+      }
+      if (pathname === '/api/capital/breakdown') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            summary: {
+              asOf: Date.now(),
+              characterCount: 1,
+              characterIds: [2119876543],
+              monetary: {
+                liquidWalletBalanceIsk: 50000000,
+                marketBuyEscrowIsk: 15000000,
+                inventoryCostValueIsk: 20000000,
+                netRealCapitalIsk: 85000000,
+                notionalMarketAskValueIsk: 80000000,
+                unreconciledStockUnitsCount: 0,
+                unreconciledStockEstimatedValueStatus: 'KNOWN',
+              },
+              physicalSummary: {
+                totalItemsTracked: 1,
+                distinctTypes: 1,
+                distinctLocations: 1,
+                totalUnits: 1000,
+                committedSellOrderUnits: 400,
+                freeHubStockUnits: 600,
+                remoteDormantStockUnits: 0,
+                inTransitStockUnits: 0,
+                unreconciledCostUnits: 0,
+              },
+              dormantSummary: {
+                dormantItemsCount: 0,
+                dormantTotalUnits: 0,
+                dormantCostValueIsk: 0,
+                dormantLocationsCount: 0,
+              },
+            },
+            positions: [
+              {
+                id: '2119876543:34:60003760:station',
+                characterId: 2119876543,
+                typeId: 34,
+                typeName: 'Tritanium',
+                locationId: 60003760,
+                locationName: 'Jita IV - Moon 4 - Caldari Navy Assembly Plant',
+                locationType: 'station',
+                locationFlag: 'Hangar',
+                hubId: 'hub-jita',
+                hubName: 'Jita 4-4',
+                isConfiguredHub: true,
+                totalPhysicalQuantity: 1000,
+                committedSellOrderQuantity: 400,
+                freeHubStockQuantity: 600,
+                remoteDormantStockQuantity: 0,
+                inTransitQuantity: 0,
+                primaryClassification: 'FREE_HUB_STOCK',
+                daysInactive: 0,
+                isDormant: false,
+                unitCostIsk: 5.5,
+                costBasisStatus: 'KNOWN',
+                totalCostBasisIsk: 5500,
+                activeSellOrdersCount: 1,
+                sellOrderNotionalValueIsk: 2200,
+                decompositionProof: {
+                  totalPhysical: 1000,
+                  committedSell: 400,
+                  freeHub: 600,
+                  remoteDormant: 0,
+                  inTransit: 0,
+                  isSumExact: true,
+                },
+              },
+            ],
+            total: 1,
+            page: 1,
+            pageSize: 50,
+            totalPages: 1,
+          }),
+        } as Response);
+      }
 
       return Promise.resolve({
         ok: true,
@@ -516,6 +630,18 @@ describe('App Component (Phase 06 Integrated Dashboard)', () => {
     await waitFor(() => {
       expect(screen.getByText(/Rentabilité Réelle TTC & Hubs Commerciaux/i)).toBeInTheDocument();
       expect(screen.getByText(/Rapprochement Automatique \(FIFO\)/i)).toBeInTheDocument();
+    });
+
+    // Switch to Capital & Stocks Tab
+    const capitalTabBtn = screen.getAllByText(/Capital & Stocks/i)[0];
+    await act(async () => {
+      fireEvent.click(capitalTabBtn);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Exporter Positions CSV/i)).toBeInTheDocument();
+      expect(screen.getByText(/Total Unités Physiques/i)).toBeInTheDocument();
+      expect(screen.getByText(/Trésorerie \+ Stocks/i)).toBeInTheDocument();
     });
   });
 });

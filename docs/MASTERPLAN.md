@@ -20,7 +20,7 @@ Un seul chantier actif, une phase, une branche, un PR. Jamais sur main. Petits l
 | H02 | Hardening intégrité, résilience et sauvegarde SHA-256 | 02–06 | Terminé |
 | 07 | Durabilité du stockage et historique fiable | 00–06, H01–H02 | Terminé |
 | 08 | Réconciliation financière et métriques versionnées | 07 | Terminé |
-| 09 | Positions de capital et inventaire mutuellement exclusif | 07, 08 | Planifiée |
+| 09 | Positions de capital et inventaire mutuellement exclusif | 07, 08 | Terminé |
 | 10 | Product 360 et visualisations temporelles | 07–09 | Planifiée |
 | 11 | Opérations, réapprovisionnement et transferts prioritaires | 08–10 | Planifiée |
 | 12 | Refonte du cockpit, navigation et intégration UX | 08–11 | Planifiée |

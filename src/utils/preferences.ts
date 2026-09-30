@@ -3,7 +3,7 @@
  */
 
 export interface UserPreferences {
-  defaultLandingTab: 'overview' | 'ledger' | 'orders' | 'restock' | 'hubs-roi' | 'journal';
+  defaultLandingTab: 'overview' | 'ledger' | 'orders' | 'restock' | 'hubs-roi' | 'capital' | 'journal';
   iskDisplayMode: 'full' | 'compact';
   hideCompletedOrders: boolean;
   tablePageSize: number;

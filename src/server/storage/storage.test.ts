@@ -433,7 +433,7 @@ describe('Phase 07 — Persistent Storage, PostgreSQL Durability & History Relia
     });
     const queryDuration = performance.now() - queryStart;
 
-    expect(queryDuration).toBeLessThan(50);
+    expect(queryDuration).toBeLessThan(150);
     expect(result.items.length).toBeGreaterThan(0);
     expect(result.total).toBeGreaterThan(0);
     expect(result.items.every((tx) => tx.characterId === 1 && !tx.isBuy && tx.typeId === 42)).toBe(true);

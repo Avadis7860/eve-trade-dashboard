@@ -10,6 +10,7 @@ import { createOrdersRouter } from './src/server/orders/router.ts';
 import { createHubsRouter } from './src/server/hubs/router.ts';
 import { createRoiRouter } from './src/server/roi/router.ts';
 import { createAssetsRouter } from './src/server/assets/router.ts';
+import { createCapitalRouter } from './src/server/capital/router.ts';
 import { createBackupRouter } from './src/server/storage/router.ts';
 import { securityHeadersMiddleware, csrfProtectionMiddleware } from './src/server/middleware/security.ts';
 
@@ -54,7 +55,7 @@ export async function createApp() {
     res.json({
       name: 'EVE Trade Dashboard',
       description: 'EVE Online trade dashboard',
-      phase: 'PHASE-H02-data-reliability',
+      phase: 'PHASE-09-capital-and-inventory',
       status: 'operational',
     });
   });
@@ -79,6 +80,9 @@ export async function createApp() {
 
   // ESI Assets Router
   app.use('/api/assets', createAssetsRouter());
+
+  // Capital & Inventory Positions Router
+  app.use('/api/capital', createCapitalRouter());
 
   // Backup & Storage Reliability Router
   app.use('/api/backup', createBackupRouter());

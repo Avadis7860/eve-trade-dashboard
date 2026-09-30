@@ -116,10 +116,11 @@ export class UniverseService {
           }
         }
       } catch (err) {
-        // In case of 504 timeout on a batch of 200, try smaller sub-batches of 50
-        const isTimeout = (err as Error).message?.includes('504') || (err as Error).message?.includes('timeout');
-        if (isTimeout && batch.length > 50) {
-          const SUB_BATCH_SIZE = 50;
+        // If a batch fails (404 invalid ID, 504 timeout, or 400), try smaller sub-batches of 25 to isolate valid IDs
+        const errMsg = (err as Error).message || '';
+        const isRecoverable = errMsg.includes('504') || errMsg.includes('timeout') || errMsg.includes('404') || errMsg.includes('Ensure all IDs are valid');
+        if (isRecoverable && batch.length > 25) {
+          const SUB_BATCH_SIZE = 25;
           for (let s = 0; s < batch.length; s += SUB_BATCH_SIZE) {
             const subBatch = batch.slice(s, s + SUB_BATCH_SIZE);
             try {
@@ -130,12 +131,12 @@ export class UniverseService {
                   result.set(item.id, item.name);
                 }
               }
-            } catch (subErr) {
-              console.warn('[UniverseService] Sub-batch resolution failed, falling back to static names:', (subErr as Error).message);
+            } catch {
+              // Sub-batch failed, fall back to individual static naming
             }
           }
         } else {
-          console.warn('[UniverseService] Failed to resolve batch names from ESI:', (err as Error).message);
+          console.warn('[UniverseService] Failed to resolve batch names from ESI:', errMsg);
         }
       }
     }

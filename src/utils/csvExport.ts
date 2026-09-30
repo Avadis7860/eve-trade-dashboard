@@ -167,6 +167,68 @@ export function allocationsToCsv(allocations: ExplicitCostAllocation[]): string 
   return [headers.join(','), ...rows].join('\r\n');
 }
 
+export function positionsToCsv(positions: Array<{
+  typeId: number;
+  typeName: string;
+  locationName: string;
+  hubName: string;
+  isConfiguredHub: boolean;
+  primaryClassification: string;
+  totalPhysicalQuantity: number;
+  committedSellOrderQuantity: number;
+  freeHubStockQuantity: number;
+  remoteDormantStockQuantity: number;
+  inTransitQuantity: number;
+  daysInactive: number;
+  isDormant: boolean;
+  unitCostIsk: number | null;
+  totalCostBasisIsk: number | null;
+  sellOrderNotionalValueIsk: number;
+  decompositionProof: { isSumExact: boolean };
+}>): string {
+  const headers = [
+    'TypeID',
+    'TypeName',
+    'LocationName',
+    'HubName',
+    'IsConfiguredHub',
+    'Classification',
+    'TotalPhysicalQuantity',
+    'CommittedSellOrderQuantity',
+    'FreeHubStockQuantity',
+    'RemoteDormantStockQuantity',
+    'InTransitQuantity',
+    'DaysInactive',
+    'IsDormant',
+    'UnitCostISK',
+    'TotalCostBasisISK',
+    'SellOrderNotionalValueISK',
+    'ArithmeticProofValid',
+  ];
+
+  const rows = positions.map((p) => [
+    escapeCsvField(p.typeId),
+    escapeCsvField(p.typeName),
+    escapeCsvField(p.locationName),
+    escapeCsvField(p.hubName),
+    escapeCsvField(p.isConfiguredHub ? 'Oui' : 'Non'),
+    escapeCsvField(p.primaryClassification),
+    escapeCsvField(p.totalPhysicalQuantity),
+    escapeCsvField(p.committedSellOrderQuantity),
+    escapeCsvField(p.freeHubStockQuantity),
+    escapeCsvField(p.remoteDormantStockQuantity),
+    escapeCsvField(p.inTransitQuantity),
+    escapeCsvField(p.daysInactive),
+    escapeCsvField(p.isDormant ? 'Oui' : 'Non'),
+    escapeCsvField(p.unitCostIsk !== null ? p.unitCostIsk : 'UNKNOWN'),
+    escapeCsvField(p.totalCostBasisIsk !== null ? p.totalCostBasisIsk : 'UNKNOWN'),
+    escapeCsvField(p.sellOrderNotionalValueIsk),
+    escapeCsvField(p.decompositionProof.isSumExact ? 'Oui' : 'Non'),
+  ].join(','));
+
+  return [headers.join(','), ...rows].join('\r\n');
+}
+
 export function triggerCsvDownload(filename: string, content: string): void {
   const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);

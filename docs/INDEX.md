@@ -31,7 +31,7 @@
 ## Roadmap de transformation (Système de Pilotage)
 - [07 Durabilité et historique fiable](phases/PHASE-07-storage-and-history.md) — *Terminé*
 - [08 Réconciliation financière et métriques versionnées](phases/PHASE-08-financial-reconciliation.md) — *Terminé*
-- [09 Positions de capital et inventaire](phases/PHASE-09-capital-and-inventory.md) — *Planifiée*
+- [09 Positions de capital et inventaire](phases/PHASE-09-capital-and-inventory.md) — *Terminé*
 - [10 Product 360 et analyses temporelles](phases/PHASE-10-product-360-analytics.md) — *Planifiée*
 - [11 Opérations, réapprovisionnement et transferts](phases/PHASE-11-restock-and-transfers.md) — *Planifiée*
 - [12 Refonte du cockpit, navigation et intégration UX](phases/PHASE-12-cockpit-and-ux-redesign.md) — *Planifiée*

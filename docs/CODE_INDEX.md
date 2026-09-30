@@ -1,6 +1,6 @@
 # Index canonique du code
 
-**État :** Phase 08 (Réconciliation financière renforcée et métriques versionnées : Lots d'inventaire unifiés `InventoryLot`, gestion des stocks d'ouverture `OpeningBalanceLot` avec justification obligatoire, moteur FIFO chronologique multi-personnages préservant les allocations manuelles prioritaires, décomposition unitaire des résultats financiers avec preuves arithmétiques `FormulaProof`, suivi exhaustif du capital immobilisé en stocks invendus et audits ligne par ligne `SaleReconciliationDetail`) terminée et validée.
+**État :** Phase 09 (Positions de capital et inventaire mutuellement exclusif : Moteur de modélisation du capital ISK et des actifs physiques en états mutuellement exclusifs `COMMITTED_SELL_ORDER`, `FREE_HUB_STOCK`, `REMOTE_DORMANT_STOCK`, `IN_TRANSIT_STOCK`, `UNRECONCILED_STOCK`, calcul rigoureux du capital net réel sans confusion avec la valeur notionnelle de vente, détection des stocks dormants >30 jours avec localisation et valeur de revient, endpoints `/api/capital/summary`, `/api/capital/breakdown`, `/api/capital/dormant` et vue interactive `CapitalView`) terminée et validée.
 
 ## Runtime & Environnement
 - **Runtime :** Node.js 22, TypeScript strict.
@@ -27,7 +27,7 @@
   - `EVE_CALLBACK_URL` : URL de rappel de redirection configurée sur le portail développeur EVE.
 
 ## Modules & Fichiers Applicatifs
-- `server.ts` — Serveur Express avec middleware Vite dev, cookie-parser, middlewares de sécurité CSP/CORS/CSRF, routeurs SSO, ESI, Ledger, Orders, Hubs, ROI, Assets et Backup/Storage — Fournit `/api/health`, `/api/info` et monte `/api/auth`, `/api/esi`, `/api/ledger`, `/api/orders`, `/api/hubs`, `/api/roi`, `/api/assets`, `/api/backup` — `server.test.ts`
+- `server.ts` — Serveur Express avec middleware Vite dev, cookie-parser, middlewares de sécurité CSP/CORS/CSRF, routeurs SSO, ESI, Ledger, Orders, Hubs, ROI, Assets, Capital et Backup/Storage — Fournit `/api/health`, `/api/info` et monte `/api/auth`, `/api/esi`, `/api/ledger`, `/api/orders`, `/api/hubs`, `/api/roi`, `/api/assets`, `/api/capital`, `/api/backup` — `server.test.ts`
 - `src/server/storage/types.ts` — Types et contrats pour les sauvegardes applicatives (`AppBackupSnapshot`, `AppBackupData`), adaptateurs de persistance (`IDatabaseAdapter`, `QueryResult`, `StorageConfig`), schémas versionnés et rapports d'audit d'intégrité (`DataIntegrityReport`, `DataIntegrityIssue`) — `src/server/storage/storage.test.ts`, `src/server/storage/backup.test.ts`
 - `src/server/storage/schema.ts` — Schéma relationnel versionné SQL DDL (tables `schema_migrations`, `hubs`, `hub_location_mappings`, `transactions`, `journal_entries`, `order_snapshots`, `restock_items`, `explicit_cost_allocations`, `character_assets`, `sync_states`), indexation B-Tree optimisée (`character_id`, `type_id`, `location_id`, `date`) et moteur de migrations séquentielles — `src/server/storage/storage.test.ts`
 - `src/server/storage/database.ts` — Abstraction et gestionnaire de persistance multi-moteurs (`IDatabaseAdapter`, `DurableFileDatabaseAdapter`, `PostgresDatabaseAdapter`, `StorageManager`) avec transactions atomiques ACID, rollback sur erreur, isolation stricte, persistance sur disque résistante aux crashs et compatibilité `DATABASE_URL` / PostgreSQL — `src/server/storage/storage.test.ts`
@@ -61,6 +61,9 @@
 - `src/server/assets/repository.ts` — Dépôt de persistance durable des actifs ESI avec requêtes par personnage/écosystème, type, emplacement et calcul des stocks physiques synchronisés — `src/server/assets/assets.test.ts`, `src/server/storage/storage.test.ts`
 - `src/server/assets/service.ts` — Service métier pour la consultation des actifs, décomposition par emplacement et enrichissement des ordres de marché en stocks réels — `src/server/assets/assets.test.ts`
 - `src/server/assets/router.ts` — Routeur Express pour les actifs ESI (`/api/assets`, `/api/assets/summary`, `/api/assets/stock/:typeId`) avec isolation stricte des personnages — `src/server/assets/assets.test.ts`
+- `src/server/capital/types.ts` — Contrats et types de modélisation du capital et de l'inventaire mutuellement exclusif (`PhysicalStockClassification`, `CostBasisStatus`, `MonetaryCapitalSummary`, `PhysicalStockPosition`, `CapitalSummaryResponse`, `CapitalBreakdownResponse`) — `src/server/capital/capital.test.ts`
+- `src/server/capital/service.ts` — Service métier de décomposition physique des actifs (`COMMITTED_SELL_ORDER`, `FREE_HUB_STOCK`, `REMOTE_DORMANT_STOCK`, `IN_TRANSIT_STOCK`, `UNRECONCILED_STOCK`), calcul des jours d'inactivité, valorisation de revient des invendus, ségrégation du notionnel de vente et invariance arithmétique rigoureuse — `src/server/capital/capital.test.ts`
+- `src/server/capital/router.ts` — Routeur Express pour le capital et les stocks (`/api/capital/summary`, `/api/capital/breakdown`, `/api/capital/dormant`) avec validation d'isolation multi-personnages — `src/server/capital/capital.test.ts`
 - `src/server/hubs/types.ts` — Contrats et interfaces de modélisation des hubs commerciaux et mappings d'emplacements — `src/server/hubs/hubs.test.ts`
 - `src/server/hubs/repository.ts` — Dépôt de stockage persistant des hubs (hubs majeurs Jita, Amarr, Dodixie, Rens, Hek + personnalisés) et des associations station/structure — `src/server/hubs/hubs.test.ts`, `src/server/storage/storage.test.ts`
 - `src/server/hubs/service.ts` — Résolution des stations vers leurs hubs associés, garantie `UNKNOWN_HUB` sans valeur par défaut silencieuse, CRUD hubs/mappings et auto-découverte des hubs depuis les transactions observées (`autoDiscoverHubsFromTransactions`) — `src/server/hubs/hubs.test.ts`
@@ -76,6 +79,7 @@
 - `src/main.tsx` — Point de montage React 19 dans le DOM — Initialisation React StrictMode — `src/App.test.tsx`
 - `src/App.tsx` — Interface utilisateur principale et orchestrateur modulaire — Navigation, barre d'état et modales — `src/App.test.tsx`
 - `src/components/DashboardOverview.tsx` — Vue d'ensemble consolidée : KPIs financiers, rentabilité TTC, alertes d'ordres, réapprovisionnement rapide et flux commerciaux — `src/App.test.tsx`
+- `src/components/CapitalView.tsx` — Vue de pilotage du capital et des stocks : KPIs de capital net réel, liquidités, escrow, décomposition physique mutuellement exclusive, filtres d'états, détection des stocks dormants >30j et export CSV — `src/App.test.tsx`
 - `src/components/LedgerView.tsx` — Vue dédiée du Grand Livre avec filtres réactifs, pagination, inspection de transaction, lien direct d'allocation et export CSV — `src/App.test.tsx`
 - `src/components/OrdersView.tsx` — Vue de suivi de marché et cycle de vie des ordres avec barres de progression, filtres d'état, lien vers réapprovisionnement et export CSV — `src/App.test.tsx`
 - `src/components/RestockView.tsx` — Vue de préparation des listes de réapprovisionnement par hub d'achat cible avec export CSV et copie au format EVE Multibuy — `src/App.test.tsx`
@@ -95,6 +99,7 @@
 - `.env.example` — Modèle de configuration d'environnement sans secrets — Déclaration des variables — N/A
 
 ## Tests
+- `src/server/capital/capital.test.ts` — Suite de tests exhaustifs pour le moteur de capital et d'inventaire : stricte invariance arithmétique de la décomposition physique (`COMMITTED_SELL_ORDER`, `FREE_HUB_STOCK`, `REMOTE_DORMANT_STOCK`, `IN_TRANSIT_STOCK`), détection du transit et des cales de vaisseaux, identification des stocks dormants sans mouvement depuis >30 jours, valorisation de revient des invendus, isolation de la valeur notionnelle de vente hors capital réel, agrégation multi-personnages de l'écosystème et sécurisation des routes API `/api/capital`.
 - `src/server/storage/storage.test.ts` — Tests exhaustifs de persistance durable, survie au redémarrage complet, migrations relationnelles versionnées, purge atomique multi-domaines par personnage, requêtes indexées ultra-rapides (<50ms sur 50 000 transactions) et rollback de transactions ACID sur erreur.
 - `src/server/sync/resilience.test.ts` — Tests exhaustifs de résilience et de tolérance aux pannes : simulation de coupures réseau en cours de pagination (`from_id` et `x-pages`), reprise sur checkpoint sans doublon ni perte de données, conservation des données valides lors de pannes complètes, respect des budgets d'erreur ESI 420/429 avec cooldown `Retry-After`, retries bornés exponentiels avec jitter sur 5xx, gestion du cache 304, idempotence absolue des synchronisations répétées et combinaison d'allocations manuelles et FIFO sans dépassement ni double comptage.
 - `src/server/storage/backup.test.ts` — Tests du module de sauvegarde et de fiabilité du stockage : export complet avec empreinte SHA-256, rejet des fichiers altérés ou corrompus, validation de schéma versionné, restauration atomique avec garantie de rollback et audit exhaustif d'intégrité des données.
@@ -110,5 +115,6 @@
 - `src/server/universe/universe.test.ts` — Tests de résolution de noms univers EVE statiques et dynamiques.
 - `src/server/esi/esi.test.ts` — Suite complète de tests ESI (cache ETag/Expires, 304, suspension error budget 420/429, Retry-After, retries bornés 5xx, rejet 403, renouvellement 401, pagination X-Pages & from_id avec déduplication et conservation PARTIAL).
 - `src/server/auth/auth.test.ts` — Suite complète de tests unitaires SSO (PKCE S256, validation JWT CCP, protection anti-rejeu state CSRF, échange de code, rafraîchissement de tokens et purge de session).
-- `src/App.test.tsx` — Tests unitaires et d'intégration de l'interface (Dashboard Overview, Grand Livre, Ordres & cycle, Hubs & ROI TTC, Réapprovisionnement, Export CSV, Préférences).
-- `server.test.ts` — Tests d'initialisation du serveur Express et vérification des routes API.
+- `src/App.test.tsx` — Tests unitaires et d'intégration de l'interface (Dashboard Overview, Grand Livre, Ordres & cycle, Hubs & ROI TTC, Capital & Stocks, Réapprovisionnement, Export CSV, Préférences).
+- `server.test.ts` — Tests d'initialisation du serveur Express et vérification des routes API (/api/health, /api/info, /api/capital).
+

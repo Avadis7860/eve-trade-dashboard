@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect, beforeAll } from 'vitest';
 import type { Express } from 'express';
+import request from 'supertest';
 import { createApp } from './server.ts';
 
 describe('Server API Endpoints', () => {
@@ -11,9 +12,23 @@ describe('Server API Endpoints', () => {
     app = await createApp();
   });
 
-  it('initializes express app with /api/health and /api/info routes', () => {
+  it('initializes express app with /api/health and /api/info routes', async () => {
     expect(app).toBeDefined();
     expect(typeof app.listen).toBe('function');
+
+    const healthRes = await request(app).get('/api/health');
+    expect(healthRes.status).toBe(200);
+    expect(healthRes.body.status).toBe('ok');
+
+    const infoRes = await request(app).get('/api/info');
+    expect(infoRes.status).toBe(200);
+    expect(infoRes.body.phase).toBe('PHASE-09-capital-and-inventory');
+  });
+
+  it('protects /api/capital routes against unauthenticated requests', async () => {
+    const res = await request(app).get('/api/capital/summary');
+    expect(res.status).toBe(401);
   });
 });
+
 

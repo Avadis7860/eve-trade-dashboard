@@ -583,14 +583,18 @@ export class SyncService {
       let newCount = 0;
 
       if (rawItems.length > 0) {
-        // Collect type IDs and location IDs for universe name resolution
+        // Collect type IDs and universe location IDs (exclude nested item IDs which cannot be resolved via /universe/names/)
         const typeIds = rawItems.map((a) => a.type_id);
-        const locationIds = rawItems.map((a) => a.location_id);
-        const nameMap = await this.universeService.resolveNames([...typeIds, ...locationIds]);
+        const nonItemLocationIds = rawItems
+          .filter((a) => a.location_type !== 'item')
+          .map((a) => a.location_id);
+        const nameMap = await this.universeService.resolveNames([...typeIds, ...nonItemLocationIds]);
 
         const assets: CharacterAsset[] = rawItems.map((raw) => {
           const typeName = nameMap.get(raw.type_id) || this.universeService.getNameSync(raw.type_id, 'Type');
-          const locationName = nameMap.get(raw.location_id) || this.universeService.getNameSync(raw.location_id, 'Location');
+          const locationName = raw.location_type === 'item'
+            ? `Container #${raw.location_id}`
+            : (nameMap.get(raw.location_id) || this.universeService.getNameSync(raw.location_id, 'Location'));
 
           return {
             id: `${characterId}:${raw.item_id}`,
@@ -698,13 +702,17 @@ export class SyncService {
       const rawItems = paginated.data;
       if (rawItems.length > 0) {
         const typeIds = rawItems.map((a) => a.type_id);
-        const locationIds = rawItems.map((a) => a.location_id);
-        const nameMap = await this.universeService.resolveNames([...typeIds, ...locationIds]);
+        const nonItemLocationIds = rawItems
+          .filter((a) => a.location_type !== 'item')
+          .map((a) => a.location_id);
+        const nameMap = await this.universeService.resolveNames([...typeIds, ...nonItemLocationIds]);
         const observedAt = Date.now();
 
         const assets: CharacterAsset[] = rawItems.map((raw) => {
           const typeName = nameMap.get(raw.type_id) || this.universeService.getNameSync(raw.type_id, 'Type');
-          const locationName = nameMap.get(raw.location_id) || this.universeService.getNameSync(raw.location_id, 'Location');
+          const locationName = raw.location_type === 'item'
+            ? `Container #${raw.location_id}`
+            : (nameMap.get(raw.location_id) || this.universeService.getNameSync(raw.location_id, 'Location'));
 
           return {
             id: `corp:${corpId}:${raw.item_id}`,

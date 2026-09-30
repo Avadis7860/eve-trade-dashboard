@@ -9,6 +9,7 @@ import { createLedgerRouter } from './src/server/ledger/router.ts';
 import { createOrdersRouter } from './src/server/orders/router.ts';
 import { hubsRouter } from './src/server/hubs/router.ts';
 import { roiRouter } from './src/server/roi/router.ts';
+import { createAssetsRouter } from './src/server/assets/router.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -56,8 +57,11 @@ export async function createApp() {
   // ROI TTC Router
   app.use('/api/roi', roiRouter);
 
+  // ESI Assets Router
+  app.use('/api/assets', createAssetsRouter());
+
   // Vite middleware in dev or static serving in prod
-  if (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test') {
+  if (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -76,7 +80,10 @@ export async function createApp() {
 }
 
 // Start server when executed directly
-const isDirectExecution = process.argv[1] === fileURLToPath(import.meta.url) || !process.env.VITEST;
+const isDirectExecution =
+  process.env.NODE_ENV !== 'test' &&
+  !process.env.VITEST &&
+  process.argv[1] === fileURLToPath(import.meta.url);
 
 if (isDirectExecution) {
   createApp().then((app) => {

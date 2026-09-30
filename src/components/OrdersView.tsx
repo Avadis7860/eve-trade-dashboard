@@ -289,7 +289,17 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                         </span>
                       </td>
                       <td className="py-3 px-4 font-medium text-slate-200">
-                        {o.typeName || `Type #${o.typeId}`}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span>{o.typeName || `Type #${o.typeId}`}</span>
+                          {o.inStockQuantity !== undefined && o.inStockQuantity > 0 && (
+                            <span
+                              className="px-1.5 py-0.5 rounded font-mono text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                              title="Stock physique présent dans vos actifs ESI à cette station"
+                            >
+                              Stock: {o.inStockQuantity.toLocaleString()}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="py-3 px-4 min-w-[160px]">
                         <div className="space-y-1">

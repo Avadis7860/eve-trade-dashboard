@@ -270,23 +270,46 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 
           <div className="space-y-2">
             <span className="text-xs font-semibold text-slate-400 block">Derniers ordres actifs :</span>
-            {orders.slice(0, 3).map((o) => (
-              <div
-                key={o.id}
-                onClick={() => onNavigateTab('orders')}
-                className="p-2.5 rounded-lg bg-slate-950 hover:bg-slate-900 border border-slate-800/80 flex items-center justify-between text-xs cursor-pointer transition-colors"
-              >
-                <div>
-                  <div className="font-medium text-slate-200">{o.typeName || `Type #${o.typeId}`}</div>
-                  <div className="text-[10px] text-slate-500 font-mono">
-                    {o.isBuyOrder ? 'Achat' : 'Vente'} · {o.volumeFilled}/{o.volumeTotal} un. @ {formatIsk(o.price)}
+            {(() => {
+              const activeOrders = orders.filter((o) => o.isActiveInCurrentSnapshot || o.state === 'ACTIVE' || o.state === 'PARTIALLY_FILLED');
+              if (activeOrders.length === 0) {
+                return (
+                  <div className="text-xs text-slate-500 italic p-3 text-center bg-slate-950/60 rounded-lg border border-slate-800/50">
+                    Aucun ordre actif en marché actuellement.
                   </div>
+                );
+              }
+              return activeOrders.slice(0, 3).map((o) => (
+                <div
+                  key={o.id}
+                  onClick={() => onNavigateTab('orders')}
+                  className="p-2.5 rounded-lg bg-slate-950 hover:bg-slate-900 border border-slate-800/80 flex items-center justify-between text-xs cursor-pointer transition-colors"
+                >
+                  <div>
+                    <div className="font-medium text-slate-200 flex items-center gap-2">
+                      <span>{o.typeName || `Type #${o.typeId}`}</span>
+                      {o.inStockQuantity !== undefined && o.inStockQuantity > 0 && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" title="Quantité physique présente dans les actifs à cette station">
+                          Stock: {o.inStockQuantity.toLocaleString()}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-slate-500 font-mono">
+                      {o.isBuyOrder ? 'Achat' : 'Vente'} · {o.volumeFilled}/{o.volumeTotal} un. @ {formatIsk(o.price)}
+                    </div>
+                  </div>
+                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded ${
+                    o.state === 'ACTIVE'
+                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                      : o.state === 'PARTIALLY_FILLED'
+                      ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20'
+                      : 'bg-slate-800 text-slate-300'
+                  }`}>
+                    {o.state === 'ACTIVE' ? 'ACTIF' : o.state === 'PARTIALLY_FILLED' ? 'PARTIEL' : o.state}
+                  </span>
                 </div>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
-                  {o.state}
-                </span>
-              </div>
-            ))}
+              ));
+            })()}
           </div>
         </div>
 

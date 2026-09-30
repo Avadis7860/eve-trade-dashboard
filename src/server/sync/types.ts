@@ -2,7 +2,12 @@
  * Sync domain types and contracts
  */
 
-export type SyncResourceType = 'wallet_transactions' | 'wallet_journal' | 'character_orders';
+export type SyncResourceType =
+  | 'wallet_transactions'
+  | 'wallet_journal'
+  | 'character_orders'
+  | 'character_assets'
+  | 'corporation_assets';
 
 export type SyncStatusState = 'IDLE' | 'SYNCING' | 'COMPLETE' | 'PARTIAL' | 'ERROR' | 'UNKNOWN' | 'ABSENT';
 
@@ -25,6 +30,7 @@ export interface FullCharacterSyncStatus {
   transactions: SyncState;
   journal: SyncState;
   orders: SyncState;
+  assets?: SyncState;
   asOf: number;
   freshness: 'FRESH' | 'STALE' | 'UNKNOWN';
 }

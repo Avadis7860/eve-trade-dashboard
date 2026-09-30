@@ -10,16 +10,31 @@ import { ledgerRepository } from '../ledger/repository';
 import { hubsService } from '../hubs/service';
 import { RoiCalculator, roundIsk } from './calculator';
 import type { CharacterTransaction } from '../ledger/types';
+import type { AssetsService } from '../assets/service';
+import { defaultAssetsService } from '../assets/service';
 
 export class RoiService {
-  constructor(private repo: RoiRepository = roiRepository) {}
+  constructor(
+    private repo: RoiRepository = roiRepository,
+    private assetsService: AssetsService = defaultAssetsService
+  ) {}
 
   /**
    * Helper to retrieve linked fees for a transaction from wallet journal entries
    */
-  private getTransactionFees(characterId: number, transactionId: number, journalRefId?: number, isBuy?: boolean): number {
-    const { tax, brokerFee } = ledgerRepository.getJournalEntriesForTransaction(characterId, transactionId, journalRefId);
-    return isBuy ? brokerFee : (tax + brokerFee);
+  private getTransactionFees(tx: CharacterTransaction): number {
+    if (tx.tax !== undefined && tx.brokerFee !== undefined && (tx.tax > 0 || tx.brokerFee > 0)) {
+      return tx.isBuy ? (tx.brokerFee || 0) : ((tx.tax || 0) + (tx.brokerFee || 0));
+    }
+    const { tax, brokerFee } = ledgerRepository.getJournalEntriesForTransaction(
+      tx.characterId,
+      tx.transactionId,
+      tx.journalRefId,
+      tx.date,
+      tx.totalValue,
+      tx.isBuy
+    );
+    return tx.isBuy ? brokerFee : (tax + brokerFee);
   }
 
   /**
@@ -90,14 +105,14 @@ export class RoiService {
     // 5. Calculate proportional fees
     let allocatedBuyFees = params.custom_buy_fees !== undefined ? params.custom_buy_fees : 0;
     if (params.custom_buy_fees === undefined) {
-      const totalBuyFees = this.getTransactionFees(buyCharId, buy_transaction_id, buyTx.journalRefId, true);
+      const totalBuyFees = this.getTransactionFees(buyTx);
       const ratio = buyTx.quantity > 0 ? quantity_to_allocate / buyTx.quantity : 0;
       allocatedBuyFees = roundIsk(totalBuyFees * ratio);
     }
 
     let allocatedSellFees = params.custom_sell_fees !== undefined ? params.custom_sell_fees : 0;
     if (params.custom_sell_fees === undefined) {
-      const totalSellFees = this.getTransactionFees(sellCharId, sell_transaction_id, sellTx.journalRefId, false);
+      const totalSellFees = this.getTransactionFees(sellTx);
       const ratio = sellTx.quantity > 0 ? quantity_to_allocate / sellTx.quantity : 0;
       allocatedSellFees = roundIsk(totalSellFees * ratio);
     }
@@ -212,6 +227,8 @@ export class RoiService {
     let salesFullyMatched = 0;
     let salesPartiallyMatched = 0;
     let salesUnmatched = 0;
+    let salesWithAssetStock = 0;
+    let totalAssetStockFound = 0;
 
     for (const sale of sales) {
       const manualSellAllocations = this.repo
@@ -243,11 +260,11 @@ export class RoiService {
         saleMatchedQty += allocQty;
 
         // Calculate proportional fees
-        const totalBuyFees = this.getTransactionFees(stock.tx.characterId, stock.tx.transactionId, stock.tx.journalRefId, true);
+        const totalBuyFees = this.getTransactionFees(stock.tx);
         const buyFeeRatio = stock.tx.quantity > 0 ? allocQty / stock.tx.quantity : 0;
         const allocatedBuyFees = roundIsk(totalBuyFees * buyFeeRatio);
 
-        const totalSellFees = this.getTransactionFees(sale.characterId, sale.transactionId, sale.journalRefId, false);
+        const totalSellFees = this.getTransactionFees(sale);
         const sellFeeRatio = sale.quantity > 0 ? allocQty / sale.quantity : 0;
         const allocatedSellFees = roundIsk(totalSellFees * sellFeeRatio);
 
@@ -296,7 +313,26 @@ export class RoiService {
       } else {
         salesUnmatched++;
       }
+
+      // Check if unallocated quantity has physical stock backed by ESI assets
+      if (neededQty > 0) {
+        const charFilter = params.characterIds && params.characterIds.length > 0
+          ? params.characterIds
+          : params.characterId
+          ? [params.characterId]
+          : undefined;
+        const assetStock = this.assetsService.getStockForType(sale.typeId, undefined, charFilter);
+        if (assetStock > 0) {
+          salesWithAssetStock++;
+          totalAssetStockFound += assetStock;
+        }
+      }
     }
+
+    const assetStockMsg = salesWithAssetStock > 0
+      ? ` (${salesWithAssetStock} ventes disposent de stocks réels identifiés dans les actifs ESI)`
+      : '';
+    const message = `${allocationsCreated} allocations créées (${totalQuantityReconciled} unités rapprochées). ${salesFullyMatched} ventes couvertes à 100%, ${salesPartiallyMatched} partielles, ${salesUnmatched} sans achat direct${assetStockMsg}.`;
 
     return {
       allocations_created: allocationsCreated,
@@ -304,6 +340,9 @@ export class RoiService {
       sales_fully_matched: salesFullyMatched,
       sales_partially_matched: salesPartiallyMatched,
       sales_unmatched: salesUnmatched,
+      sales_with_asset_stock_identified: salesWithAssetStock,
+      asset_stock_available_units: totalAssetStockFound,
+      message,
     };
   }
 

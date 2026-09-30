@@ -4,6 +4,8 @@ import type { ILedgerRepository } from '../ledger/repository.ts';
 import { defaultLedgerRepository } from '../ledger/repository.ts';
 import type { UniverseService } from '../universe/service.ts';
 import { defaultUniverseService } from '../universe/service.ts';
+import type { AssetsService } from '../assets/service.ts';
+import { defaultAssetsService } from '../assets/service.ts';
 import type {
   CharacterOrderSnapshot,
   OrderQueryFilters,
@@ -17,21 +19,25 @@ export interface OrderDetailResult {
   order: CharacterOrderSnapshot;
   relatedTransactionsCount: number;
   recentTransactionsVolume: number;
+  inStockQuantity?: number;
 }
 
 export class OrdersService {
   private repo: IOrdersRepository;
   private ledgerRepo: ILedgerRepository;
   private universeService: UniverseService;
+  private assetsService: AssetsService;
 
   constructor(
     repo: IOrdersRepository = defaultOrdersRepository,
     ledgerRepo: ILedgerRepository = defaultLedgerRepository,
-    universeService: UniverseService = defaultUniverseService
+    universeService: UniverseService = defaultUniverseService,
+    assetsService: AssetsService = defaultAssetsService
   ) {
     this.repo = repo;
     this.ledgerRepo = ledgerRepo;
     this.universeService = universeService;
+    this.assetsService = assetsService;
   }
 
   public getOrders(characterId: number, filters: Partial<OrderQueryFilters>) {
@@ -48,12 +54,30 @@ export class OrdersService {
       pageSize: filters.pageSize ? Number(filters.pageSize) : 50,
     };
 
-    return this.repo.getOrders(fullFilters);
+    const result = this.repo.getOrders(fullFilters);
+    const enrichedItems = result.items.map((order) => {
+      const inStockQuantity = this.assetsService.getStockForType(order.typeId, order.locationId, [characterId]);
+      return {
+        ...order,
+        inStockQuantity,
+      };
+    });
+
+    return {
+      ...result,
+      items: enrichedItems,
+    };
   }
 
   public getOrderDetail(characterId: number, orderId: number): OrderDetailResult | null {
-    const order = this.repo.getOrderById(characterId, orderId);
-    if (!order) return null;
+    const rawOrder = this.repo.getOrderById(characterId, orderId);
+    if (!rawOrder) return null;
+
+    const inStockQuantity = this.assetsService.getStockForType(rawOrder.typeId, rawOrder.locationId, [characterId]);
+    const order: CharacterOrderSnapshot = {
+      ...rawOrder,
+      inStockQuantity,
+    };
 
     // Check transactions for the same type & location
     const txList = this.ledgerRepo.getTransactions({
@@ -74,6 +98,7 @@ export class OrdersService {
       order,
       relatedTransactionsCount: txList.items.length,
       recentTransactionsVolume,
+      inStockQuantity,
     };
   }
 

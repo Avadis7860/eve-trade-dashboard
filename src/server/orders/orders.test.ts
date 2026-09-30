@@ -135,6 +135,25 @@ describe('Orders Lifecycle & Restock Module (Phase 04)', () => {
       };
       const expiredResult = evaluateOrderLifecycle(expiredRaw, undefined, true);
       expect(expiredResult.state).toBe('EXPIRED_CONFIRMED');
+
+      // Direct buy or 100% completed order reported by ESI as state: 'expired'
+      const filledHistoricalRaw: RawEsiOrder = {
+        order_id: 104,
+        type_id: 34,
+        region_id: 10000002,
+        location_id: 60003760,
+        range: 'station',
+        price: 601.10,
+        volume_total: 155,
+        volume_remain: 0,
+        issued: '2026-09-20T10:00:00Z',
+        duration: 90,
+        state: 'expired',
+      };
+      const filledResult = evaluateOrderLifecycle(filledHistoricalRaw, undefined, true);
+      expect(filledResult.state).toBe('COMPLETED_CONFIRMED');
+      expect(filledResult.volumeFilled).toBe(155);
+      expect(filledResult.justification).toContain('entièrement exécuté');
     });
 
     it('calculates expiration date accurately', () => {

@@ -145,6 +145,7 @@ export interface CharacterOrderSnapshot {
   firstObservedAt: number;
   lastObservedAt: number;
   isActiveInCurrentSnapshot: boolean;
+  inStockQuantity?: number;
 }
 
 export interface OrderSummaryMetrics {
@@ -741,8 +742,11 @@ export default function App() {
         const scopeLabel = linkedCharacters.length > 1
           ? `écosystème multi-personnages (${linkedCharacters.length} persos)`
           : session.characterName;
+        const assetMsg = data.result.sales_with_asset_stock_identified > 0
+          ? ` · ${data.result.sales_with_asset_stock_identified} ventes avec stock physique identifié dans les actifs ESI (${data.result.asset_stock_available_units?.toLocaleString()} un.)`
+          : '';
         setReconcileMessage(
-          `${data.result.allocations_created} allocations créées (${data.result.total_quantity_reconciled} unités rapprochées en FIFO pour ${scopeLabel})`
+          `${data.result.allocations_created} allocations créées (${data.result.total_quantity_reconciled} unités rapprochées en FIFO pour ${scopeLabel})${assetMsg}`
         );
         await fetchRoiAndHubsData();
       }
@@ -1521,6 +1525,12 @@ export default function App() {
                   <span className="text-slate-500 block">Volume Restant :</span>
                   <span className="text-amber-300 font-semibold">{selectedOrder.volumeRemain.toLocaleString()}</span>
                 </div>
+                {selectedOrder.inStockQuantity !== undefined && (
+                  <div className="col-span-2 p-2 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 flex items-center justify-between">
+                    <span className="font-semibold">Stock Actuel en Station (Actifs ESI) :</span>
+                    <span className="font-bold text-sm">{selectedOrder.inStockQuantity.toLocaleString()} unités</span>
+                  </div>
+                )}
               </div>
 
               <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 space-y-1">

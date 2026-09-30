@@ -9,6 +9,8 @@ export const DEFAULT_SCOPES = [
   'esi-wallet.read_corporation_wallets.v1',
   'esi-markets.read_corporation_orders.v1',
   'esi-corporations.read_corporation_membership.v1',
+  'esi-assets.read_assets.v1',
+  'esi-assets.read_corporation_assets.v1',
 ];
 
 export function getAuthConfigFromEnv(): AuthConfig {

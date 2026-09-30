@@ -22,27 +22,40 @@ export function evaluateOrderLifecycle(
   const volumeRemain = raw.volume_remain;
   const volumeFilled = Math.max(0, volumeTotal - volumeRemain);
 
-  // 1. If coming from historical orders endpoint
+  // 1. Check if the order is 100% executed (volumeRemain is 0 or volumeFilled equals volumeTotal)
+  // In ESI historical orders, CCP returns state: "expired" even when an order was completely filled!
+  // Therefore, 0 remaining volume always means COMPLETED_CONFIRMED.
+  if (volumeRemain === 0 || (volumeTotal > 0 && volumeFilled >= volumeTotal)) {
+    const isDirectOrMarket = isHistorical || raw.state ? "l'historique ESI" : "l'observation de marché";
+    return {
+      state: 'COMPLETED_CONFIRMED',
+      justification: `Ordre entièrement exécuté confirmé par ${isDirectOrMarket} (${volumeTotal}/${volumeTotal} unités)`,
+      volumeFilled: volumeTotal,
+    };
+  }
+
+  // 2. If coming from historical orders endpoint
   if (isHistorical || raw.state) {
     if (raw.state === 'cancelled') {
+      const partialInfo = volumeFilled > 0 ? ` après exécution partielle (${volumeFilled}/${volumeTotal} unités)` : ` sans exécution (0/${volumeTotal})`;
       return {
         state: 'CANCELLED_CONFIRMED',
-        justification: `Ordre annulé confirmé par l'historique ESI (Restant: ${volumeRemain}/${volumeTotal})`,
+        justification: `Ordre annulé confirmé par l'historique ESI${partialInfo}`,
         volumeFilled,
       };
     }
     if (raw.state === 'expired') {
+      if (volumeFilled > 0) {
+        return {
+          state: 'PARTIALLY_FILLED',
+          justification: `Ordre expiré après exécution partielle confirmé par l'historique ESI (${volumeFilled}/${volumeTotal} unités remplies)`,
+          volumeFilled,
+        };
+      }
       return {
         state: 'EXPIRED_CONFIRMED',
-        justification: `Ordre expiré confirmé par l'historique ESI (Restant: ${volumeRemain}/${volumeTotal})`,
-        volumeFilled,
-      };
-    }
-    if (volumeRemain === 0) {
-      return {
-        state: 'COMPLETED_CONFIRMED',
-        justification: `Ordre entièrement exécuté (0 restant sur ${volumeTotal})`,
-        volumeFilled,
+        justification: `Ordre expiré sans aucune exécution (0/${volumeTotal} unités)`,
+        volumeFilled: 0,
       };
     }
   }

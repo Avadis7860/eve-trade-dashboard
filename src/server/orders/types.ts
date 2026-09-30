@@ -53,6 +53,7 @@ export interface CharacterOrderSnapshot {
   lastObservedAt: number;
   lastSnapshotVolumeRemain: number;
   isActiveInCurrentSnapshot: boolean;
+  inStockQuantity?: number; // Physical assets currently held in stock at this location
   source: string;
 }
 

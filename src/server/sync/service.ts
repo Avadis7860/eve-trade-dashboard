@@ -7,10 +7,13 @@ import type { ISyncRepository } from './repository.ts';
 import { defaultSyncRepository } from './repository.ts';
 import type { IOrdersRepository } from '../orders/repository.ts';
 import { defaultOrdersRepository } from '../orders/repository.ts';
+import type { IAssetsRepository } from '../assets/repository.ts';
+import { defaultAssetsRepository } from '../assets/repository.ts';
 import type { UniverseService } from '../universe/service.ts';
 import { defaultUniverseService } from '../universe/service.ts';
 import type { CharacterTransaction, CharacterWalletJournalEntry } from '../ledger/types.ts';
 import type { RawEsiOrder, CharacterOrderSnapshot } from '../orders/types.ts';
+import type { RawEsiAsset, CharacterAsset } from '../assets/types.ts';
 import { evaluateOrderLifecycle, calculateExpirationIso } from '../orders/lifecycle.ts';
 import type { SyncResult, SyncResourceType } from './types.ts';
 
@@ -47,6 +50,7 @@ export class SyncService {
   private esiClient: EsiClient;
   private ledgerRepo: ILedgerRepository;
   private ordersRepo: IOrdersRepository;
+  private assetsRepo: IAssetsRepository;
   private syncRepo: ISyncRepository;
   private universeService: UniverseService;
 
@@ -55,13 +59,15 @@ export class SyncService {
     ledgerRepo: ILedgerRepository = defaultLedgerRepository,
     ordersRepo: IOrdersRepository = defaultOrdersRepository,
     syncRepo: ISyncRepository = defaultSyncRepository,
-    universeService: UniverseService = defaultUniverseService
+    universeService: UniverseService = defaultUniverseService,
+    assetsRepo: IAssetsRepository = defaultAssetsRepository
   ) {
     this.esiClient = esiClient;
     this.ledgerRepo = ledgerRepo;
     this.ordersRepo = ordersRepo;
     this.syncRepo = syncRepo;
     this.universeService = universeService;
+    this.assetsRepo = assetsRepo;
   }
 
   /**
@@ -538,19 +544,195 @@ export class SyncService {
   }
 
   /**
-   * Synchronizes all character data (wallet transactions, journal, market orders, corporation wallet)
+   * Synchronizes character assets from ESI using X-Pages pagination
+   */
+  public async syncCharacterAssets(
+    characterId: number,
+    accessToken: string,
+    refreshTokenFn?: () => Promise<string | null>
+  ): Promise<SyncResult> {
+    const resource: SyncResourceType = 'character_assets';
+    const startTime = Date.now();
+    const observedAt = Date.now();
+
+    this.syncRepo.updateSyncState(characterId, resource, {
+      status: 'SYNCING',
+      lastSyncStartedAt: startTime,
+    });
+
+    try {
+      const paginated = await fetchXPages<RawEsiAsset>(
+        this.esiClient,
+        `/characters/${characterId}/assets/`,
+        {
+          accessToken,
+          refreshTokenFn,
+          maxPages: 10,
+        }
+      );
+
+      const rawItems = paginated.data;
+      let newCount = 0;
+
+      if (rawItems.length > 0) {
+        // Collect type IDs and location IDs for universe name resolution
+        const typeIds = rawItems.map((a) => a.type_id);
+        const locationIds = rawItems.map((a) => a.location_id);
+        const nameMap = await this.universeService.resolveNames([...typeIds, ...locationIds]);
+
+        const assets: CharacterAsset[] = rawItems.map((raw) => {
+          const typeName = nameMap.get(raw.type_id) || this.universeService.getNameSync(raw.type_id, 'Type');
+          const locationName = nameMap.get(raw.location_id) || this.universeService.getNameSync(raw.location_id, 'Location');
+
+          return {
+            id: `${characterId}:${raw.item_id}`,
+            characterId,
+            itemId: raw.item_id,
+            typeId: raw.type_id,
+            typeName,
+            quantity: raw.quantity,
+            locationId: raw.location_id,
+            locationName,
+            locationType: raw.location_type,
+            locationFlag: raw.location_flag,
+            isSingleton: Boolean(raw.is_singleton),
+            isCorpAsset: false,
+            source: `/characters/${characterId}/assets/`,
+            observedAt,
+          };
+        });
+
+        const saveResult = this.assetsRepo.saveAssets(assets);
+        newCount = saveResult.inserted;
+      }
+
+      const totalPersisted = this.assetsRepo.getAllAssets(characterId).length;
+      const finalStatus = paginated.status;
+
+      this.syncRepo.updateSyncState(characterId, resource, {
+        status: finalStatus,
+        lastSyncCompletedAt: Date.now(),
+        lastPage: paginated.pagesFetched,
+        totalRecords: totalPersisted,
+        newRecordsInLastSync: newCount,
+        errorMessage: paginated.error,
+      });
+
+      return {
+        resource,
+        characterId,
+        status: finalStatus,
+        itemsFetched: rawItems.length,
+        newItemsPersisted: newCount,
+        totalPersisted,
+        durationMs: Date.now() - startTime,
+        error: paginated.error,
+        asOf: Date.now(),
+      };
+    } catch (err) {
+      const errorMsg = (err as Error).message || 'Assets sync failed';
+      const totalPersisted = this.assetsRepo.getAllAssets(characterId).length;
+
+      this.syncRepo.updateSyncState(characterId, resource, {
+        status: 'ERROR',
+        lastSyncCompletedAt: Date.now(),
+        errorMessage: errorMsg,
+      });
+
+      return {
+        resource,
+        characterId,
+        status: 'ERROR',
+        itemsFetched: 0,
+        newItemsPersisted: 0,
+        totalPersisted,
+        durationMs: Date.now() - startTime,
+        error: errorMsg,
+        asOf: Date.now(),
+      };
+    }
+  }
+
+  /**
+   * Synchronizes corporation assets if the character has corp director roles
+   */
+  public async syncCorporationAssets(
+    characterId: number,
+    accessToken: string,
+    refreshTokenFn?: () => Promise<string | null>
+  ): Promise<void> {
+    try {
+      const charInfoRes = await this.esiClient.get<{ corporation_id: number }>(`/characters/${characterId}/`, {
+        accessToken,
+        refreshTokenFn,
+      });
+
+      const corpId = charInfoRes.data?.corporation_id;
+      if (!corpId) return;
+
+      const paginated = await fetchXPages<RawEsiAsset>(
+        this.esiClient,
+        `/corporations/${corpId}/assets/`,
+        {
+          accessToken,
+          refreshTokenFn,
+          maxPages: 10,
+        }
+      );
+
+      const rawItems = paginated.data;
+      if (rawItems.length > 0) {
+        const typeIds = rawItems.map((a) => a.type_id);
+        const locationIds = rawItems.map((a) => a.location_id);
+        const nameMap = await this.universeService.resolveNames([...typeIds, ...locationIds]);
+        const observedAt = Date.now();
+
+        const assets: CharacterAsset[] = rawItems.map((raw) => {
+          const typeName = nameMap.get(raw.type_id) || this.universeService.getNameSync(raw.type_id, 'Type');
+          const locationName = nameMap.get(raw.location_id) || this.universeService.getNameSync(raw.location_id, 'Location');
+
+          return {
+            id: `corp:${corpId}:${raw.item_id}`,
+            characterId,
+            itemId: raw.item_id,
+            typeId: raw.type_id,
+            typeName,
+            quantity: raw.quantity,
+            locationId: raw.location_id,
+            locationName,
+            locationType: raw.location_type,
+            locationFlag: raw.location_flag,
+            isSingleton: Boolean(raw.is_singleton),
+            isCorpAsset: true,
+            corporationId: corpId,
+            source: `/corporations/${corpId}/assets/`,
+            observedAt,
+          };
+        });
+
+        this.assetsRepo.saveAssets(assets);
+      }
+    } catch (err) {
+      console.warn(`[SyncService] Corporation assets sync skipped for character ${characterId}: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Synchronizes all character data (wallet transactions, journal, market orders, corporation wallet, character & corporation assets)
    */
   public async syncAll(
     characterId: number,
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>
-  ): Promise<{ transactions: SyncResult; journal: SyncResult; orders: SyncResult }> {
+  ): Promise<{ transactions: SyncResult; journal: SyncResult; orders: SyncResult; assets: SyncResult }> {
     const transactions = await this.syncWalletTransactions(characterId, accessToken, refreshTokenFn);
     const journal = await this.syncWalletJournal(characterId, accessToken, refreshTokenFn);
     const orders = await this.syncCharacterOrders(characterId, accessToken, refreshTokenFn);
+    const assets = await this.syncCharacterAssets(characterId, accessToken, refreshTokenFn);
     await this.syncCorporationWallets(characterId, accessToken, refreshTokenFn);
+    await this.syncCorporationAssets(characterId, accessToken, refreshTokenFn);
 
-    return { transactions, journal, orders };
+    return { transactions, journal, orders, assets };
   }
 }
 

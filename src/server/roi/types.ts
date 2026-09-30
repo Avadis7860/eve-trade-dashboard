@@ -110,4 +110,7 @@ export interface AutoReconciliationResult {
   sales_fully_matched: number;
   sales_partially_matched: number;
   sales_unmatched: number;
+  sales_with_asset_stock_identified?: number;
+  asset_stock_available_units?: number;
+  message?: string;
 }

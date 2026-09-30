@@ -10,17 +10,21 @@ import type {
 export interface ILedgerRepository {
   saveTransactions(transactions: CharacterTransaction[]): { inserted: number; updated: number };
   getTransactions(filters: LedgerQueryFilters): PaginatedLedgerResult<CharacterTransaction>;
+  getAllTransactions(characterId?: number, characterIds?: number[]): CharacterTransaction[];
   getTransactionById(characterId: number, transactionId: number): CharacterTransaction | null;
   getJournalEntriesForTransaction(
     characterId: number,
     transactionId: number,
-    journalRefId?: number
+    journalRefId?: number,
+    txDate?: string,
+    txTotalValue?: number,
+    isBuy?: boolean
   ): { tax: number; brokerFee: number; entries: CharacterWalletJournalEntry[] };
   countTransactions(characterId: number): number;
   saveJournalEntries(entries: CharacterWalletJournalEntry[]): { inserted: number; updated: number };
   getJournalEntries(characterId?: number, page?: number, pageSize?: number): { items: CharacterWalletJournalEntry[]; total: number };
   getJournalEntryById(characterId: number, journalId: number): CharacterWalletJournalEntry | null;
-  getSummary(characterId?: number): LedgerSummary;
+  getSummary(characterId?: number, characterIds?: number[]): LedgerSummary;
   getFilterOptions(characterId: number): LedgerFilterOptions;
   clearCharacter(characterId: number): void;
 }
@@ -81,12 +85,20 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
   }
 
   /**
-   * Directly resolves linked tax and broker fee journal entries for a given transaction
+   * Directly resolves linked tax and broker fee journal entries for a given transaction.
+   * In EVE Online:
+   * 1. A sale transaction has `journalRefId` pointing to the `market_transaction` entry.
+   * 2. The sales tax paid to the SCC is recorded in a separate `transaction_tax` entry with negative amount.
+   *    In ESI, `transaction_tax` does not always populate `contextId` with the `transactionId`.
+   *    However, it has the exact same timestamp (or within +/- 3 seconds) and is in the same journal sequence.
    */
   public getJournalEntriesForTransaction(
     characterId: number,
     transactionId: number,
-    journalRefId?: number
+    journalRefId?: number,
+    txDate?: string,
+    txTotalValue?: number,
+    isBuy?: boolean
   ): { tax: number; brokerFee: number; entries: CharacterWalletJournalEntry[] } {
     let tax = 0;
     let brokerFee = 0;
@@ -94,15 +106,17 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
     let fallbackTax = 0;
     const entries: CharacterWalletJournalEntry[] = [];
 
+    // Pass 1: Direct ID matches (contextId === transactionId, contextId === journalRefId, or journalId === journalRefId)
     for (const jn of this.journalEntries.values()) {
       if (jn.characterId !== characterId) continue;
 
-      const matchesTxId = jn.contextId === transactionId;
-      const matchesRefId = journalRefId !== undefined && jn.journalId === journalRefId;
-      const isTaxRef = jn.refType === 'transaction_tax' || jn.contextIdType === 'transaction_tax';
-      const isBrokerRef = jn.refType === 'brokers_fee' || jn.contextIdType === 'broker_fee';
+      const matchesTxId = jn.contextId !== undefined && Number(jn.contextId) === Number(transactionId);
+      const matchesRefId = journalRefId !== undefined && Number(jn.journalId) === Number(journalRefId);
+      const matchesContextRef = jn.contextId !== undefined && journalRefId !== undefined && Number(jn.contextId) === Number(journalRefId);
+      const isTaxRef = jn.refType === 'transaction_tax' || jn.refType === 'market_tax' || jn.refType === 'contract_sales_tax' || jn.contextIdType === 'transaction_tax';
+      const isBrokerRef = jn.refType === 'brokers_fee' || jn.refType === 'broker_fee' || jn.refType === 'contract_brokers_fee' || jn.contextIdType === 'broker_fee';
 
-      if (matchesTxId || matchesRefId) {
+      if (matchesTxId || matchesRefId || matchesContextRef) {
         if (isTaxRef) {
           const taxAmt = jn.tax !== undefined && jn.tax > 0 ? jn.tax : Math.abs(jn.amount || 0);
           tax += taxAmt;
@@ -124,6 +138,43 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
       }
     }
 
+    // Pass 2: If this is a sale and tax wasn't matched via direct ID,
+    // correlate by journalRefId proximity or timestamp (Sales tax paid to the SCC)
+    if (!dedicatedTaxFound && isBuy === false) {
+      const txTime = txDate ? new Date(txDate).getTime() : 0;
+      for (const jn of this.journalEntries.values()) {
+        if (jn.characterId !== characterId) continue;
+        const isTaxRef = jn.refType === 'transaction_tax' || jn.refType === 'market_tax' || jn.refType === 'contract_sales_tax';
+        if (!isTaxRef) continue;
+
+        // Proximity by journalId (adjacent entry in journal sequence)
+        const isAdjacentId = journalRefId !== undefined && Math.abs(jn.journalId - journalRefId) <= 10;
+
+        // Proximity by date (within +/- 3 seconds)
+        const jnTime = new Date(jn.date).getTime();
+        const isTimeMatch = txTime > 0 && Math.abs(jnTime - txTime) <= 3000;
+
+        if (isAdjacentId || isTimeMatch) {
+          const taxAmt = jn.tax !== undefined && jn.tax > 0 ? jn.tax : Math.abs(jn.amount || 0);
+          if (txTotalValue !== undefined && txTotalValue > 0) {
+            const ratio = taxAmt / txTotalValue;
+            // Standard EVE Online sales tax rates range between 3.375% (Accounting V) and 8%
+            if (ratio >= 0.02 && ratio <= 0.12) {
+              tax += taxAmt;
+              dedicatedTaxFound = true;
+              entries.push(jn);
+              break;
+            }
+          } else {
+            tax += taxAmt;
+            dedicatedTaxFound = true;
+            entries.push(jn);
+            break;
+          }
+        }
+      }
+    }
+
     if (!dedicatedTaxFound && fallbackTax > 0) {
       tax += fallbackTax;
     }
@@ -137,8 +188,15 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
   /**
    * Enriches a transaction with resolved tax, brokerFee, and netValue
    */
-  private enrichTransaction(tx: CharacterTransaction): CharacterTransaction {
-    const { tax, brokerFee } = this.getJournalEntriesForTransaction(tx.characterId, tx.transactionId, tx.journalRefId);
+  public enrichTransaction(tx: CharacterTransaction): CharacterTransaction {
+    const { tax, brokerFee } = this.getJournalEntriesForTransaction(
+      tx.characterId,
+      tx.transactionId,
+      tx.journalRefId,
+      tx.date,
+      tx.totalValue,
+      tx.isBuy
+    );
     const netValue = tx.isBuy
       ? Math.round(((tx.totalValue + brokerFee) + Number.EPSILON) * 100) / 100
       : Math.round(((tx.totalValue - tax - brokerFee) + Number.EPSILON) * 100) / 100;
@@ -331,9 +389,28 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
   }
 
   /**
-   * Computes financial summaries without assuming unproven costs
+   * Retrieves all transactions without pagination limits, optionally filtered by character or list of characters
    */
-  public getSummary(characterId?: number): LedgerSummary {
+  public getAllTransactions(characterId?: number, characterIds?: number[]): CharacterTransaction[] {
+    const result: CharacterTransaction[] = [];
+    const filterSet = characterIds && characterIds.length > 0 ? new Set(characterIds) : null;
+
+    for (const tx of this.transactions.values()) {
+      if (filterSet) {
+        if (!filterSet.has(tx.characterId)) continue;
+      } else if (characterId !== undefined && tx.characterId !== characterId) {
+        continue;
+      }
+      result.push(this.enrichTransaction(tx));
+    }
+
+    return result;
+  }
+
+  /**
+   * Computes financial summaries without assuming unproven costs, verifying against both transactions and journal
+   */
+  public getSummary(characterId?: number, characterIds?: number[]): LedgerSummary {
     let totalTransactionsCount = 0;
     let sellTransactionsCount = 0;
     let buyTransactionsCount = 0;
@@ -343,20 +420,25 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
     let totalBuySpendIsk = 0;
     let totalTaxesIsk = 0;
     let totalBrokerFeesIsk = 0;
-    let totalNetSalesIsk = 0;
     const distinctTypes = new Set<number>();
     const distinctLocations = new Set<number>();
 
+    const filterSet = characterIds && characterIds.length > 0 ? new Set(characterIds) : null;
+
     for (const tx of this.transactions.values()) {
-      if (characterId !== undefined && tx.characterId !== characterId) continue;
+      if (filterSet) {
+        if (!filterSet.has(tx.characterId)) continue;
+      } else if (characterId !== undefined && tx.characterId !== characterId) {
+        continue;
+      }
 
       totalTransactionsCount++;
       distinctTypes.add(tx.typeId);
       distinctLocations.add(tx.locationId);
 
-      const { tax, brokerFee } = this.getJournalEntriesForTransaction(tx.characterId, tx.transactionId, tx.journalRefId);
-      totalTaxesIsk += tax;
-      totalBrokerFeesIsk += brokerFee;
+      const enriched = this.enrichTransaction(tx);
+      totalTaxesIsk += (enriched.tax || 0);
+      totalBrokerFeesIsk += (enriched.brokerFee || 0);
 
       if (tx.isBuy) {
         buyTransactionsCount++;
@@ -366,15 +448,39 @@ export class InMemoryLedgerRepository implements ILedgerRepository {
         sellTransactionsCount++;
         totalSellVolume += tx.quantity;
         totalGrossSalesIsk += tx.totalValue;
-        totalNetSalesIsk += (tx.totalValue - tax - brokerFee);
       }
     }
+
+    // Direct check of wallet journal to ensure no unlinked taxes or broker fees are omitted
+    let journalTaxesTotal = 0;
+    let journalBrokerFeesTotal = 0;
+    for (const jn of this.journalEntries.values()) {
+      if (filterSet) {
+        if (!filterSet.has(jn.characterId)) continue;
+      } else if (characterId !== undefined && jn.characterId !== characterId) {
+        continue;
+      }
+
+      const isTaxRef = jn.refType === 'transaction_tax' || jn.refType === 'market_tax' || jn.refType === 'contract_sales_tax';
+      const isBrokerRef = jn.refType === 'brokers_fee' || jn.refType === 'broker_fee' || jn.refType === 'contract_brokers_fee';
+
+      if (isTaxRef) {
+        const amt = jn.tax !== undefined && jn.tax > 0 ? jn.tax : Math.abs(jn.amount || 0);
+        journalTaxesTotal += amt;
+      } else if (isBrokerRef) {
+        journalBrokerFeesTotal += Math.abs(jn.amount || 0);
+      }
+    }
+
+    // Ensure taxes and broker fees reflect full verified journal activity
+    totalTaxesIsk = Math.max(totalTaxesIsk, journalTaxesTotal);
+    totalBrokerFeesIsk = Math.max(totalBrokerFeesIsk, journalBrokerFeesTotal);
 
     totalGrossSalesIsk = Math.round((totalGrossSalesIsk + Number.EPSILON) * 100) / 100;
     totalBuySpendIsk = Math.round((totalBuySpendIsk + Number.EPSILON) * 100) / 100;
     totalTaxesIsk = Math.round((totalTaxesIsk + Number.EPSILON) * 100) / 100;
     totalBrokerFeesIsk = Math.round((totalBrokerFeesIsk + Number.EPSILON) * 100) / 100;
-    totalNetSalesIsk = Math.round((totalNetSalesIsk + Number.EPSILON) * 100) / 100;
+    const totalNetSalesIsk = Math.round((totalGrossSalesIsk - totalTaxesIsk - totalBrokerFeesIsk + Number.EPSILON) * 100) / 100;
 
     const completeness = totalTransactionsCount > 0 ? 'COMPLETE' : 'ABSENT';
 

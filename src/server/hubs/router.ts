@@ -1,13 +1,32 @@
 import { Router, Request, Response } from 'express';
 import { hubsService } from './service';
+import { ledgerRepository } from '../ledger/repository';
 
 export const hubsRouter = Router();
 
-// GET /api/hubs - List all configured hubs
+// GET /api/hubs - List all configured hubs (auto-discovering from stored transactions)
 hubsRouter.get('/', (_req: Request, res: Response) => {
   try {
+    const allTx = ledgerRepository.getAllTransactions();
+    if (allTx.length > 0) {
+      hubsService.autoDiscoverHubsFromTransactions(allTx);
+    }
     const hubs = hubsService.listHubs();
     return res.json({ hubs });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+    return res.status(500).json({ error: errorMsg });
+  }
+});
+
+// POST /api/hubs/auto-discover - Automatically discover hubs and mappings from all observed transactions
+hubsRouter.post('/auto-discover', (_req: Request, res: Response) => {
+  try {
+    const allTx = ledgerRepository.getAllTransactions();
+    const result = hubsService.autoDiscoverHubsFromTransactions(allTx);
+    const hubs = hubsService.listHubs();
+    const mappings = hubsService.listMappings();
+    return res.json({ success: true, ...result, hubsCount: hubs.length, mappingsCount: mappings.length });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : 'Unknown error';
     return res.status(500).json({ error: errorMsg });

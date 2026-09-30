@@ -63,6 +63,69 @@ export class HubsService {
   }
 
   /**
+   * Automatically discovers and registers hubs and mappings from observed transactions.
+   * If a location matches a major hub (Jita, Amarr, Dodixie, Rens, Hek, Perimeter), it links to that hub.
+   * Otherwise, it creates an auto-discovered hub named after the solar system or station.
+   */
+  autoDiscoverHubsFromTransactions(transactions: Array<{ locationId: number; locationName?: string }>): {
+    discoveredHubs: number;
+    discoveredMappings: number;
+  } {
+    let discoveredHubs = 0;
+    let discoveredMappings = 0;
+
+    const seenLocations = new Map<number, string>();
+    for (const tx of transactions) {
+      if (!tx.locationId || seenLocations.has(tx.locationId)) continue;
+      const name = tx.locationName || universeService.resolveStationName(tx.locationId);
+      seenLocations.set(tx.locationId, name);
+    }
+
+    for (const [locationId, locationName] of seenLocations.entries()) {
+      if (this.repo.getMapping(locationId)) continue;
+
+      const lower = locationName.toLowerCase();
+      let targetHubId: string | undefined;
+
+      if (lower.includes('jita') || lower.includes('perimeter')) {
+        targetHubId = 'hub-jita';
+      } else if (lower.includes('amarr')) {
+        targetHubId = 'hub-amarr';
+      } else if (lower.includes('dodixie')) {
+        targetHubId = 'hub-dodixie';
+      } else if (lower.includes('rens')) {
+        targetHubId = 'hub-rens';
+      } else if (lower.includes('hek')) {
+        targetHubId = 'hub-hek';
+      }
+
+      if (!targetHubId) {
+        // Extract system name if available: "System RomanNumeral - ..." or "System - ..."
+        const systemMatch = locationName.match(/^([A-Za-z0-9'-]+)(?:\s+[IVXLCDM]+)?\s*[-]/);
+        const systemName = systemMatch ? systemMatch[1] : undefined;
+        const hubId = `hub-auto-${locationId}`;
+        const hubName = systemName ? `${systemName} Hub` : locationName;
+
+        this.repo.upsertHub({
+          id: hubId,
+          name: hubName,
+          system_name: systemName,
+          is_system_default: false,
+          notes: `Hub auto-détecté depuis l'emplacement #${locationId}`,
+          created_at: new Date().toISOString(),
+        });
+        targetHubId = hubId;
+        discoveredHubs++;
+      }
+
+      this.setMapping(locationId, locationName, targetHubId, 'Mapping auto-découvert depuis transactions');
+      discoveredMappings++;
+    }
+
+    return { discoveredHubs, discoveredMappings };
+  }
+
+  /**
    * Resolves a location ID to its associated trade hub.
    * If not explicitly mapped, returns 'UNKNOWN_HUB' with is_known_hub: false.
    * Strict Domain Rule: Unknown location NEVER silently defaults to Jita or any other hub.

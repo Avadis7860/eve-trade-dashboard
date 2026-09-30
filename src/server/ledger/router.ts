@@ -6,6 +6,8 @@ import { AuthService } from '../auth/service.ts';
 import { defaultSessionStore } from '../auth/sessionStore.ts';
 import type { LedgerFilterType } from './types.ts';
 import { roiService } from '../roi/service.ts';
+import { hubsService } from '../hubs/service.ts';
+import { ledgerRepository } from './repository.ts';
 
 const SESSION_COOKIE_NAME = 'eve_session_id';
 
@@ -114,7 +116,14 @@ export function createLedgerRouter(
    */
   router.get('/summary', requireSession, (req: Request, res: Response) => {
     const session = (req as Request & { session: NonNullable<Awaited<ReturnType<typeof authService.getValidSession>>> }).session;
-    const summary = ledgerService.getSummary(session.characterId);
+    let characterIds: number[] | undefined;
+    if (typeof req.query.character_ids === 'string') {
+      characterIds = req.query.character_ids.split(',').map(Number).filter((n) => !isNaN(n));
+    } else if (session.characters && Object.keys(session.characters).length > 1 && !req.query.character_id) {
+      characterIds = Object.keys(session.characters).map(Number);
+    }
+    const requestedCharId = req.query.character_id ? Number(req.query.character_id) : (characterIds ? undefined : session.characterId);
+    const summary = ledgerService.getSummary(requestedCharId, characterIds);
     res.json(summary);
   });
 
@@ -162,6 +171,10 @@ export function createLedgerRouter(
           }
         );
       }
+
+      // Auto-discover hubs and locations from all observed transactions
+      const allTx = ledgerRepository.getAllTransactions();
+      hubsService.autoDiscoverHubsFromTransactions(allTx);
 
       // Automatically reconcile across all linked characters in the ecosystem
       const allCharIds = charIdsToSync.map((c) => c.characterId);

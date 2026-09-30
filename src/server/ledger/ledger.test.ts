@@ -226,4 +226,100 @@ describe('Ledger Module (Phase 03 - Sales Ledger)', () => {
 
     expect(options.locations).toHaveLength(2);
   });
+
+  it('accurately correlates transaction_tax from SCC when contextId is omitted by CCP ESI', () => {
+    // Exact structure observed in CCP ESI where contextId is missing
+    const realEsiSaleTx: CharacterTransaction = {
+      id: '1001:77001',
+      characterId: 1001,
+      transactionId: 77001,
+      date: '2026-09-30T12:28:19Z',
+      typeId: 34,
+      typeName: 'Tritanium',
+      quantity: 10000,
+      unitPrice: 36.8,
+      totalValue: 368000,
+      isBuy: false,
+      isPersonal: true,
+      journalRefId: 88001,
+      locationId: 60003760,
+      locationName: 'Jita IV - Moon 4 - Caldari Navy Assembly Plant',
+      clientId: 9901,
+      clientName: 'Market Buyer',
+      source: '/characters/1001/wallet/transactions/',
+      observedAt: 1759235299000,
+    };
+
+    const marketTxJournal: CharacterWalletJournalEntry = {
+      id: '1001:88001',
+      characterId: 1001,
+      journalId: 88001,
+      date: '2026-09-30T12:28:19Z',
+      refType: 'market_transaction',
+      amount: 368000,
+      balance: 559924666.76,
+      description: 'Market: Buyer bought stuff from Pilot',
+      source: '/characters/1001/wallet/journal/',
+      observedAt: 1759235299000,
+    };
+
+    const sccSalesTaxJournal: CharacterWalletJournalEntry = {
+      id: '1001:88002',
+      characterId: 1001,
+      journalId: 88002, // Adjacent journal ID
+      date: '2026-09-30T12:28:19Z', // Exact matching timestamp
+      refType: 'transaction_tax',
+      amount: -12420, // 3.375% sales tax
+      balance: 559912246.76,
+      description: 'Sales tax paid to the SCC',
+      source: '/characters/1001/wallet/journal/',
+      observedAt: 1759235299000,
+    };
+
+    repo.saveTransactions([realEsiSaleTx]);
+    repo.saveJournalEntries([marketTxJournal, sccSalesTaxJournal]);
+
+    const enriched = repo.getTransactionById(1001, 77001);
+    expect(enriched).not.toBeNull();
+    expect(enriched?.tax).toBe(12420);
+    expect(enriched?.netValue).toBe(368000 - 12420); // 355,580 ISK
+
+    const summary = service.getSummary(1001);
+    expect(summary.totalTaxesIsk).toBe(12420);
+    expect(summary.totalNetSalesIsk).toBe(355580);
+  });
+
+  it('retrieves all transactions without arbitrary pagination limit via getAllTransactions', () => {
+    const batch: CharacterTransaction[] = [];
+    for (let i = 1; i <= 600; i++) {
+      batch.push({
+        id: `1001:${60000 + i}`,
+        characterId: 1001,
+        transactionId: 60000 + i,
+        date: '2026-09-20T10:00:00Z',
+        typeId: 34,
+        typeName: 'Tritanium',
+        quantity: 10,
+        unitPrice: 5.0,
+        totalValue: 50.0,
+        isBuy: false,
+        isPersonal: true,
+        journalRefId: 90000 + i,
+        locationId: 60003760,
+        clientId: 2001,
+        source: '/test',
+        observedAt: 1758362400000,
+      });
+    }
+
+    repo.saveTransactions(batch);
+
+    // Verify getTransactions has a page limit of 500
+    const paginated = repo.getTransactions({ characterId: 1001, pageSize: 1000 });
+    expect(paginated.items.length).toBe(500);
+
+    // Verify getAllTransactions returns the full dataset (all 600 items)
+    const all = repo.getAllTransactions(1001);
+    expect(all.length).toBe(600);
+  });
 });

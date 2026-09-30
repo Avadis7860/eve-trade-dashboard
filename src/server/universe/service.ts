@@ -101,7 +101,7 @@ export class UniverseService {
 
     // Deduplicate missing int32 IDs
     const uniqueMissing = Array.from(new Set(missingInt32Ids));
-    const BATCH_SIZE = 500; // ESI /universe/names/ supports up to 1000
+    const BATCH_SIZE = 200; // Smaller chunks (200 vs 500) prevent CCP ESI HTTP 504 Gateway Timeouts
 
     for (let i = 0; i < uniqueMissing.length; i += BATCH_SIZE) {
       const batch = uniqueMissing.slice(i, i + BATCH_SIZE);
@@ -116,7 +116,27 @@ export class UniverseService {
           }
         }
       } catch (err) {
-        console.warn('[UniverseService] Failed to resolve batch names from ESI:', (err as Error).message);
+        // In case of 504 timeout on a batch of 200, try smaller sub-batches of 50
+        const isTimeout = (err as Error).message?.includes('504') || (err as Error).message?.includes('timeout');
+        if (isTimeout && batch.length > 50) {
+          const SUB_BATCH_SIZE = 50;
+          for (let s = 0; s < batch.length; s += SUB_BATCH_SIZE) {
+            const subBatch = batch.slice(s, s + SUB_BATCH_SIZE);
+            try {
+              const subResponse = await this.esiClient.post<UniverseNameEntry[]>('/universe/names/', subBatch);
+              if (Array.isArray(subResponse.data)) {
+                for (const item of subResponse.data) {
+                  this.cache.set(item.id, item);
+                  result.set(item.id, item.name);
+                }
+              }
+            } catch (subErr) {
+              console.warn('[UniverseService] Sub-batch resolution failed, falling back to static names:', (subErr as Error).message);
+            }
+          }
+        } else {
+          console.warn('[UniverseService] Failed to resolve batch names from ESI:', (err as Error).message);
+        }
       }
     }
 

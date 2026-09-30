@@ -150,13 +150,12 @@ export class RoiService {
     characterIds?: number[];
     typeId?: number;
   } = {}): AutoReconciliationResult {
-    // 1. Fetch all candidate transactions across single character or ecosystem
+    // 1. Fetch ALL candidate transactions across single character or ecosystem without pagination cap
     const effectiveCharId = params.characterIds && params.characterIds.length > 0 ? undefined : params.characterId;
-    const { items: allTransactions } = ledgerRepository.getTransactions({
-      characterId: effectiveCharId,
-      typeId: params.typeId,
-      pageSize: 100000,
-    });
+    let allTransactions = ledgerRepository.getAllTransactions(effectiveCharId, params.characterIds);
+    if (params.typeId !== undefined) {
+      allTransactions = allTransactions.filter((t) => t.typeId === params.typeId);
+    }
 
     let transactions = allTransactions;
     if (params.characterIds && params.characterIds.length > 0) {
@@ -167,14 +166,20 @@ export class RoiService {
     // 2. Clear previous automatic FIFO allocations for the target scope
     this.repo.clearAutoAllocations(params.characterId, params.characterIds);
 
-    // 3. Separate purchases and sales and sort chronologically asc
+    // 3. Separate purchases and sales and sort chronologically asc with transactionId tie-breaker
     const buys = transactions
       .filter((t) => t.isBuy)
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      .sort((a, b) => {
+        const timeDiff = new Date(a.date).getTime() - new Date(b.date).getTime();
+        return timeDiff !== 0 ? timeDiff : a.transactionId - b.transactionId;
+      });
 
     const sales = transactions
       .filter((t) => !t.isBuy)
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      .sort((a, b) => {
+        const timeDiff = new Date(a.date).getTime() - new Date(b.date).getTime();
+        return timeDiff !== 0 ? timeDiff : a.transactionId - b.transactionId;
+      });
 
     // 4. Track available quantities on buy transactions (accounting for any manual allocations)
     interface BuyStockState {
@@ -326,12 +331,9 @@ export class RoiService {
   getSummary(params: RoiFilterParams = {}): RoiFinancialSummary {
     const { character_id, character_ids, start_date, end_date, type_id, buy_hub_id, sell_hub_id } = params;
 
-    // Filter transactions using canonical ledger repository
+    // Filter transactions using canonical ledger repository without pagination cap
     const effectiveCharId = character_ids && character_ids.length > 0 ? undefined : character_id;
-    let transactions: CharacterTransaction[] = ledgerRepository.getTransactions({
-      characterId: effectiveCharId,
-      pageSize: 100000,
-    }).items;
+    let transactions: CharacterTransaction[] = ledgerRepository.getAllTransactions(effectiveCharId, character_ids);
 
     if (character_ids && character_ids.length > 0) {
       const set = new Set(character_ids);

@@ -88,4 +88,25 @@ describe('Hubs Module (Trade Hubs & Location Mapping)', () => {
     expect(after.is_known_hub).toBe(false);
     expect(after.hub_id).toBe('UNKNOWN_HUB');
   });
+
+  it('automatically discovers and maps hubs from observed transaction locations', () => {
+    const transactions = [
+      { locationId: 60003760, locationName: 'Jita IV - Moon 4 - Caldari Navy Assembly Plant' },
+      { locationId: 60012345, locationName: 'Perimeter - I-RED Commercial Complex' },
+      { locationId: 60054321, locationName: 'Sobeki III - Moon 2 - Core Complexion Inc. Factory' },
+    ];
+
+    const result = hubsService.autoDiscoverHubsFromTransactions(transactions);
+    expect(result.discoveredMappings).toBe(2); // 60003760 was already mapped to Jita
+
+    // Perimeter structure should auto-map to hub-jita
+    const perimeterHub = hubsService.resolveLocationToHub(60012345);
+    expect(perimeterHub.is_known_hub).toBe(true);
+    expect(perimeterHub.hub_id).toBe('hub-jita');
+
+    // Sobeki station should auto-create a Sobeki hub
+    const sobekiHub = hubsService.resolveLocationToHub(60054321);
+    expect(sobekiHub.is_known_hub).toBe(true);
+    expect(sobekiHub.hub_name).toContain('Sobeki');
+  });
 });

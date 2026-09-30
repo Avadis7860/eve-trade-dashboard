@@ -89,8 +89,15 @@ export class LedgerService {
   /**
    * Retrieves ledger summary
    */
-  public getSummary(characterId: number): LedgerSummary {
-    return this.repo.getSummary(characterId);
+  public getSummary(characterId?: number, characterIds?: number[]): LedgerSummary {
+    return this.repo.getSummary(characterId, characterIds);
+  }
+
+  /**
+   * Retrieves all transactions without arbitrary pagination cap
+   */
+  public getAllTransactions(characterId?: number, characterIds?: number[]): CharacterTransaction[] {
+    return this.repo.getAllTransactions(characterId, characterIds);
   }
 
   /**

@@ -459,7 +459,86 @@ export class SyncService {
   }
 
   /**
-   * Synchronizes all character data (wallet transactions, journal, market orders)
+   * Synchronizes corporation wallet journal entries (tax and broker fees) if the character has corp roles
+   */
+  public async syncCorporationWallets(
+    characterId: number,
+    accessToken: string,
+    refreshTokenFn?: () => Promise<string | null>
+  ): Promise<void> {
+    try {
+      // 1. Fetch character public info to get corporation_id
+      const charInfoRes = await this.esiClient.get<{ corporation_id: number }>(`/characters/${characterId}/`, {
+        accessToken,
+        refreshTokenFn,
+      });
+
+      const corpId = charInfoRes.data?.corporation_id;
+      if (!corpId) return;
+
+      // 2. Fetch corporation divisions (wallets)
+      let divisions: Array<{ division: number; balance: number }> = [{ division: 1, balance: 0 }];
+      try {
+        const divisionsRes = await this.esiClient.get<Array<{ division: number; balance: number }>>(
+          `/corporations/${corpId}/wallets/`,
+          { accessToken, refreshTokenFn }
+        );
+        if (Array.isArray(divisionsRes.data) && divisionsRes.data.length > 0) {
+          divisions = divisionsRes.data;
+        }
+      } catch {
+        // If divisions endpoint is forbidden, fallback to division 1
+      }
+
+      for (const div of divisions) {
+        const divisionNumber = div.division || 1;
+        try {
+          // Fetch journal for division (containing transaction_tax and brokers_fee)
+          const paginatedJournal = await fetchXPages<RawEsiJournalEntry>(
+            this.esiClient,
+            `/corporations/${corpId}/wallets/${divisionNumber}/journal/`,
+            {
+              accessToken,
+              refreshTokenFn,
+              maxPages: 3,
+            }
+          );
+
+          if (paginatedJournal.data && paginatedJournal.data.length > 0) {
+            const observedAt = Date.now();
+            const entries: CharacterWalletJournalEntry[] = paginatedJournal.data.map((raw) => ({
+              id: `${characterId}:corp:${corpId}:${raw.id}`,
+              characterId,
+              journalId: raw.id,
+              date: raw.date,
+              refType: raw.ref_type,
+              amount: raw.amount,
+              balance: raw.balance,
+              contextId: raw.context_id,
+              contextIdType: raw.context_id_type,
+              description: raw.description,
+              firstPartyId: raw.first_party_id,
+              secondPartyId: raw.second_party_id,
+              reason: raw.reason,
+              tax: raw.tax,
+              taxReceiverId: raw.tax_receiver_id,
+              source: `/corporations/${corpId}/wallets/${divisionNumber}/journal/`,
+              observedAt,
+            }));
+            this.ledgerRepo.saveJournalEntries(entries);
+          }
+        } catch {
+          // Ignore division errors (e.g. 403 lack of role for specific division)
+        }
+      }
+    } catch (err) {
+      // Gracefully ignore corporation sync failure if character doesn't have corp director role
+      console.warn(`[SyncService] Corporation wallet sync not accessible for character ${characterId}: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Synchronizes all character data (wallet transactions, journal, market orders, corporation wallet)
    */
   public async syncAll(
     characterId: number,
@@ -469,6 +548,7 @@ export class SyncService {
     const transactions = await this.syncWalletTransactions(characterId, accessToken, refreshTokenFn);
     const journal = await this.syncWalletJournal(characterId, accessToken, refreshTokenFn);
     const orders = await this.syncCharacterOrders(characterId, accessToken, refreshTokenFn);
+    await this.syncCorporationWallets(characterId, accessToken, refreshTokenFn);
 
     return { transactions, journal, orders };
   }

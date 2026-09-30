@@ -419,9 +419,13 @@ export default function App() {
         ...(selectedLocation ? { locationId: selectedLocation } : {}),
       });
 
+      const charIdsQuery = linkedCharacters.length > 1
+        ? `?character_ids=${linkedCharacters.map((c) => c.characterId).join(',')}`
+        : '';
+
       const [txRes, summaryRes, syncRes, optionsRes, journalRes] = await Promise.all([
         fetch(`/api/ledger/transactions?${params.toString()}`).then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/ledger/summary').then((r) => (r.ok ? r.json() : null)),
+        fetch(`/api/ledger/summary${charIdsQuery}`).then((r) => (r.ok ? r.json() : null)),
         fetch('/api/ledger/sync-status').then((r) => (r.ok ? r.json() : null)),
         fetch('/api/ledger/filter-options').then((r) => (r.ok ? r.json() : null)),
         fetch('/api/ledger/journal?pageSize=25').then((r) => (r.ok ? r.json() : null)),
@@ -680,6 +684,17 @@ export default function App() {
       }
     } catch (err) {
       console.error('Failed to delete mapping:', err);
+    }
+  };
+
+  const handleAutoDiscoverHubs = async () => {
+    try {
+      const res = await fetch('/api/hubs/auto-discover', { method: 'POST' });
+      if (res.ok) {
+        await fetchRoiAndHubsData();
+      }
+    } catch (err) {
+      console.error('Failed to auto-discover hubs:', err);
     }
   };
 
@@ -2231,12 +2246,21 @@ export default function App() {
                         <Building2 className="w-4 h-4 text-amber-400" />
                         <h4 className="text-sm font-bold text-slate-100">Rattachement Stations / Structures</h4>
                       </div>
-                      <button
-                        onClick={() => setShowAddMappingModal(true)}
-                        className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium flex items-center gap-1"
-                      >
-                        <Plus className="w-3 h-3" /> Associer
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleAutoDiscoverHubs}
+                          className="px-2.5 py-1 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-medium flex items-center gap-1 transition-colors"
+                          title="Auto-détecter les hubs et stations observées dans les transactions"
+                        >
+                          <Sparkles className="w-3 h-3 text-amber-400" /> Auto-découvrir
+                        </button>
+                        <button
+                          onClick={() => setShowAddMappingModal(true)}
+                          className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium flex items-center gap-1"
+                        >
+                          <Plus className="w-3 h-3" /> Associer
+                        </button>
+                      </div>
                     </div>
 
                     <div className="space-y-2 max-h-72 overflow-y-auto pr-1">

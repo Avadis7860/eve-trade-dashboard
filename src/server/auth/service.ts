@@ -6,6 +6,9 @@ import type { AuthConfig, UserSession, EveTokenResponse, PublicSessionInfo } fro
 export const DEFAULT_SCOPES = [
   'esi-wallet.read_character_wallet.v1',
   'esi-markets.read_character_orders.v1',
+  'esi-wallet.read_corporation_wallets.v1',
+  'esi-markets.read_corporation_orders.v1',
+  'esi-corporations.read_corporation_membership.v1',
 ];
 
 export function getAuthConfigFromEnv(): AuthConfig {

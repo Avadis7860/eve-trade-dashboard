@@ -5,8 +5,6 @@ export interface ISyncRepository {
   updateSyncState(characterId: number, resource: SyncResourceType, updates: Partial<SyncState>): SyncState;
   getFullStatus(characterId: number): FullCharacterSyncStatus;
   clearCharacter(characterId: number): void;
-  dumpData(): { states: SyncState[] };
-  restoreData(data: { states: SyncState[] }): void;
 }
 
 export class InMemorySyncRepository implements ISyncRepository {
@@ -82,19 +80,6 @@ export class InMemorySyncRepository implements ISyncRepository {
       if (state.characterId === characterId) {
         this.states.delete(key);
       }
-    }
-  }
-
-  public dumpData(): { states: SyncState[] } {
-    return {
-      states: Array.from(this.states.values()),
-    };
-  }
-
-  public restoreData(data: { states: SyncState[] }): void {
-    this.states.clear();
-    for (const s of data.states) {
-      this.states.set(this.makeKey(s.characterId, s.resource), s);
     }
   }
 }

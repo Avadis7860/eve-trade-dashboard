@@ -1,29 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { AuthService } from './service.ts';
-import { logger } from '../utils/logger.ts';
 
 const SESSION_COOKIE_NAME = 'eve_session_id';
-
-function getCookieOptions(req: Request) {
-  const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https' || process.env.NODE_ENV === 'production';
-  return {
-    httpOnly: true,
-    secure: isSecure,
-    sameSite: (isSecure ? 'none' : 'lax') as 'none' | 'lax',
-    path: '/',
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-  };
-}
-
-function getClearCookieOptions(req: Request) {
-  const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https' || process.env.NODE_ENV === 'production';
-  return {
-    httpOnly: true,
-    secure: isSecure,
-    sameSite: (isSecure ? 'none' : 'lax') as 'none' | 'lax',
-    path: '/',
-  };
-}
 
 export function createAuthRouter(authService: AuthService = new AuthService()): Router {
   const router = Router();
@@ -61,7 +39,6 @@ export function createAuthRouter(authService: AuthService = new AuthService()): 
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Login initialization failed';
-      logger.error('Login initialization error:', message);
       res.status(500).json({ error: message });
     }
   });
@@ -76,7 +53,6 @@ export function createAuthRouter(authService: AuthService = new AuthService()): 
 
     if (error) {
       const errorDesc = (req.query.error_description as string) || error;
-      logger.warn('OAuth callback returned error from CCP:', errorDesc);
       res.redirect(`/?auth_error=${encodeURIComponent(errorDesc)}`);
       return;
     }
@@ -90,11 +66,16 @@ export function createAuthRouter(authService: AuthService = new AuthService()): 
       const existingSessionId = req.cookies?.[SESSION_COOKIE_NAME];
       const session = await authService.handleCallback(code, state, existingSessionId);
 
-      res.cookie(SESSION_COOKIE_NAME, session.sessionId, getCookieOptions(req));
+      res.cookie(SESSION_COOKIE_NAME, session.sessionId, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+      });
+
       res.redirect('/?auth=success');
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Authentication failed';
-      logger.error('Authentication callback error:', message);
       res.redirect(`/?auth_error=${encodeURIComponent(message)}`);
     }
   });
@@ -112,7 +93,7 @@ export function createAuthRouter(authService: AuthService = new AuthService()): 
     const session = await authService.getValidSession(sessionId);
     if (!session) {
       // Clear stale cookie
-      res.clearCookie(SESSION_COOKIE_NAME, getClearCookieOptions(req));
+      res.clearCookie(SESSION_COOKIE_NAME);
       res.json(authService.getPublicSessionInfo(null));
       return;
     }
@@ -153,7 +134,7 @@ export function createAuthRouter(authService: AuthService = new AuthService()): 
 
     const session = authService.removeCharacter(sessionId, characterId);
     if (!session) {
-      res.clearCookie(SESSION_COOKIE_NAME, getClearCookieOptions(req));
+      res.clearCookie(SESSION_COOKIE_NAME);
       res.json({ authenticated: false, characters: [] });
       return;
     }
@@ -170,7 +151,7 @@ export function createAuthRouter(authService: AuthService = new AuthService()): 
       authService.logout(sessionId);
     }
 
-    res.clearCookie(SESSION_COOKIE_NAME, getClearCookieOptions(req));
+    res.clearCookie(SESSION_COOKIE_NAME);
     res.json({ success: true });
   });
 

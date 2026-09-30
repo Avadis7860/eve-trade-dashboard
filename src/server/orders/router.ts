@@ -3,7 +3,6 @@ import { OrdersService, defaultOrdersService } from './service.ts';
 import { AuthService } from '../auth/service.ts';
 import { defaultSessionStore } from '../auth/sessionStore.ts';
 import type { OrderLifecycleState, CreateRestockItemDto, UpdateRestockItemDto } from './types.ts';
-import { validateCharacterSessionAccess } from '../middleware/security.ts';
 
 const SESSION_COOKIE_NAME = 'eve_session_id';
 
@@ -47,17 +46,9 @@ export function createOrdersRouter(
       sortOrder,
       page,
       pageSize,
-      character_id,
     } = req.query;
 
-    const targetCharId = character_id ? Number(character_id) : (session.activeCharacterId || session.characterId);
-    const access = validateCharacterSessionAccess(session, targetCharId);
-    if (!access.allowed) {
-      res.status(403).json({ error: 'Accès refusé pour ce personnage' });
-      return;
-    }
-
-    const result = ordersService.getOrders(targetCharId, {
+    const result = ordersService.getOrders(session.characterId, {
       state: state as OrderLifecycleState | 'ALL' | 'ACTIVE_ALL',
       isBuyOrder: isBuyOrder !== undefined ? isBuyOrder === 'true' : undefined,
       locationId: locationId ? Number(locationId) : undefined,
@@ -78,15 +69,7 @@ export function createOrdersRouter(
    */
   router.get('/summary', requireSession, (req: Request, res: Response) => {
     const session = (req as Request & { session: NonNullable<Awaited<ReturnType<typeof authService.getValidSession>>> }).session;
-    const requestedCharId = req.query.character_id ? Number(req.query.character_id) : (session.activeCharacterId || session.characterId);
-
-    const access = validateCharacterSessionAccess(session, requestedCharId);
-    if (!access.allowed) {
-      res.status(403).json({ error: 'Accès refusé pour ce personnage' });
-      return;
-    }
-
-    const summary = ordersService.getSummary(requestedCharId);
+    const summary = ordersService.getSummary(session.characterId);
     res.json(summary);
   });
 
@@ -96,15 +79,7 @@ export function createOrdersRouter(
    */
   router.get('/restock', requireSession, (req: Request, res: Response) => {
     const session = (req as Request & { session: NonNullable<Awaited<ReturnType<typeof authService.getValidSession>>> }).session;
-    const requestedCharId = req.query.character_id ? Number(req.query.character_id) : (session.activeCharacterId || session.characterId);
-
-    const access = validateCharacterSessionAccess(session, requestedCharId);
-    if (!access.allowed) {
-      res.status(403).json({ error: 'Accès refusé pour ce personnage' });
-      return;
-    }
-
-    const items = ordersService.getRestockItems(requestedCharId);
+    const items = ordersService.getRestockItems(session.characterId);
     res.json({ items });
   });
 
@@ -114,15 +89,7 @@ export function createOrdersRouter(
    */
   router.post('/restock/generate', requireSession, (req: Request, res: Response) => {
     const session = (req as Request & { session: NonNullable<Awaited<ReturnType<typeof authService.getValidSession>>> }).session;
-    const requestedCharId = req.body.character_id ? Number(req.body.character_id) : (session.activeCharacterId || session.characterId);
-
-    const access = validateCharacterSessionAccess(session, requestedCharId);
-    if (!access.allowed) {
-      res.status(403).json({ error: 'Accès refusé pour ce personnage' });
-      return;
-    }
-
-    const result = ordersService.generateRestockSuggestions(requestedCharId);
+    const result = ordersService.generateRestockSuggestions(session.characterId);
     res.json(result);
   });
 
@@ -134,19 +101,12 @@ export function createOrdersRouter(
     const session = (req as Request & { session: NonNullable<Awaited<ReturnType<typeof authService.getValidSession>>> }).session;
     const dto: CreateRestockItemDto = req.body;
 
-    const targetCharId = req.body.character_id ? Number(req.body.character_id) : (session.activeCharacterId || session.characterId);
-    const access = validateCharacterSessionAccess(session, targetCharId);
-    if (!access.allowed) {
-      res.status(403).json({ error: 'Accès refusé pour ce personnage' });
-      return;
-    }
-
     if (!dto.typeId || !dto.targetBuyHubId || !dto.sellHubId || !dto.suggestedQuantity) {
       res.status(400).json({ error: 'Missing required restock fields (typeId, targetBuyHubId, sellHubId, suggestedQuantity)' });
       return;
     }
 
-    const item = ordersService.createRestockItem(targetCharId, dto);
+    const item = ordersService.createRestockItem(session.characterId, dto);
     res.status(201).json(item);
   });
 
@@ -159,14 +119,7 @@ export function createOrdersRouter(
     const itemId = req.params.id;
     const updates: UpdateRestockItemDto = req.body;
 
-    const targetCharId = req.body.character_id ? Number(req.body.character_id) : (session.activeCharacterId || session.characterId);
-    const access = validateCharacterSessionAccess(session, targetCharId);
-    if (!access.allowed) {
-      res.status(403).json({ error: 'Accès refusé pour ce personnage' });
-      return;
-    }
-
-    const updated = ordersService.updateRestockItem(targetCharId, itemId, updates);
+    const updated = ordersService.updateRestockItem(session.characterId, itemId, updates);
     if (!updated) {
       res.status(404).json({ error: 'Restock item not found' });
       return;
@@ -182,15 +135,8 @@ export function createOrdersRouter(
   router.delete('/restock/:id', requireSession, (req: Request, res: Response) => {
     const session = (req as Request & { session: NonNullable<Awaited<ReturnType<typeof authService.getValidSession>>> }).session;
     const itemId = req.params.id;
-    const targetCharId = req.query.character_id ? Number(req.query.character_id) : (session.activeCharacterId || session.characterId);
 
-    const access = validateCharacterSessionAccess(session, targetCharId);
-    if (!access.allowed) {
-      res.status(403).json({ error: 'Accès refusé pour ce personnage' });
-      return;
-    }
-
-    const deleted = ordersService.deleteRestockItem(targetCharId, itemId);
+    const deleted = ordersService.deleteRestockItem(session.characterId, itemId);
     if (!deleted) {
       res.status(404).json({ error: 'Restock item not found' });
       return;
@@ -212,20 +158,7 @@ export function createOrdersRouter(
       return;
     }
 
-    // Check all authorized characters in session
-    const authorizedCharIds = session.characters
-      ? Object.keys(session.characters).map(Number)
-      : [session.characterId];
-
-    let detail = null;
-    for (const charId of authorizedCharIds) {
-      const found = ordersService.getOrderDetail(charId, orderId);
-      if (found) {
-        detail = found;
-        break;
-      }
-    }
-
+    const detail = ordersService.getOrderDetail(session.characterId, orderId);
     if (!detail) {
       res.status(404).json({ error: 'Order not found' });
       return;

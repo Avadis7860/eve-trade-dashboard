@@ -2,7 +2,6 @@ import { Router, type Request, type Response } from 'express';
 import { defaultAssetsService, AssetsService } from './service.ts';
 import { defaultSessionStore, SessionStore } from '../auth/sessionStore.ts';
 import type { UserSession } from '../auth/types.ts';
-import { validateCharacterSessionAccess } from '../middleware/security.ts';
 
 export function createAssetsRouter(
   service: AssetsService = defaultAssetsService,
@@ -35,14 +34,7 @@ export function createAssetsRouter(
       ? String(req.query.character_ids).split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n))
       : undefined;
 
-    const idsToValidate = characterIdsParam || (characterIdParam ? [characterIdParam] : [session.activeCharacterId || session.characterId]);
-    const access = validateCharacterSessionAccess(session, idsToValidate);
-    if (!access.allowed) {
-      res.status(403).json({ error: 'Accès refusé pour ce personnage' });
-      return;
-    }
-
-    const effectiveCharId = characterIdsParam && characterIdsParam.length > 0 ? undefined : (characterIdParam || session.activeCharacterId || session.characterId);
+    const effectiveCharId = characterIdsParam && characterIdsParam.length > 0 ? undefined : (characterIdParam || session.activeCharacterId);
 
     const typeId = req.query.type_id ? Number(req.query.type_id) : undefined;
     const locationId = req.query.location_id ? Number(req.query.location_id) : undefined;
@@ -70,21 +62,13 @@ export function createAssetsRouter(
       ? String(req.query.character_ids).split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n))
       : undefined;
 
-    const idsToValidate = characterIdsParam || (characterIdParam ? [characterIdParam] : [session.activeCharacterId || session.characterId]);
-    const access = validateCharacterSessionAccess(session, idsToValidate);
-    if (!access.allowed) {
-      res.status(403).json({ error: 'Accès refusé pour ce personnage' });
-      return;
-    }
-
-    const effectiveCharId = characterIdsParam && characterIdsParam.length > 0 ? undefined : (characterIdParam || session.activeCharacterId || session.characterId);
+    const effectiveCharId = characterIdsParam && characterIdsParam.length > 0 ? undefined : (characterIdParam || session.activeCharacterId);
     const summary = service.getSummary(effectiveCharId, characterIdsParam);
 
     res.json(summary);
   });
 
   router.get('/stock/:typeId', (req: Request, res: Response) => {
-    const session = (req as Request & { session: UserSession }).session;
     const typeId = Number(req.params.typeId);
     if (isNaN(typeId)) {
       res.status(400).json({ error: 'typeId invalide' });
@@ -95,14 +79,6 @@ export function createAssetsRouter(
     const characterIdsParam = req.query.character_ids
       ? String(req.query.character_ids).split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n))
       : undefined;
-
-    if (characterIdsParam) {
-      const access = validateCharacterSessionAccess(session, characterIdsParam);
-      if (!access.allowed) {
-        res.status(403).json({ error: 'Accès refusé pour ce personnage' });
-        return;
-      }
-    }
 
     const breakdown = service.getStockBreakdown(typeId, characterIdsParam);
     const specificLocationQty = locationId !== undefined

@@ -8,11 +8,11 @@ Un seul chantier actif, une phase, une branche, un PR. Jamais sur main. Petits l
 ## Phases
 | ID | Sujet | Dépendances | État initial |
 |---|---|---|---|
-| 00 | Fondations React/TS, serveur, outillage et CI | — | Planifiée |
-| 01 | EVE SSO et identité | 00 | Planifiée |
-| 02 | Client ESI résilient | 00–01 | Planifiée |
-| 03 | Transactions et grand livre | 01–02 | Planifiée |
-| 04 | Cycle de vie des ordres, listes de réassort | 01–03 | Planifiée |
+| 00 | Fondations React/TS, serveur, outillage et CI | — | Terminé |
+| 01 | EVE SSO et identité | 00 | Terminé |
+| 02 | Client ESI résilient | 00–01 | Terminé |
+| 03 | Transactions et grand livre | 01–02 | Terminé |
+| 04 | Cycle de vie des ordres, listes de réassort | 01–03 | Terminé |
 | 05 | Hubs et ROI TTC | 03–04 | Planifiée |
 | 06 | Dashboard intégré | 03–05 | Planifiée |
 | H01 | Hardening sécurité | 00–06 | Planifiée |

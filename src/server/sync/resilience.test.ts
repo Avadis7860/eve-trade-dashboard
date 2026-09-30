@@ -184,6 +184,86 @@ describe('Resilience, Fault Tolerance & Idempotence (Phase H02 Hardening)', () =
       expect(paginated.error).toContain('504');
     });
 
+    it('simulates network drop after page 3 on 10: status is PARTIAL, 3 pages preserved, resumes at page 4 and completes', async () => {
+      let runNumber = 1;
+      const pagesRequestedInRun2: number[] = [];
+
+      vi.spyOn(esiClient, 'get').mockImplementation(async (_path: string, options?: EsiRequestOptions) => {
+        const page = Number(options?.params?.page || 1);
+
+        if (runNumber === 1) {
+          if (page <= 3) {
+            return {
+              data: [
+                { id: page * 100, date: `2026-09-20T1${page}:00:00Z`, ref_type: 'market_transaction', amount: 1000 * page, balance: 1000000, description: `Entry page ${page}` },
+              ],
+              meta: { status: 200, fromCache: false, fetchedAt: Date.now(), pages: 10 },
+            } as never;
+          }
+          // Network disconnects when requesting page 4 on Run 1
+          throw new Error('ECONNRESET: Connection reset by peer');
+        }
+
+        // Run 2: Network recovered
+        pagesRequestedInRun2.push(page);
+        return {
+          data: [
+            { id: page * 100, date: `2026-09-20T1${page}:00:00Z`, ref_type: 'market_transaction', amount: 1000 * page, balance: 1000000, description: `Entry page ${page}` },
+          ],
+          meta: { status: 200, fromCache: false, fetchedAt: Date.now(), pages: 10 },
+        } as never;
+      });
+
+      // Run 1: Interrupted at page 4
+      const run1 = await syncService.syncWalletJournal(1001, 'token-1', undefined, { maxPages: 10 });
+      expect(run1.status).toBe('PARTIAL');
+      expect(run1.coverageStatus).toBe('PARTIAL');
+      expect(run1.hasMore).toBe(true);
+      expect(run1.itemsFetched).toBe(3);
+      expect(run1.lastPage).toBe(3);
+
+      // Verify that pages 1 to 3 are safely preserved in repository
+      const journalAfterRun1 = ledgerRepo.getJournalEntries(1001, 1, 100);
+      expect(journalAfterRun1.total).toBe(3);
+      expect(ledgerRepo.getJournalEntryById(1001, 100)).not.toBeNull();
+      expect(ledgerRepo.getJournalEntryById(1001, 200)).not.toBeNull();
+      expect(ledgerRepo.getJournalEntryById(1001, 300)).not.toBeNull();
+
+      // Verify checkpoint in sync repository
+      const state1 = syncRepo.getSyncState(1001, 'wallet_journal');
+      expect(state1.status).toBe('PARTIAL');
+      expect(state1.coverageStatus).toBe('PARTIAL');
+      expect(state1.lastPage).toBe(3);
+      expect(state1.hasMore).toBe(true);
+
+      // Run 2: Transparent resumption
+      runNumber = 2;
+      const run2 = await syncService.syncWalletJournal(1001, 'token-1', undefined, { maxPages: 10 });
+
+      // Resumption started at page 4!
+      expect(pagesRequestedInRun2[0]).toBe(4);
+      expect(pagesRequestedInRun2).toEqual([4, 5, 6, 7, 8, 9, 10]);
+
+      expect(run2.status).toBe('COMPLETE');
+      expect(run2.coverageStatus).toBe('COMPLETE');
+      expect(run2.hasMore).toBe(false);
+      expect(run2.lastPage).toBe(10);
+
+      // Repository now has all 10 pages without duplicates or loss
+      const journalAfterRun2 = ledgerRepo.getJournalEntries(1001, 1, 100);
+      expect(journalAfterRun2.total).toBe(10);
+      for (let p = 1; p <= 10; p++) {
+        expect(ledgerRepo.getJournalEntryById(1001, p * 100)).not.toBeNull();
+      }
+
+      // Checkpoint certified as COMPLETE
+      const state2 = syncRepo.getSyncState(1001, 'wallet_journal');
+      expect(state2.status).toBe('COMPLETE');
+      expect(state2.coverageStatus).toBe('COMPLETE');
+      expect(state2.hasMore).toBe(false);
+      expect(state2.lastPage).toBe(10);
+    });
+
     it('retains all existing valid data intact when a full network outage occurs', async () => {
       // Seed pre-existing data
       ledgerRepo.saveTransactions([

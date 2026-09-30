@@ -95,7 +95,7 @@
 |---|---|---|---|---|---|
 | **R0** | Baseline, mesure et gel fonctionnel | **Terminé** | — | R1 à R8 | `docs/phases/PHASE-R00-baseline.md` |
 | **R1** | Persistance et stockage durable PostgreSQL | **Terminé** | R0 | R2 à R8 | `docs/phases/PHASE-R01-persistence.md` |
-| **R2** | Complétude, pagination et vérité des états | **BLOQUANTE** | R1 | R4 à R8 | `docs/phases/PHASE-R02-completeness-pagination.md` |
+| **R2** | Complétude, pagination et vérité des états | **Terminé** | R1 | R4 à R8 | `docs/phases/PHASE-R02-completeness-pagination.md` |
 | **R3** | Architecture des requêtes frontend | **MAJEURE** | R0, R2 | R7, R8 | `docs/phases/PHASE-R03-frontend-query-architecture.md` |
 | **R4** | Optimisation des calculs métier et accès SQL | **MAJEURE** | R1, R2 | R7, R8 | `docs/phases/PHASE-R04-business-calculations-data-access.md` |
 | **R5** | Synchronisation ESI et concurrence contrôlée | **MAJEURE** | R1, R2 | R7, R8 | `docs/phases/PHASE-R05-esi-sync-concurrency.md` |

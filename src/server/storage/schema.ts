@@ -219,6 +219,9 @@ CREATE TABLE IF NOT EXISTS sync_states (
   character_id BIGINT NOT NULL,
   resource TEXT NOT NULL,
   status TEXT NOT NULL,
+  coverage_status TEXT,
+  has_more BOOLEAN DEFAULT FALSE,
+  items_count INTEGER DEFAULT 0,
   last_sync_started_at BIGINT,
   last_sync_completed_at BIGINT,
   last_cursor_from_id BIGINT,
@@ -271,6 +274,15 @@ export const MIGRATIONS: SchemaMigration[] = [
     upSql: `
       CREATE INDEX IF NOT EXISTS idx_alloc_sell_buy ON explicit_cost_allocations (sell_transaction_id, buy_transaction_id);
       CREATE INDEX IF NOT EXISTS idx_tx_char_date_desc ON transactions (character_id, date DESC);
+    `,
+  },
+  {
+    version: 4,
+    name: '004_sync_states_checkpoints_and_coverage',
+    upSql: `
+      ALTER TABLE sync_states ADD COLUMN IF NOT EXISTS coverage_status TEXT;
+      ALTER TABLE sync_states ADD COLUMN IF NOT EXISTS has_more BOOLEAN DEFAULT FALSE;
+      ALTER TABLE sync_states ADD COLUMN IF NOT EXISTS items_count INTEGER DEFAULT 0;
     `,
   },
 ];

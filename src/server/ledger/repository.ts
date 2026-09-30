@@ -14,6 +14,7 @@ export interface ILedgerRepository {
   saveTransactions(transactions: CharacterTransaction[]): { inserted: number; updated: number };
   getTransactions(filters: LedgerQueryFilters): PaginatedLedgerResult<CharacterTransaction>;
   getAllTransactions(characterId?: number, characterIds?: number[]): CharacterTransaction[];
+  getHistoricalBuyLots(characterId?: number, characterIds?: number[], typeId?: number): CharacterTransaction[];
   getTransactionById(characterId: number, transactionId: number): CharacterTransaction | null;
   getJournalEntriesForTransaction(
     characterId: number,
@@ -450,6 +451,33 @@ export class PersistentLedgerRepository implements ILedgerRepository {
     }
 
     return result;
+  }
+
+  public getHistoricalBuyLots(characterId?: number, characterIds?: number[], typeId?: number): CharacterTransaction[] {
+    const filterSet = characterIds && characterIds.length > 0 ? new Set(characterIds) : null;
+    let candidateKeys: Iterable<string>;
+
+    if (typeId !== undefined && this.txByType.has(typeId)) {
+      candidateKeys = this.txByType.get(typeId)!;
+    } else if (characterId !== undefined && !filterSet && this.txByCharacter.has(characterId)) {
+      candidateKeys = this.txByCharacter.get(characterId)!;
+    } else {
+      candidateKeys = this.transactions.keys();
+    }
+
+    const matched: CharacterTransaction[] = [];
+    for (const key of candidateKeys) {
+      const tx = this.transactions.get(key);
+      if (!tx || !tx.isBuy) continue;
+      if (filterSet && !filterSet.has(tx.characterId)) continue;
+      if (characterId !== undefined && !filterSet && tx.characterId !== characterId) continue;
+      if (typeId !== undefined && tx.typeId !== typeId) continue;
+      matched.push(this.enrichTransaction(tx));
+    }
+
+    // Sort chronologically ascending for FIFO ordering (oldest buy lots first)
+    matched.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    return matched;
   }
 
   public getSummary(characterId?: number, characterIds?: number[]): LedgerSummary {
@@ -942,6 +970,33 @@ export class PostgresLedgerRepository implements ILedgerRepository {
       params.push(characterId);
     }
     sql += ' ORDER BY date DESC';
+    const res = await this.adapter.query(sql, params);
+    return res.rows.map((r) => this.mapRowToTx(r));
+  }
+
+  public getHistoricalBuyLots(characterId?: number, characterIds?: number[], typeId?: number): CharacterTransaction[] {
+    return this.fallbackMemory.getHistoricalBuyLots(characterId, characterIds, typeId);
+  }
+
+  public async getHistoricalBuyLotsAsync(characterId?: number, characterIds?: number[], typeId?: number): Promise<CharacterTransaction[]> {
+    const conditions = ['is_buy = TRUE'];
+    const params: unknown[] = [];
+    let paramIndex = 1;
+
+    if (characterIds && characterIds.length > 0) {
+      conditions.push(`character_id = ANY($${paramIndex++})`);
+      params.push(characterIds);
+    } else if (characterId !== undefined) {
+      conditions.push(`character_id = $${paramIndex++}`);
+      params.push(characterId);
+    }
+
+    if (typeId !== undefined) {
+      conditions.push(`type_id = $${paramIndex++}`);
+      params.push(typeId);
+    }
+
+    const sql = `SELECT * FROM transactions WHERE ${conditions.join(' AND ')} ORDER BY date ASC`;
     const res = await this.adapter.query(sql, params);
     return res.rows.map((r) => this.mapRowToTx(r));
   }

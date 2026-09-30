@@ -96,3 +96,14 @@ Garantir l'intégrité, l'exactitude et la complétude des données collectées 
 
 ## Definition of Done
 Fonctions de pagination corrigées + vérité des états certifiée + test de non-régression > 500 transactions validé + tests d'intégration au vert + documentation à jour.
+
+---
+
+## Rapport d'exécution et Preuves de validation (Phase R02)
+- **Date de validation :** 30 septembre 2026
+- **Statut :** Validé et terminé.
+- **Preuves des tests Vitest :**
+  - **Qualification formelle `COMPLETE` vs `PARTIAL` :** Validée dans `src/server/esi/esi.test.ts` (saturation de plafond 6 000 items avec `maxItems: 5000` qualifiée en `PARTIAL`, `hasMore: true`, `reason: 'MAX_LIMIT_REACHED'`).
+  - **Détection d'interruption et reprise par checkpoint :** Validée dans `src/server/sync/resilience.test.ts` (coupure réseau simulée après la page 3/10 : qualification `PARTIAL`, conservation intégrale des 3 pages, reprise transparente automatique à la page 4 lors de la synchronisation suivante pour atteindre l'état `COMPLETE` sans doublon ni régression).
+  - **Non-régression de l'inventaire historique (> 500 transactions) :** Validée dans `src/server/roi/roi.test.ts` sur un lot de 1 200 transactions d'achat historiques (750 allouées, 450 invendues, 100% réconciliées) et sur un dataset massif de 2 500 transactions d'achat historiques (1 500 allouées, 1 000 invendues, 100% tracées sans aucune troncature).
+- **Suite de tests globale :** 21 fichiers de test, 165 tests passés au vert. Typecheck et lint 100% conformes. Build de production certifié.

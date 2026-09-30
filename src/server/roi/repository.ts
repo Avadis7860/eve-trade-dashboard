@@ -199,13 +199,13 @@ export class PersistentRoiRepository implements IRoiRepository {
     const lots: InventoryLot[] = [];
     const effectiveCharId = characterIds && characterIds.length > 0 ? undefined : characterId;
 
-    // 1. Purchase Transactions from Ledger
-    const { items: transactions } = this.ledgerRepo.getTransactions({
-      characterId: effectiveCharId,
-      pageSize: 100000,
-    });
+    // 1. Purchase Transactions from Ledger (exhaustive historical buy lots without truncation)
+    let buyTxs = typeof this.ledgerRepo.getHistoricalBuyLots === 'function'
+      ? this.ledgerRepo.getHistoricalBuyLots(effectiveCharId, characterIds, typeId)
+      : this.ledgerRepo.getAllTransactions(effectiveCharId, characterIds).filter(
+          (t) => t.isBuy && (typeId === undefined || t.typeId === typeId)
+        );
 
-    let buyTxs = transactions.filter((t) => t.isBuy);
     if (characterIds && characterIds.length > 0) {
       const set = new Set(characterIds);
       buyTxs = buyTxs.filter((t) => set.has(t.characterId));

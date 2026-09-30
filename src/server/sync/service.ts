@@ -77,15 +77,26 @@ export class SyncService {
   public async syncWalletTransactions(
     characterId: number,
     accessToken: string,
-    refreshTokenFn?: () => Promise<string | null>
+    refreshTokenFn?: () => Promise<string | null>,
+    options?: { resume?: boolean; maxItems?: number }
   ): Promise<SyncResult> {
     const resource: SyncResourceType = 'wallet_transactions';
     const startTime = Date.now();
+
+    const previousState = this.syncRepo.getSyncState(characterId, resource);
+    const shouldResume =
+      options?.resume !== false &&
+      previousState.status === 'PARTIAL' &&
+      previousState.lastSuccessfulId !== undefined &&
+      previousState.hasMore === true;
+    const initialFromId = shouldResume ? previousState.lastSuccessfulId : undefined;
 
     this.syncRepo.updateSyncState(characterId, resource, {
       status: 'SYNCING',
       lastSyncStartedAt: startTime,
     });
+
+    let newCount = 0;
 
     try {
       const paginated = await fetchFromId<RawEsiTransaction>(
@@ -95,64 +106,71 @@ export class SyncService {
           accessToken,
           refreshTokenFn,
           getIdFn: (tx) => tx.transaction_id,
-          maxItems: 5000,
+          maxItems: options?.maxItems || 5000,
           pageSize: 2500,
+          initialFromId,
+          onBatchSuccess: async (lowestId, batchItems) => {
+            if (batchItems.length > 0) {
+              const typeIds = batchItems.map((tx) => tx.type_id);
+              const locationIds = batchItems.map((tx) => tx.location_id);
+              const clientIds = batchItems.map((tx) => tx.client_id);
+              const allIds = [...typeIds, ...locationIds, ...clientIds];
+
+              const nameMap = await this.universeService.resolveNames(allIds);
+              const observedAt = Date.now();
+              const transactions: CharacterTransaction[] = batchItems.map((raw) => {
+                const typeName = nameMap.get(raw.type_id) || this.universeService.getNameSync(raw.type_id, 'Type');
+                const locationName = nameMap.get(raw.location_id) || this.universeService.getNameSync(raw.location_id, 'Location');
+                const clientName = nameMap.get(raw.client_id) || this.universeService.getNameSync(raw.client_id, 'Client');
+
+                return {
+                  id: `${characterId}:${raw.transaction_id}`,
+                  characterId,
+                  transactionId: raw.transaction_id,
+                  date: raw.date,
+                  typeId: raw.type_id,
+                  typeName,
+                  quantity: raw.quantity,
+                  unitPrice: raw.unit_price,
+                  totalValue: Number((raw.unit_price * raw.quantity).toFixed(2)),
+                  isBuy: Boolean(raw.is_buy),
+                  isPersonal: Boolean(raw.is_personal),
+                  journalRefId: raw.journal_ref_id,
+                  locationId: raw.location_id,
+                  locationName,
+                  clientId: raw.client_id,
+                  clientName,
+                  source: `/characters/${characterId}/wallet/transactions/`,
+                  observedAt,
+                };
+              });
+
+              const saveResult = this.ledgerRepo.saveTransactions(transactions);
+              newCount += saveResult.inserted;
+
+              const totalPersisted = this.ledgerRepo.countTransactions(characterId);
+              this.syncRepo.updateSyncState(characterId, resource, {
+                lastSuccessfulId: lowestId,
+                totalRecords: totalPersisted,
+                itemsCount: totalPersisted,
+                newRecordsInLastSync: newCount,
+              });
+            }
+          },
         }
       );
-
-      const rawItems = paginated.data;
-      let newCount = 0;
-
-      if (rawItems.length > 0) {
-        // Collect all IDs for name resolution
-        const typeIds = rawItems.map((tx) => tx.type_id);
-        const locationIds = rawItems.map((tx) => tx.location_id);
-        const clientIds = rawItems.map((tx) => tx.client_id);
-        const allIds = [...typeIds, ...locationIds, ...clientIds];
-
-        const nameMap = await this.universeService.resolveNames(allIds);
-
-        // Map and enrich transactions
-        const observedAt = Date.now();
-        const transactions: CharacterTransaction[] = rawItems.map((raw) => {
-          const typeName = nameMap.get(raw.type_id) || this.universeService.getNameSync(raw.type_id, 'Type');
-          const locationName = nameMap.get(raw.location_id) || this.universeService.getNameSync(raw.location_id, 'Location');
-          const clientName = nameMap.get(raw.client_id) || this.universeService.getNameSync(raw.client_id, 'Client');
-
-          return {
-            id: `${characterId}:${raw.transaction_id}`,
-            characterId,
-            transactionId: raw.transaction_id,
-            date: raw.date,
-            typeId: raw.type_id,
-            typeName,
-            quantity: raw.quantity,
-            unitPrice: raw.unit_price,
-            totalValue: Number((raw.unit_price * raw.quantity).toFixed(2)),
-            isBuy: Boolean(raw.is_buy),
-            isPersonal: Boolean(raw.is_personal),
-            journalRefId: raw.journal_ref_id,
-            locationId: raw.location_id,
-            locationName,
-            clientId: raw.client_id,
-            clientName,
-            source: `/characters/${characterId}/wallet/transactions/`,
-            observedAt,
-          };
-        });
-
-        const saveResult = this.ledgerRepo.saveTransactions(transactions);
-        newCount = saveResult.inserted;
-      }
 
       const totalPersisted = this.ledgerRepo.countTransactions(characterId);
       const finalStatus = paginated.status;
 
       this.syncRepo.updateSyncState(characterId, resource, {
         status: finalStatus,
+        coverageStatus: finalStatus,
+        hasMore: paginated.hasMore,
         lastSyncCompletedAt: Date.now(),
         lastSuccessfulId: paginated.lastSuccessfulId,
         totalRecords: totalPersisted,
+        itemsCount: totalPersisted,
         newRecordsInLastSync: newCount,
         errorMessage: paginated.error,
       });
@@ -161,7 +179,9 @@ export class SyncService {
         resource,
         characterId,
         status: finalStatus,
-        itemsFetched: rawItems.length,
+        coverageStatus: finalStatus,
+        hasMore: paginated.hasMore,
+        itemsFetched: paginated.totalFetched,
         newItemsPersisted: newCount,
         totalPersisted,
         lastSuccessfulId: paginated.lastSuccessfulId,
@@ -175,7 +195,10 @@ export class SyncService {
 
       this.syncRepo.updateSyncState(characterId, resource, {
         status: 'ERROR',
+        coverageStatus: 'ERROR',
         lastSyncCompletedAt: Date.now(),
+        totalRecords: totalPersisted,
+        itemsCount: totalPersisted,
         errorMessage: errorMsg,
       });
 
@@ -183,6 +206,7 @@ export class SyncService {
         resource,
         characterId,
         status: 'ERROR',
+        coverageStatus: 'ERROR',
         itemsFetched: 0,
         newItemsPersisted: 0,
         totalPersisted,
@@ -199,15 +223,29 @@ export class SyncService {
   public async syncWalletJournal(
     characterId: number,
     accessToken: string,
-    refreshTokenFn?: () => Promise<string | null>
+    refreshTokenFn?: () => Promise<string | null>,
+    options?: { resume?: boolean; maxPages?: number }
   ): Promise<SyncResult> {
     const resource: SyncResourceType = 'wallet_journal';
     const startTime = Date.now();
+
+    const previousState = this.syncRepo.getSyncState(characterId, resource);
+    const shouldResume =
+      options?.resume !== false &&
+      previousState.status === 'PARTIAL' &&
+      previousState.lastPage !== undefined &&
+      previousState.lastPage > 0 &&
+      previousState.hasMore === true;
+    const startPage = shouldResume ? previousState.lastPage! + 1 : 1;
+    const maxPages = options?.maxPages || 5;
 
     this.syncRepo.updateSyncState(characterId, resource, {
       status: 'SYNCING',
       lastSyncStartedAt: startTime,
     });
+
+    let newCount = 0;
+    let highestPageFetched = previousState.lastPage || 0;
 
     try {
       const paginated = await fetchXPages<RawEsiJournalEntry>(
@@ -216,38 +254,48 @@ export class SyncService {
         {
           accessToken,
           refreshTokenFn,
-          maxPages: 5,
+          startPage,
+          maxPages,
+          onPageSuccess: async (page, rawItems) => {
+            if (page > highestPageFetched) {
+              highestPageFetched = page;
+            }
+            if (rawItems.length > 0) {
+              const observedAt = Date.now();
+              const entries: CharacterWalletJournalEntry[] = (rawItems as RawEsiJournalEntry[]).map((raw) => ({
+                id: `${characterId}:${raw.id}`,
+                characterId,
+                journalId: raw.id,
+                date: raw.date,
+                refType: raw.ref_type,
+                amount: raw.amount,
+                balance: raw.balance,
+                contextId: raw.context_id,
+                contextIdType: raw.context_id_type,
+                description: raw.description,
+                firstPartyId: raw.first_party_id,
+                secondPartyId: raw.second_party_id,
+                reason: raw.reason,
+                tax: raw.tax,
+                taxReceiverId: raw.tax_receiver_id,
+                source: `/characters/${characterId}/wallet/journal/`,
+                observedAt,
+              }));
+
+              const saveResult = this.ledgerRepo.saveJournalEntries(entries);
+              newCount += saveResult.inserted;
+            }
+
+            const currentTotal = this.ledgerRepo.getJournalEntries(characterId, 1, 1).total;
+            this.syncRepo.updateSyncState(characterId, resource, {
+              lastPage: page,
+              totalRecords: currentTotal,
+              itemsCount: currentTotal,
+              newRecordsInLastSync: newCount,
+            });
+          },
         }
       );
-
-      const rawItems = paginated.data;
-      let newCount = 0;
-
-      if (rawItems.length > 0) {
-        const observedAt = Date.now();
-        const entries: CharacterWalletJournalEntry[] = rawItems.map((raw) => ({
-          id: `${characterId}:${raw.id}`,
-          characterId,
-          journalId: raw.id,
-          date: raw.date,
-          refType: raw.ref_type,
-          amount: raw.amount,
-          balance: raw.balance,
-          contextId: raw.context_id,
-          contextIdType: raw.context_id_type,
-          description: raw.description,
-          firstPartyId: raw.first_party_id,
-          secondPartyId: raw.second_party_id,
-          reason: raw.reason,
-          tax: raw.tax,
-          taxReceiverId: raw.tax_receiver_id,
-          source: `/characters/${characterId}/wallet/journal/`,
-          observedAt,
-        }));
-
-        const saveResult = this.ledgerRepo.saveJournalEntries(entries);
-        newCount = saveResult.inserted;
-      }
 
       const journalResult = this.ledgerRepo.getJournalEntries(characterId, 1, 1);
       const totalPersisted = journalResult.total;
@@ -255,9 +303,12 @@ export class SyncService {
 
       this.syncRepo.updateSyncState(characterId, resource, {
         status: finalStatus,
+        coverageStatus: finalStatus,
+        hasMore: paginated.hasMore,
         lastSyncCompletedAt: Date.now(),
-        lastPage: paginated.pagesFetched,
+        lastPage: highestPageFetched || paginated.pagesFetched,
         totalRecords: totalPersisted,
+        itemsCount: totalPersisted,
         newRecordsInLastSync: newCount,
         errorMessage: paginated.error,
       });
@@ -266,9 +317,12 @@ export class SyncService {
         resource,
         characterId,
         status: finalStatus,
-        itemsFetched: rawItems.length,
+        coverageStatus: finalStatus,
+        hasMore: paginated.hasMore,
+        itemsFetched: paginated.totalFetched,
         newItemsPersisted: newCount,
         totalPersisted,
+        lastPage: highestPageFetched || paginated.pagesFetched,
         durationMs: Date.now() - startTime,
         error: paginated.error,
         asOf: Date.now(),
@@ -279,7 +333,10 @@ export class SyncService {
 
       this.syncRepo.updateSyncState(characterId, resource, {
         status: 'ERROR',
+        coverageStatus: 'ERROR',
         lastSyncCompletedAt: Date.now(),
+        totalRecords: journalResult.total,
+        itemsCount: journalResult.total,
         errorMessage: errorMsg,
       });
 
@@ -287,6 +344,7 @@ export class SyncService {
         resource,
         characterId,
         status: 'ERROR',
+        coverageStatus: 'ERROR',
         itemsFetched: 0,
         newItemsPersisted: 0,
         totalPersisted: journalResult.total,
@@ -426,8 +484,11 @@ export class SyncService {
 
       this.syncRepo.updateSyncState(characterId, resource, {
         status: 'COMPLETE',
+        coverageStatus: 'COMPLETE',
+        hasMore: false,
         lastSyncCompletedAt: Date.now(),
         totalRecords: totalTracked,
+        itemsCount: totalTracked,
         newRecordsInLastSync: saveResult.inserted,
       });
 
@@ -435,6 +496,8 @@ export class SyncService {
         resource,
         characterId,
         status: 'COMPLETE',
+        coverageStatus: 'COMPLETE',
+        hasMore: false,
         itemsFetched: rawActive.length + rawHistory.length,
         newItemsPersisted: saveResult.inserted,
         totalPersisted: totalTracked,
@@ -447,7 +510,10 @@ export class SyncService {
 
       this.syncRepo.updateSyncState(characterId, resource, {
         status: 'ERROR',
+        coverageStatus: 'ERROR',
         lastSyncCompletedAt: Date.now(),
+        totalRecords: totalTracked,
+        itemsCount: totalTracked,
         errorMessage: errorMsg,
       });
 
@@ -455,6 +521,7 @@ export class SyncService {
         resource,
         characterId,
         status: 'ERROR',
+        coverageStatus: 'ERROR',
         itemsFetched: 0,
         newItemsPersisted: 0,
         totalPersisted: totalTracked,
@@ -557,16 +624,30 @@ export class SyncService {
   public async syncCharacterAssets(
     characterId: number,
     accessToken: string,
-    refreshTokenFn?: () => Promise<string | null>
+    refreshTokenFn?: () => Promise<string | null>,
+    options?: { resume?: boolean; maxPages?: number }
   ): Promise<SyncResult> {
     const resource: SyncResourceType = 'character_assets';
     const startTime = Date.now();
     const observedAt = Date.now();
 
+    const previousState = this.syncRepo.getSyncState(characterId, resource);
+    const shouldResume =
+      options?.resume !== false &&
+      previousState.status === 'PARTIAL' &&
+      previousState.lastPage !== undefined &&
+      previousState.lastPage > 0 &&
+      previousState.hasMore === true;
+    const startPage = shouldResume ? previousState.lastPage! + 1 : 1;
+    const maxPages = options?.maxPages || 10;
+
     this.syncRepo.updateSyncState(characterId, resource, {
       status: 'SYNCING',
       lastSyncStartedAt: startTime,
     });
+
+    let newCount = 0;
+    let highestPageFetched = previousState.lastPage || 0;
 
     try {
       const paginated = await fetchXPages<RawEsiAsset>(
@@ -575,57 +656,71 @@ export class SyncService {
         {
           accessToken,
           refreshTokenFn,
-          maxPages: 10,
+          startPage,
+          maxPages,
+          onPageSuccess: async (page, rawItems) => {
+            if (page > highestPageFetched) {
+              highestPageFetched = page;
+            }
+            if (rawItems.length > 0) {
+              const typedItems = rawItems as RawEsiAsset[];
+              // Collect type IDs and universe location IDs (exclude nested item IDs which cannot be resolved via /universe/names/)
+              const typeIds = typedItems.map((a) => a.type_id);
+              const nonItemLocationIds = typedItems
+                .filter((a) => a.location_type !== 'item')
+                .map((a) => a.location_id);
+              const nameMap = await this.universeService.resolveNames([...typeIds, ...nonItemLocationIds]);
+
+              const assets: CharacterAsset[] = typedItems.map((raw) => {
+                const typeName = nameMap.get(raw.type_id) || this.universeService.getNameSync(raw.type_id, 'Type');
+                const locationName = raw.location_type === 'item'
+                  ? `Container #${raw.location_id}`
+                  : (nameMap.get(raw.location_id) || this.universeService.getNameSync(raw.location_id, 'Location'));
+
+                return {
+                  id: `${characterId}:${raw.item_id}`,
+                  characterId,
+                  itemId: raw.item_id,
+                  typeId: raw.type_id,
+                  typeName,
+                  quantity: raw.quantity,
+                  locationId: raw.location_id,
+                  locationName,
+                  locationType: raw.location_type,
+                  locationFlag: raw.location_flag,
+                  isSingleton: Boolean(raw.is_singleton),
+                  isCorpAsset: false,
+                  source: `/characters/${characterId}/assets/`,
+                  observedAt,
+                };
+              });
+
+              const saveResult = this.assetsRepo.saveAssets(assets);
+              newCount += saveResult.inserted;
+            }
+
+            const currentTotal = this.assetsRepo.getAllAssets(characterId).length;
+            this.syncRepo.updateSyncState(characterId, resource, {
+              lastPage: page,
+              totalRecords: currentTotal,
+              itemsCount: currentTotal,
+              newRecordsInLastSync: newCount,
+            });
+          },
         }
       );
-
-      const rawItems = paginated.data;
-      let newCount = 0;
-
-      if (rawItems.length > 0) {
-        // Collect type IDs and universe location IDs (exclude nested item IDs which cannot be resolved via /universe/names/)
-        const typeIds = rawItems.map((a) => a.type_id);
-        const nonItemLocationIds = rawItems
-          .filter((a) => a.location_type !== 'item')
-          .map((a) => a.location_id);
-        const nameMap = await this.universeService.resolveNames([...typeIds, ...nonItemLocationIds]);
-
-        const assets: CharacterAsset[] = rawItems.map((raw) => {
-          const typeName = nameMap.get(raw.type_id) || this.universeService.getNameSync(raw.type_id, 'Type');
-          const locationName = raw.location_type === 'item'
-            ? `Container #${raw.location_id}`
-            : (nameMap.get(raw.location_id) || this.universeService.getNameSync(raw.location_id, 'Location'));
-
-          return {
-            id: `${characterId}:${raw.item_id}`,
-            characterId,
-            itemId: raw.item_id,
-            typeId: raw.type_id,
-            typeName,
-            quantity: raw.quantity,
-            locationId: raw.location_id,
-            locationName,
-            locationType: raw.location_type,
-            locationFlag: raw.location_flag,
-            isSingleton: Boolean(raw.is_singleton),
-            isCorpAsset: false,
-            source: `/characters/${characterId}/assets/`,
-            observedAt,
-          };
-        });
-
-        const saveResult = this.assetsRepo.saveAssets(assets);
-        newCount = saveResult.inserted;
-      }
 
       const totalPersisted = this.assetsRepo.getAllAssets(characterId).length;
       const finalStatus = paginated.status;
 
       this.syncRepo.updateSyncState(characterId, resource, {
         status: finalStatus,
+        coverageStatus: finalStatus,
+        hasMore: paginated.hasMore,
         lastSyncCompletedAt: Date.now(),
-        lastPage: paginated.pagesFetched,
+        lastPage: highestPageFetched || paginated.pagesFetched,
         totalRecords: totalPersisted,
+        itemsCount: totalPersisted,
         newRecordsInLastSync: newCount,
         errorMessage: paginated.error,
       });
@@ -634,9 +729,12 @@ export class SyncService {
         resource,
         characterId,
         status: finalStatus,
-        itemsFetched: rawItems.length,
+        coverageStatus: finalStatus,
+        hasMore: paginated.hasMore,
+        itemsFetched: paginated.totalFetched,
         newItemsPersisted: newCount,
         totalPersisted,
+        lastPage: highestPageFetched || paginated.pagesFetched,
         durationMs: Date.now() - startTime,
         error: paginated.error,
         asOf: Date.now(),
@@ -647,7 +745,10 @@ export class SyncService {
 
       this.syncRepo.updateSyncState(characterId, resource, {
         status: 'ERROR',
+        coverageStatus: 'ERROR',
         lastSyncCompletedAt: Date.now(),
+        totalRecords: totalPersisted,
+        itemsCount: totalPersisted,
         errorMessage: errorMsg,
       });
 
@@ -655,6 +756,7 @@ export class SyncService {
         resource,
         characterId,
         status: 'ERROR',
+        coverageStatus: 'ERROR',
         itemsFetched: 0,
         newItemsPersisted: 0,
         totalPersisted,

@@ -53,6 +53,8 @@ export interface EsiRequestOptions {
 export interface XPagesPaginationOptions extends EsiRequestOptions {
   maxPages?: number;
   batchSize?: number;
+  startPage?: number;
+  onPageSuccess?: (page: number, items: unknown[], meta: EsiResponseMeta) => Promise<void> | void;
 }
 
 export interface FromIdPaginationOptions<T> extends EsiRequestOptions {
@@ -60,6 +62,8 @@ export interface FromIdPaginationOptions<T> extends EsiRequestOptions {
   getIdFn: (item: T) => number;
   maxItems?: number;
   pageSize?: number;
+  initialFromId?: number;
+  onBatchSuccess?: (lastId: number, items: T[], meta: EsiResponseMeta) => Promise<void> | void;
 }
 
 export interface PaginatedResult<T> {
@@ -71,6 +75,8 @@ export interface PaginatedResult<T> {
   error?: string;
   lastSuccessfulId?: number;
   meta: EsiResponseMeta;
+  hasMore?: boolean;
+  reason?: 'MAX_LIMIT_REACHED' | 'NETWORK_ERROR' | 'FETCH_ERROR' | string;
 }
 
 export interface EsiRateLimitStatus {

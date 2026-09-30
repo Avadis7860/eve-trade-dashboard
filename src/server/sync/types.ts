@@ -1,3 +1,5 @@
+import type { EsiCompleteness } from '../esi/types.ts';
+
 /**
  * Sync domain types and contracts
  */
@@ -15,12 +17,15 @@ export interface SyncState {
   characterId: number;
   resource: SyncResourceType;
   status: SyncStatusState;
+  coverageStatus?: EsiCompleteness;
+  hasMore?: boolean;
   lastSyncStartedAt?: number;
   lastSyncCompletedAt?: number;
   lastSuccessfulId?: number; // Cursor from_id for transactions pagination
   lastPage?: number; // Cursor page for x-pages pagination
   totalRecords: number;
   newRecordsInLastSync: number;
+  itemsCount?: number;
   errorMessage?: string;
   asOf: number;
 }
@@ -39,10 +44,13 @@ export interface SyncResult {
   resource: SyncResourceType;
   characterId: number;
   status: SyncStatusState;
+  coverageStatus?: EsiCompleteness;
+  hasMore?: boolean;
   itemsFetched: number;
   newItemsPersisted: number;
   totalPersisted: number;
   lastSuccessfulId?: number;
+  lastPage?: number;
   durationMs: number;
   error?: string;
   asOf: number;

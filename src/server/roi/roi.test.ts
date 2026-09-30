@@ -792,4 +792,158 @@ describe('ROI TTC & Financial Metrics Module', () => {
     expect(stored.some((a) => a.id === 'test-alloc-1')).toBe(true);
     expect(stored.some((a) => a.id === 'test-alloc-2')).toBe(true);
   });
+
+  describe('Phase R02 Mandatory Tests — Exhaustive Inventory & Historical Buy Lots (> 500 Items)', () => {
+    it('non-regression: accounts for all 1,200 historical buy lots in ledger and FIFO reconciliation without 500-page cap', () => {
+      const charId = 8888;
+      // 1. Generate 1,200 buy transactions (10 units each at 5.0 ISK)
+      const buyTxs: CharacterTransaction[] = [];
+      const baseDate = new Date('2026-01-01T00:00:00Z').getTime();
+
+      for (let i = 1; i <= 1200; i++) {
+        const txDate = new Date(baseDate + i * 60000).toISOString();
+        buyTxs.push(
+          makeTx({
+            transactionId: 100000 + i,
+            characterId: charId,
+            date: txDate,
+            isBuy: true,
+            journalRefId: 200000 + i,
+            locationId: 60003760,
+            locationName: 'Jita IV - 4',
+            quantity: 10,
+            typeId: TRITANIUM_TYPE_ID,
+            typeName: 'Tritanium',
+            unitPrice: 5.0,
+            clientId: 11111,
+            clientName: 'Supplier Corp',
+          })
+        );
+      }
+
+      ledgerRepository.saveTransactions(buyTxs);
+
+      // Verify repository has all 1,200 transactions
+      expect(ledgerRepository.countTransactions(charId)).toBe(1200);
+
+      // Verify that getAllTransactions returns all 1,200 without 500 limit
+      const allTxs = ledgerRepository.getAllTransactions(charId);
+      expect(allTxs.length).toBe(1200);
+
+      // Verify that getHistoricalBuyLots returns all 1,200
+      const historicalLots = ledgerRepository.getHistoricalBuyLots(charId, undefined, TRITANIUM_TYPE_ID);
+      expect(historicalLots.length).toBe(1200);
+
+      // 2. Add 1 sell transaction for 7,500 units at 7.0 ISK (should match 750 lots of 10 units)
+      const sellTx = makeTx({
+        transactionId: 999999,
+        characterId: charId,
+        date: new Date(baseDate + 2000 * 60000).toISOString(),
+        isBuy: false,
+        journalRefId: 999998,
+        locationId: 60003760,
+        locationName: 'Jita IV - 4',
+        quantity: 7500,
+        typeId: TRITANIUM_TYPE_ID,
+        typeName: 'Tritanium',
+        unitPrice: 7.0,
+        clientId: 22222,
+        clientName: 'Consumer Corp',
+      });
+
+      ledgerRepository.saveTransactions([sellTx]);
+
+      // 3. Run FIFO automatic reconciliation
+      const result = roiService.autoReconcileFifo({
+        characterId: charId,
+        typeId: TRITANIUM_TYPE_ID,
+      });
+
+      expect(result.sales_fully_matched).toBe(1);
+      expect(result.sales_unmatched).toBe(0);
+      expect(result.total_quantity_reconciled).toBe(7500);
+      expect(result.allocations_created).toBe(750); // Exactly 750 buy transactions matched
+
+      // 4. Verify inventory lots: ALL 1,200 lots must be accounted for!
+      const inventoryLots = roiRepository.getInventoryLots(charId, undefined, TRITANIUM_TYPE_ID);
+      expect(inventoryLots.length).toBe(1200);
+
+      // First 750 lots should be fully allocated
+      const fullyAllocatedLots = inventoryLots.filter((lot) => lot.remaining_quantity === 0 && lot.allocated_quantity === 10);
+      expect(fullyAllocatedLots.length).toBe(750);
+
+      // Remaining 450 lots must be untouched with 10 units remaining
+      const unallocatedLots = inventoryLots.filter((lot) => lot.remaining_quantity === 10 && lot.allocated_quantity === 0);
+      expect(unallocatedLots.length).toBe(450);
+
+      // Sum of remaining quantities must be exactly 4,500 units
+      const totalRemainingQty = inventoryLots.reduce((acc, lot) => acc + lot.remaining_quantity, 0);
+      expect(totalRemainingQty).toBe(4500);
+    });
+
+    it('reconciles and tracks complete inventory on a massive 2,500 historical buy transactions dataset', () => {
+      const charId = 7777;
+      const buyTxs: CharacterTransaction[] = [];
+      const baseDate = new Date('2026-02-01T00:00:00Z').getTime();
+
+      for (let i = 1; i <= 2500; i++) {
+        buyTxs.push(
+          makeTx({
+            transactionId: 500000 + i,
+            characterId: charId,
+            date: new Date(baseDate + i * 30000).toISOString(),
+            isBuy: true,
+            journalRefId: 600000 + i,
+            locationId: 60003760,
+            locationName: 'Jita IV - 4',
+            quantity: 10,
+            typeId: TRITANIUM_TYPE_ID,
+            typeName: 'Tritanium',
+            unitPrice: 4.5,
+            clientId: 11111,
+            clientName: 'Bulk Mining Corp',
+          })
+        );
+      }
+
+      ledgerRepository.saveTransactions(buyTxs);
+      expect(ledgerRepository.countTransactions(charId)).toBe(2500);
+
+      // Sell 15,000 units (matching 1,500 lots)
+      const sellTx = makeTx({
+        transactionId: 888888,
+        characterId: charId,
+        date: new Date(baseDate + 3000 * 30000).toISOString(),
+        isBuy: false,
+        journalRefId: 888887,
+        locationId: 60003760,
+        locationName: 'Jita IV - 4',
+        quantity: 15000,
+        typeId: TRITANIUM_TYPE_ID,
+        typeName: 'Tritanium',
+        unitPrice: 6.0,
+        clientId: 22222,
+        clientName: 'Industrial Client',
+      });
+      ledgerRepository.saveTransactions([sellTx]);
+
+      const fifoResult = roiService.autoReconcileFifo({
+        characterId: charId,
+        typeId: TRITANIUM_TYPE_ID,
+      });
+
+      expect(fifoResult.allocations_created).toBe(1500);
+      expect(fifoResult.total_quantity_reconciled).toBe(15000);
+      expect(fifoResult.sales_fully_matched).toBe(1);
+
+      // Check all 2,500 inventory lots are present and accurately partitioned
+      const lots = roiRepository.getInventoryLots(charId, undefined, TRITANIUM_TYPE_ID);
+      expect(lots.length).toBe(2500);
+
+      const remainingLots = lots.filter((l) => l.remaining_quantity > 0);
+      expect(remainingLots.length).toBe(1000); // 2500 - 1500 = 1000 lots remaining
+      const totalRemainingQty = remainingLots.reduce((acc, l) => acc + l.remaining_quantity, 0);
+      expect(totalRemainingQty).toBe(10000);
+    });
+  });
 });

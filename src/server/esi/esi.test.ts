@@ -409,4 +409,129 @@ describe('ESI Gateway — Pagination Strategies (X-Pages & from_id)', () => {
     expect(result.totalFetched).toBe(3); // 100, 95, 80 (95 deduplicated)
     expect(result.data.map((d) => d.transaction_id)).toEqual([100, 95, 80]);
   });
+
+  it('qualifies exact status as PARTIAL with hasMore=true when maxItems ceiling (5000) is saturated on a 6000 items stream', async () => {
+    // Generate 6000 simulated historical items in 3 pages of 2500, 2500, 1000
+    const mockFetch = vi.fn().mockImplementation(async (url: string) => {
+      const parsedUrl = new URL(url);
+      const fromId = parsedUrl.searchParams.get('from_id');
+
+      if (!fromId) {
+        // Page 1: 2500 items (IDs 6000 down to 3501)
+        const batch = Array.from({ length: 2500 }, (_, i) => ({
+          transaction_id: 6000 - i,
+          is_buy: true,
+        }));
+        return {
+          status: 200,
+          ok: true,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          json: async () => batch,
+        };
+      } else if (fromId === '3501') {
+        // Page 2: 2500 items (IDs 3500 down to 1001)
+        const batch = Array.from({ length: 2500 }, (_, i) => ({
+          transaction_id: 3500 - i,
+          is_buy: true,
+        }));
+        return {
+          status: 200,
+          ok: true,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          json: async () => batch,
+        };
+      } else if (fromId === '1001') {
+        // Page 3: 1000 items (IDs 1000 down to 1) - should not even be requested because ceiling is 5000
+        const batch = Array.from({ length: 1000 }, (_, i) => ({
+          transaction_id: 1000 - i,
+          is_buy: true,
+        }));
+        return {
+          status: 200,
+          ok: true,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          json: async () => batch,
+        };
+      }
+
+      return {
+        status: 200,
+        ok: true,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => [],
+      };
+    });
+
+    const client = new EsiClient({ baseUrl: 'https://esi.evetech.net' }, cache, rateLimiter, mockFetch as unknown as typeof fetch);
+    const result = await fetchFromId<{ transaction_id: number; is_buy: boolean }>(
+      client,
+      '/characters/123/wallet/transactions/',
+      {
+        getIdFn: (item) => item.transaction_id,
+        pageSize: 2500,
+        maxItems: 5000,
+      }
+    );
+
+    // Strict completeness verification: MUST NOT be COMPLETE when stream was truncated by ceiling
+    expect(result.status).toBe('PARTIAL');
+    expect(result.hasMore).toBe(true);
+    expect(result.reason).toBe('MAX_LIMIT_REACHED');
+    expect(result.totalFetched).toBe(5000);
+    expect(result.lastSuccessfulId).toBe(1001);
+  });
+
+  it('qualifies exact status as PARTIAL with hasMore=true when X-Pages maxPages limit stops before totalPages', async () => {
+    const mockFetch = vi.fn().mockImplementation(async (url: string) => {
+      const parsedUrl = new URL(url);
+      const page = Number(parsedUrl.searchParams.get('page') || '1');
+      return {
+        status: 200,
+        ok: true,
+        headers: new Headers({ 'x-pages': '10', 'content-type': 'application/json' }),
+        json: async () => [{ page, id: page * 100 }],
+      };
+    });
+
+    const client = new EsiClient({ baseUrl: 'https://esi.evetech.net' }, cache, rateLimiter, mockFetch as unknown as typeof fetch);
+    const result = await fetchXPages<{ page: number; id: number }>(
+      client,
+      '/characters/123/wallet/journal/',
+      { maxPages: 3 }
+    );
+
+    expect(result.status).toBe('PARTIAL');
+    expect(result.hasMore).toBe(true);
+    expect(result.reason).toBe('MAX_LIMIT_REACHED');
+    expect(result.pagesFetched).toBe(3);
+    expect(result.totalPagesExpected).toBe(10);
+    expect(result.totalFetched).toBe(3);
+  });
+
+  it('qualifies exact status as COMPLETE with hasMore=false when all reported pages are fetched', async () => {
+    const mockFetch = vi.fn().mockImplementation(async (url: string) => {
+      const parsedUrl = new URL(url);
+      const page = Number(parsedUrl.searchParams.get('page') || '1');
+      return {
+        status: 200,
+        ok: true,
+        headers: new Headers({ 'x-pages': '3', 'content-type': 'application/json' }),
+        json: async () => [{ page, id: page * 100 }],
+      };
+    });
+
+    const client = new EsiClient({ baseUrl: 'https://esi.evetech.net' }, cache, rateLimiter, mockFetch as unknown as typeof fetch);
+    const result = await fetchXPages<{ page: number; id: number }>(
+      client,
+      '/characters/123/wallet/journal/',
+      { maxPages: 5 }
+    );
+
+    expect(result.status).toBe('COMPLETE');
+    expect(result.hasMore).toBe(false);
+    expect(result.reason).toBeUndefined();
+    expect(result.pagesFetched).toBe(3);
+    expect(result.totalPagesExpected).toBe(3);
+    expect(result.totalFetched).toBe(3);
+  });
 });

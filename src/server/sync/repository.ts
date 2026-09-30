@@ -149,6 +149,9 @@ export class PostgresSyncRepository implements ISyncRepository {
       characterId: Number(row.character_id),
       resource: row.resource as SyncState['resource'],
       status: row.status as SyncState['status'],
+      coverageStatus: row.coverage_status ? (row.coverage_status as SyncState['coverageStatus']) : undefined,
+      hasMore: row.has_more !== null && row.has_more !== undefined ? Boolean(row.has_more) : undefined,
+      itemsCount: row.items_count !== null && row.items_count !== undefined ? Number(row.items_count) : undefined,
       lastSyncStartedAt: row.last_sync_started_at !== null && row.last_sync_started_at !== undefined ? Number(row.last_sync_started_at) : undefined,
       lastSyncCompletedAt: row.last_sync_completed_at !== null && row.last_sync_completed_at !== undefined ? Number(row.last_sync_completed_at) : undefined,
       lastSuccessfulId: row.last_cursor_from_id !== null && row.last_cursor_from_id !== undefined ? Number(row.last_cursor_from_id) : undefined,
@@ -177,16 +180,19 @@ export class PostgresSyncRepository implements ISyncRepository {
       characterId,
       resource,
       status: 'IDLE',
+      coverageStatus: 'UNKNOWN',
+      hasMore: false,
+      itemsCount: 0,
       totalRecords: 0,
       newRecordsInLastSync: 0,
       asOf: Date.now(),
     };
 
     await this.adapter.execute(
-      `INSERT INTO sync_states (character_id, resource, status, total_records, new_records_in_last_sync, as_of)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO sync_states (character_id, resource, status, coverage_status, has_more, items_count, total_records, new_records_in_last_sync, as_of)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT (character_id, resource) DO NOTHING`,
-      [characterId, resource, defaultState.status, defaultState.totalRecords, defaultState.newRecordsInLastSync, defaultState.asOf]
+      [characterId, resource, defaultState.status, defaultState.coverageStatus, defaultState.hasMore, defaultState.itemsCount, defaultState.totalRecords, defaultState.newRecordsInLastSync, defaultState.asOf]
     );
 
     return defaultState;
@@ -218,14 +224,18 @@ export class PostgresSyncRepository implements ISyncRepository {
 
     const sql = `
       INSERT INTO sync_states (
-        character_id, resource, status, last_sync_started_at,
-        last_sync_completed_at, last_cursor_from_id, last_page_processed,
-        total_records, new_records_in_last_sync, last_error_message, as_of
+        character_id, resource, status, coverage_status, has_more, items_count,
+        last_sync_started_at, last_sync_completed_at, last_cursor_from_id,
+        last_page_processed, total_records, new_records_in_last_sync,
+        last_error_message, as_of
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
       )
       ON CONFLICT (character_id, resource) DO UPDATE SET
         status = EXCLUDED.status,
+        coverage_status = EXCLUDED.coverage_status,
+        has_more = EXCLUDED.has_more,
+        items_count = EXCLUDED.items_count,
         last_sync_started_at = EXCLUDED.last_sync_started_at,
         last_sync_completed_at = EXCLUDED.last_sync_completed_at,
         last_cursor_from_id = EXCLUDED.last_cursor_from_id,
@@ -239,6 +249,9 @@ export class PostgresSyncRepository implements ISyncRepository {
       updated.characterId,
       updated.resource,
       updated.status,
+      updated.coverageStatus ?? null,
+      updated.hasMore ?? false,
+      updated.itemsCount ?? updated.totalRecords ?? 0,
       updated.lastSyncStartedAt ?? null,
       updated.lastSyncCompletedAt ?? null,
       updated.lastSuccessfulId ?? null,

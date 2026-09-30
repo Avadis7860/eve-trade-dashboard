@@ -10,9 +10,11 @@
 `KNOWN`, `UNKNOWN`, `PARTIAL`, `ERROR` et `ABSENT` sont mutuellement exclusifs et distincts de la valeur numérique zéro :
 - `EMPTY` : Source synchronisée avec succès ne contenant aucun enregistrement (ex: 0 ordre actif).
 - `UNKNOWN` : Donnée insuffisante pour établir un fait ou un coût (ex: vente sans achat antérieur identifié).
-- `PARTIAL` : Donnée couverte à une fraction connue (ex: vente de 100 unités dont 60 couvertes par un achat antérieur).
+- `PARTIAL` : Donnée couverte à une fraction connue (ex: vente de 100 unités dont 60 couvertes par un achat antérieur ; ou synchronisation ESI interrompue/plafonnée dont la source contient encore des données en amont avec `hasMore: true`).
 - `ERROR` : Échec de communication ou de traitement ; ne doit jamais être transformé en liste vide ou zéro.
 - `ABSENT` : Ressource non configurée ou non accessible (ex: scope d'actifs non consenti).
+
+Une synchronisation n'est qualifiée en `COMPLETE` que si la totalité du flux ESI a été acquise jusqu'à épuisement réel de la ressource. Toute troncature par plafond (`maxPages`, `maxItems`) ou interruption réseau/quota est impérativement qualifiée en `PARTIAL` avec checkpoint de reprise persisté.
 
 ## 3. États Mutuellement Exclusifs des Actifs Physiques
 Pour tout article dans une station ou structure donnée :

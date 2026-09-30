@@ -1,11 +1,14 @@
 import {
   ExplicitCostAllocation,
+  FormulaProof,
   HubPairPerformance,
   MetricCoverageStatus,
   RoiFinancialSummary,
+  SaleReconciliationDetail,
   UnsoldInventoryItem,
 } from './types';
 import type { CharacterTransaction } from '../ledger/types';
+import { hubsService } from '../hubs/service';
 
 /**
  * Utility for exact financial arithmetic rounding to 2 decimal places (cents of ISK)
@@ -25,6 +28,127 @@ export function roundPercent(value: number): number {
 
 export class RoiCalculator {
   /**
+   * Builds an auditable formula proof for a set of financial inputs
+   */
+  static buildProof(params: {
+    asOf: string;
+    grossRevenue: number;
+    allocatedBuyCost: number;
+    allocatedBuyFees: number;
+    allocatedSellFees: number;
+    allocatedVolume: number;
+    totalVolume: number;
+  }): FormulaProof {
+    const { asOf, grossRevenue, allocatedBuyCost, allocatedBuyFees, allocatedSellFees, allocatedVolume } = params;
+    const totalInvestment = roundIsk(allocatedBuyCost + allocatedBuyFees);
+
+    let realizedProfit: number | null = null;
+    let roiPercent: number | null = null;
+    let formula = 'Profit = CA_brut_alloué − Coût_achat − Frais_achat − Frais_vente; ROI = (Profit / Inv_TTC) × 100';
+
+    if (allocatedVolume > 0 && totalInvestment > 0) {
+      realizedProfit = roundIsk(grossRevenue - allocatedBuyCost - allocatedBuyFees - allocatedSellFees);
+      roiPercent = roundPercent((realizedProfit / totalInvestment) * 100);
+      formula = `${grossRevenue.toLocaleString('fr-FR')} − ${allocatedBuyCost.toLocaleString('fr-FR')} − ${allocatedBuyFees.toLocaleString('fr-FR')} − ${allocatedSellFees.toLocaleString('fr-FR')} = ${realizedProfit.toLocaleString('fr-FR')} ISK (ROI: (${realizedProfit.toLocaleString('fr-FR')} / ${totalInvestment.toLocaleString('fr-FR')}) × 100 = ${roiPercent.toFixed(2)}%)`;
+    }
+
+    return {
+      as_of: asOf,
+      gross_revenue_isk: grossRevenue,
+      allocated_buy_cost_isk: allocatedBuyCost,
+      allocated_buy_fees_isk: allocatedBuyFees,
+      allocated_sell_fees_isk: allocatedSellFees,
+      total_investment_ttc_isk: totalInvestment,
+      realized_profit_ttc_isk: realizedProfit,
+      roi_percent_ttc: roiPercent,
+      formula_expression: formula,
+      numerator_isk: realizedProfit,
+      denominator_isk: totalInvestment > 0 ? totalInvestment : null,
+    };
+  }
+
+  /**
+   * Computes unit reconciliation proof for a single sale transaction
+   */
+  static computeSaleDetail(
+    saleTx: CharacterTransaction,
+    allocations: ExplicitCostAllocation[],
+    asOf: string = new Date().toISOString()
+  ): SaleReconciliationDetail {
+    const saleAllocations = allocations.filter((a) => a.sell_transaction_id === saleTx.transactionId);
+    let allocatedQty = 0;
+    let allocatedBuyCost = 0;
+    let allocatedBuyFees = 0;
+    let allocatedSellFees = 0;
+
+    for (const alloc of saleAllocations) {
+      allocatedQty += alloc.quantity_allocated;
+      allocatedBuyCost += alloc.allocated_buy_cost;
+      allocatedBuyFees += alloc.allocated_buy_fees;
+      allocatedSellFees += alloc.allocated_sell_fees;
+    }
+
+    allocatedBuyCost = roundIsk(allocatedBuyCost);
+    allocatedBuyFees = roundIsk(allocatedBuyFees);
+    allocatedSellFees = roundIsk(allocatedSellFees);
+
+    const totalSoldQty = saleTx.quantity;
+    const unallocatedQty = Math.max(0, totalSoldQty - allocatedQty);
+    const grossRevenueTotal = roundIsk(saleTx.unitPrice * totalSoldQty);
+    const grossRevenueAllocated = roundIsk(saleTx.unitPrice * allocatedQty);
+
+    const coveragePercent = totalSoldQty > 0
+      ? roundPercent((allocatedQty / totalSoldQty) * 100)
+      : (allocatedQty > 0 ? 100 : 0);
+
+    let coverageStatus: MetricCoverageStatus = 'UNKNOWN';
+    if (allocatedQty > 0) {
+      coverageStatus = coveragePercent >= 99.99 ? 'COMPLETE' : 'PARTIAL';
+    } else if (totalSoldQty === 0) {
+      coverageStatus = 'EMPTY';
+    }
+
+    const proof = this.buildProof({
+      asOf,
+      grossRevenue: grossRevenueAllocated,
+      allocatedBuyCost,
+      allocatedBuyFees,
+      allocatedSellFees,
+      allocatedVolume: allocatedQty,
+      totalVolume: totalSoldQty,
+    });
+
+    const resolvedHub = hubsService.resolveLocationToHub(saleTx.locationId, saleTx.locationName);
+
+    return {
+      sale_transaction_id: saleTx.transactionId,
+      sale_character_id: saleTx.characterId,
+      date: saleTx.date,
+      type_id: saleTx.typeId,
+      type_name: saleTx.typeName || `Type #${saleTx.typeId}`,
+      quantity_sold: totalSoldQty,
+      unit_sale_price_isk: saleTx.unitPrice,
+      gross_revenue_isk: grossRevenueTotal,
+      allocated_quantity: allocatedQty,
+      unallocated_quantity: unallocatedQty,
+      allocated_buy_cost_isk: allocatedBuyCost,
+      allocated_buy_fees_isk: allocatedBuyFees,
+      allocated_sell_fees_isk: allocatedSellFees,
+      total_investment_ttc_isk: proof.total_investment_ttc_isk,
+      realized_profit_ttc_isk: proof.realized_profit_ttc_isk,
+      roi_percent_ttc: proof.roi_percent_ttc,
+      coverage_status: coverageStatus,
+      coverage_percent: coveragePercent,
+      location_id: saleTx.locationId,
+      location_name: saleTx.locationName,
+      hub_id: resolvedHub.hub_id,
+      hub_name: resolvedHub.hub_name,
+      allocations: saleAllocations,
+      proof,
+    };
+  }
+
+  /**
    * Calculates financial summary and ROI TTC based strictly on explicit proofs and allocations.
    */
   static computeSummary(
@@ -37,7 +161,22 @@ export class RoiCalculator {
     const asOf = new Date().toISOString();
 
     if (salesTransactions.length === 0 && allocations.length === 0 && unsoldInventory.length === 0) {
+      const emptyProof: FormulaProof = {
+        as_of: asOf,
+        gross_revenue_isk: 0,
+        allocated_buy_cost_isk: 0,
+        allocated_buy_fees_isk: 0,
+        allocated_sell_fees_isk: 0,
+        total_investment_ttc_isk: 0,
+        realized_profit_ttc_isk: null,
+        roi_percent_ttc: null,
+        formula_expression: 'Aucune transaction observée',
+        numerator_isk: null,
+        denominator_isk: null,
+      };
+
       return {
+        version: 2,
         as_of: asOf,
         character_id: characterId,
         period_label: periodLabel,
@@ -55,6 +194,7 @@ export class RoiCalculator {
         unsold_items_count: 0,
         coverage_status: 'EMPTY',
         coverage_percent: 100,
+        proof: emptyProof,
         hub_pairs: [],
       };
     }
@@ -107,7 +247,7 @@ export class RoiCalculator {
       attributableSellFeesIsk += alloc.allocated_sell_fees;
 
       const sellTx = salesTxMap.get(alloc.sell_transaction_id);
-      const sellUnitPrice = sellTx ? sellTx.unitPrice : 0;
+      const sellUnitPrice = sellTx ? sellTx.unitPrice : alloc.unit_buy_price;
       const allocGross = sellUnitPrice * alloc.quantity_allocated;
       allocatedSalesGrossRevenue += allocGross;
 
@@ -183,6 +323,16 @@ export class RoiCalculator {
       coverageStatus = 'EMPTY';
     }
 
+    const proof = this.buildProof({
+      asOf,
+      grossRevenue: allocatedSalesGrossRevenue,
+      allocatedBuyCost: allocatedBuyCostIsk,
+      allocatedBuyFees: allocatedBuyFeesIsk,
+      allocatedSellFees: attributableSellFeesIsk,
+      allocatedVolume: allocatedSalesVolume,
+      totalVolume: totalSalesVolume,
+    });
+
     // 4. Tied-up capital (Capital immobilisé) in unsold inventory
     let tiedUpCapitalIsk = 0;
     for (const inv of unsoldInventory) {
@@ -225,6 +375,7 @@ export class RoiCalculator {
     });
 
     return {
+      version: 2,
       as_of: asOf,
       character_id: characterId,
       period_label: periodLabel,
@@ -242,6 +393,7 @@ export class RoiCalculator {
       unsold_items_count: unsoldInventory.length,
       coverage_status: coverageStatus,
       coverage_percent: coveragePercent,
+      proof,
       hub_pairs: hubPairs,
     };
   }

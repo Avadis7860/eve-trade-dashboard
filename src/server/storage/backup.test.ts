@@ -60,7 +60,7 @@ describe('Storage & Backup Reliability Service (Phase H02)', () => {
 
     const backup = backupService.exportBackup();
 
-    expect(backup.schemaVersion).toBe(1);
+    expect(backup.schemaVersion).toBe(2);
     expect(backup.exportedAt).toBeDefined();
     expect(backup.checksum).toMatch(/^[a-f0-9]{64}$/);
     expect(backup.data.ledger.transactions).toHaveLength(1);
@@ -228,6 +228,7 @@ describe('Storage & Backup Reliability Service (Phase H02)', () => {
       buy_character_id: 1001,
       sell_character_id: 1001,
       sell_transaction_id: 2,
+      source_type: 'TRANSACTION',
       buy_transaction_id: 9999, // Missing buy transaction!
       type_id: 34,
       type_name: 'Tritanium',
@@ -261,6 +262,7 @@ describe('Storage & Backup Reliability Service (Phase H02)', () => {
       buy_character_id: 1001,
       sell_character_id: 1001,
       sell_transaction_id: 2,
+      source_type: 'TRANSACTION',
       buy_transaction_id: 1,
       type_id: 34,
       type_name: 'Tritanium',

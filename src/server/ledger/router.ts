@@ -224,15 +224,22 @@ export function createLedgerRouter(
         : [{ characterId: session.characterId, accessToken: session.accessToken }];
 
       let lastResult;
+      const syncErrors: string[] = [];
       for (const char of charIdsToSync) {
-        lastResult = await syncService.syncAll(
-          char.characterId,
-          char.accessToken,
-          async () => {
-            const token = await authService.refreshCharacterTokens(session.sessionId, char.characterId);
-            return token;
-          }
-        );
+        try {
+          lastResult = await syncService.syncAll(
+            char.characterId,
+            char.accessToken,
+            async () => {
+              const token = await authService.refreshCharacterTokens(session.sessionId, char.characterId);
+              return token;
+            }
+          );
+        } catch (charErr) {
+          const msg = (charErr as Error).message || 'Échec de synchronisation';
+          syncErrors.push(`Personnage #${char.characterId}: ${msg}`);
+          console.warn(`[Sync] Error syncing character ${char.characterId}:`, msg);
+        }
       }
 
       // Auto-discover hubs and locations from all observed transactions
@@ -244,7 +251,8 @@ export function createLedgerRouter(
       roiService.autoReconcileFifo({ characterIds: allCharIds });
 
       res.json({
-        success: lastResult ? lastResult.transactions.status !== 'ERROR' : true,
+        success: syncErrors.length === 0 && (lastResult ? lastResult.transactions.status !== 'ERROR' : true),
+        errors: syncErrors.length > 0 ? syncErrors : undefined,
         results: lastResult,
         status: syncRepo.getFullStatus(session.characterId),
         syncedCharacterIds: allCharIds,

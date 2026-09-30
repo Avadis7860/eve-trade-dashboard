@@ -36,13 +36,13 @@ export class DurableFileDatabaseAdapter implements IDatabaseAdapter {
 
   private createEmptyState(): DurableDatabaseState {
     return {
-      version: 1,
+      version: 2,
       appliedMigrations: [],
       data: {
         ledger: { transactions: [], journalEntries: [] },
         orders: { snapshots: [], restockItems: [] },
         hubs: { definitions: [], mappings: [] },
-        roi: { allocations: [] },
+        roi: { allocations: [], openingBalances: [] },
         assets: { assets: [] },
         sync: { states: [] },
       },
@@ -112,7 +112,7 @@ export class DurableFileDatabaseAdapter implements IDatabaseAdapter {
         fs.mkdirSync(dir, { recursive: true });
       }
       const tmpPath = `${this.storagePath}.tmp`;
-      const json = JSON.stringify(this.state, null, 2);
+      const json = JSON.stringify(this.state);
       fs.writeFileSync(tmpPath, json, 'utf8');
       fs.renameSync(tmpPath, this.storagePath);
     } catch (err) {
@@ -170,6 +170,11 @@ export class DurableFileDatabaseAdapter implements IDatabaseAdapter {
     this.state.data.roi.allocations = this.state.data.roi.allocations.filter(
       (a) => a.character_id !== characterId && a.buy_character_id !== characterId && a.sell_character_id !== characterId
     );
+    if (this.state.data.roi.openingBalances) {
+      this.state.data.roi.openingBalances = this.state.data.roi.openingBalances.filter(
+        (ob) => ob.character_id !== characterId
+      );
+    }
     this.state.data.assets.assets = this.state.data.assets.assets.filter(
       (a) => a.characterId !== characterId
     );
@@ -289,6 +294,7 @@ export class PostgresDatabaseAdapter implements IDatabaseAdapter {
           await client.query('DELETE FROM order_snapshots WHERE character_id = $1', [characterId]);
           await client.query('DELETE FROM restock_items WHERE character_id = $1', [characterId]);
           await client.query('DELETE FROM explicit_cost_allocations WHERE character_id = $1 OR buy_character_id = $1 OR sell_character_id = $1', [characterId]);
+          await client.query('DELETE FROM opening_balances WHERE character_id = $1', [characterId]);
           await client.query('DELETE FROM character_assets WHERE character_id = $1', [characterId]);
           await client.query('DELETE FROM sync_states WHERE character_id = $1', [characterId]);
         },

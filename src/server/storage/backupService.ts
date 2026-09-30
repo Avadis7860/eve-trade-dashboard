@@ -5,6 +5,7 @@ import type { IOrdersRepository } from '../orders/repository.ts';
 import { defaultOrdersRepository } from '../orders/repository.ts';
 import { HubsRepository, hubsRepository } from '../hubs/repository.ts';
 import { RoiRepository, roiRepository } from '../roi/repository.ts';
+import type { OpeningBalanceLot } from '../roi/types.ts';
 import type { IAssetsRepository } from '../assets/repository.ts';
 import { defaultAssetsRepository } from '../assets/repository.ts';
 import type { ISyncRepository } from '../sync/repository.ts';
@@ -16,7 +17,7 @@ import type {
   DataIntegrityIssue,
 } from './types.ts';
 
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
 export class BackupRestoreService {
   constructor(
@@ -62,6 +63,7 @@ export class BackupRestoreService {
       },
       roi: {
         allocations: roiData.allocations,
+        openingBalances: roiData.openingBalances || [],
       },
       assets: {
         assets: assetsData.assets,
@@ -178,6 +180,7 @@ export class BackupRestoreService {
           hubs: data.hubs.definitions.length,
           mappings: data.hubs.mappings.length,
           allocations: data.roi.allocations.length,
+          openingBalances: data.roi.openingBalances?.length || 0,
           assets: data.assets.assets.length,
           syncStates: data.sync.states.length,
         },
@@ -204,8 +207,8 @@ export class BackupRestoreService {
   /**
    * Performs an exhaustive integrity audit across all repositories:
    * - Validates non-negative quantities and values
-   * - Checks that all ROI allocations point to existing transactions
-   * - Ensures allocated quantities never exceed transaction quantities
+   * - Checks that all ROI allocations point to existing transactions or opening balance lots
+   * - Ensures allocated quantities never exceed transaction / lot quantities
    * - Ensures buy/sell type matches
    * - Verifies order lifecycle states
    */
@@ -242,7 +245,38 @@ export class BackupRestoreService {
       }
     }
 
-    // 2. Audit ROI Allocations
+    // 2. Audit Opening Balances
+    const openingBalancesMap = new Map<string, OpeningBalanceLot>();
+    const allocatedPerOpeningBalance = new Map<string, number>();
+    for (const ob of (roiData.openingBalances || [])) {
+      openingBalancesMap.set(ob.id, ob);
+      if (ob.quantity <= 0) {
+        issues.push({
+          level: 'ERROR',
+          category: 'ROI',
+          message: `Opening balance lot ${ob.id} has invalid non-positive quantity (${ob.quantity})`,
+          entityId: ob.id,
+        });
+      }
+      if (ob.unit_cost_isk < 0) {
+        issues.push({
+          level: 'ERROR',
+          category: 'ROI',
+          message: `Opening balance lot ${ob.id} has negative unit cost (${ob.unit_cost_isk})`,
+          entityId: ob.id,
+        });
+      }
+      if (!ob.justification || ob.justification.trim().length === 0) {
+        issues.push({
+          level: 'ERROR',
+          category: 'ROI',
+          message: `Opening balance lot ${ob.id} is missing mandatory justification`,
+          entityId: ob.id,
+        });
+      }
+    }
+
+    // 3. Audit ROI Allocations
     const allocatedPerBuy = new Map<string, number>();
     const allocatedPerSell = new Map<string, number>();
 
@@ -259,29 +293,53 @@ export class BackupRestoreService {
       const buyChar = alloc.buy_character_id || alloc.character_id;
       const sellChar = alloc.sell_character_id || alloc.character_id;
 
-      const buyTxKey = `${buyChar}:${alloc.buy_transaction_id}`;
       const sellTxKey = `${sellChar}:${alloc.sell_transaction_id}`;
-
-      const buyTx = txMap.get(buyTxKey);
       const sellTx = txMap.get(sellTxKey);
 
-      if (!buyTx) {
-        issues.push({
-          level: 'ERROR',
-          category: 'ROI',
-          message: `Allocation ${alloc.id} references missing buy transaction #${alloc.buy_transaction_id} (character ${buyChar})`,
-          entityId: alloc.id,
-        });
-      } else {
-        const current = (allocatedPerBuy.get(buyTxKey) || 0) + alloc.quantity_allocated;
-        allocatedPerBuy.set(buyTxKey, current);
-        if (current > buyTx.quantity) {
+      if (alloc.source_type === 'OPENING_BALANCE' || alloc.opening_balance_id) {
+        const obId = alloc.opening_balance_id!;
+        const ob = openingBalancesMap.get(obId);
+        if (!ob) {
           issues.push({
             level: 'ERROR',
             category: 'ROI',
-            message: `Over-allocated buy transaction #${buyTx.transactionId}: allocated ${current} exceeds original quantity ${buyTx.quantity}`,
-            entityId: buyTx.transactionId,
+            message: `Allocation ${alloc.id} references missing opening balance lot #${obId}`,
+            entityId: alloc.id,
           });
+        } else {
+          const current = (allocatedPerOpeningBalance.get(obId) || 0) + alloc.quantity_allocated;
+          allocatedPerOpeningBalance.set(obId, current);
+          if (current > ob.quantity) {
+            issues.push({
+              level: 'ERROR',
+              category: 'ROI',
+              message: `Over-allocated opening balance lot #${ob.id}: allocated ${current} exceeds original quantity ${ob.quantity}`,
+              entityId: ob.id,
+            });
+          }
+        }
+      } else {
+        const buyTxKey = `${buyChar}:${alloc.buy_transaction_id}`;
+        const buyTx = txMap.get(buyTxKey);
+
+        if (!buyTx) {
+          issues.push({
+            level: 'ERROR',
+            category: 'ROI',
+            message: `Allocation ${alloc.id} references missing buy transaction #${alloc.buy_transaction_id} (character ${buyChar})`,
+            entityId: alloc.id,
+          });
+        } else {
+          const current = (allocatedPerBuy.get(buyTxKey) || 0) + alloc.quantity_allocated;
+          allocatedPerBuy.set(buyTxKey, current);
+          if (current > buyTx.quantity) {
+            issues.push({
+              level: 'ERROR',
+              category: 'ROI',
+              message: `Over-allocated buy transaction #${buyTx.transactionId}: allocated ${current} exceeds original quantity ${buyTx.quantity}`,
+              entityId: buyTx.transactionId,
+            });
+          }
         }
       }
 
@@ -306,7 +364,7 @@ export class BackupRestoreService {
       }
     }
 
-    // 3. Audit Orders
+    // 4. Audit Orders
     for (const order of ordersData.snapshots) {
       if (order.volumeTotal <= 0) {
         issues.push({

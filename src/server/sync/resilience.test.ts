@@ -624,5 +624,41 @@ describe('Resilience, Fault Tolerance & Idempotence (Phase H02 Hardening)', () =
       expect(orders[0].volumeFilled).toBe(1000);
       expect(orders[0].volumeRemain).toBe(0);
     });
+
+    it('skips corporation endpoints for NPC starter corporations without throwing errors', async () => {
+      // NPC corp ID 1000044
+      const getSpy = vi.spyOn(esiClient, 'get').mockImplementation(async (path: string) => {
+        if (path === '/characters/1001/') {
+          return { data: { corporation_id: 1000044 }, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        return { data: [], meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+      });
+
+      await expect(syncService.syncCorporationWallets(1001, 'dummy-token')).resolves.not.toThrow();
+      // Should not call /corporations/1000044/wallets/
+      expect(getSpy).not.toHaveBeenCalledWith(expect.stringContaining('/corporations/1000044/wallets/'), expect.anything());
+    });
+
+    it('halts corporation division calls when 403 Forbidden is returned and remembers inaccessible status', async () => {
+      // Player corp ID 98830882
+      let walletCalls = 0;
+      vi.spyOn(esiClient, 'get').mockImplementation(async (path: string) => {
+        if (path === '/characters/1001/') {
+          return { data: { corporation_id: 98830882 }, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes('/corporations/98830882/wallets/')) {
+          walletCalls++;
+          throw new EsiHttpError(403, 'Forbidden', { status: 403, fromCache: false, fetchedAt: Date.now() });
+        }
+        return { data: [], meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+      });
+
+      await syncService.syncCorporationWallets(1001, 'dummy-token');
+      expect(walletCalls).toBe(1); // Did not attempt division 1 or retry
+
+      // Subsequent call should skip immediately
+      await syncService.syncCorporationWallets(1001, 'dummy-token');
+      expect(walletCalls).toBe(1);
+    });
   });
 });

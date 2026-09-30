@@ -4,6 +4,7 @@ import { roiRepository } from './repository';
 import { ledgerRepository } from '../ledger/repository';
 import { hubsRepository } from '../hubs/repository';
 import type { CharacterTransaction, CharacterWalletJournalEntry } from '../ledger/types';
+import type { ExplicitCostAllocation } from './types';
 
 describe('ROI TTC & Financial Metrics Module', () => {
   const CHAR_ID = 95432101;
@@ -614,5 +615,181 @@ describe('ROI TTC & Financial Metrics Module', () => {
     expect(summary.realized_profit_ttc_isk).toBe(88300);
     // ROI = (88,300 / 225,000) * 100 = 39.24%
     expect(summary.roi_percent_ttc).toBe(39.24);
+  });
+
+  it('handles Opening Inventory Balance Lots with mandatory justification and explicit reconciliation', () => {
+    // 1. Attempt to create opening balance without mandatory justification (should fail)
+    const failedOb = roiService.createOpeningBalance({
+      character_id: CHAR_ID,
+      type_id: TRITANIUM_TYPE_ID,
+      type_name: 'Tritanium',
+      quantity: 1000,
+      unit_cost_isk: 4.0,
+      location_id: 60003760,
+      justification: '', // empty!
+    });
+    expect(failedOb.success).toBe(false);
+    expect(failedOb.error).toContain('justification explicite');
+
+    // 2. Create valid opening balance lot
+    const validOb = roiService.createOpeningBalance({
+      character_id: CHAR_ID,
+      type_id: TRITANIUM_TYPE_ID,
+      type_name: 'Tritanium',
+      quantity: 1000,
+      unit_cost_isk: 4.0,
+      location_id: 60003760,
+      acquisition_date: '2026-02-01T00:00:00Z',
+      justification: 'Stock miné et raffiné avant mise en place du système',
+    });
+    expect(validOb.success).toBe(true);
+    expect(validOb.opening_balance).toBeDefined();
+    const obId = validOb.opening_balance!.id;
+
+    // 3. Sale of 600 Tritanium @ 7.00 ISK
+    const sellTx = makeTx({
+      transactionId: 9001,
+      characterId: CHAR_ID,
+      date: '2026-03-01T12:00:00Z',
+      isBuy: false,
+      locationId: 60003760,
+      quantity: 600,
+      typeId: TRITANIUM_TYPE_ID,
+      typeName: 'Tritanium',
+      unitPrice: 7.0,
+    });
+    ledgerRepository.saveTransactions([sellTx]);
+
+    // 4. Reconcile against opening balance lot
+    const alloc = roiService.createExplicitAllocation({
+      character_id: CHAR_ID,
+      sell_transaction_id: 9001,
+      opening_balance_id: obId,
+      quantity_to_allocate: 600,
+    });
+    expect(alloc.success).toBe(true);
+    expect(alloc.allocation?.source_type).toBe('OPENING_BALANCE');
+    expect(alloc.allocation?.allocated_buy_cost).toBe(2400); // 600 * 4.0
+
+    // 5. Verification of summary & unsold opening balance capital
+    const summary = roiService.getSummary({ character_id: CHAR_ID });
+    expect(summary.total_sales_volume).toBe(600);
+    expect(summary.allocated_sales_volume).toBe(600);
+    expect(summary.gross_revenue_isk).toBe(4200); // 600 * 7.0
+    expect(summary.allocated_buy_cost_isk).toBe(2400);
+    expect(summary.realized_profit_ttc_isk).toBe(1800); // 4200 - 2400
+    expect(summary.roi_percent_ttc).toBe(75); // 1800 / 2400 * 100 = 75%
+    expect(summary.tied_up_capital_isk).toBe(1600); // 400 remaining * 4.0 = 1600 ISK
+    expect(summary.unsold_items_count).toBe(1);
+
+    // 6. Detailed sales audit proof verification
+    const details = roiService.getSalesReconciliationDetails({ character_id: CHAR_ID });
+    expect(details.length).toBe(1);
+    expect(details[0].sale_transaction_id).toBe(9001);
+    expect(details[0].realized_profit_ttc_isk).toBe(1800);
+    expect(details[0].proof.numerator_isk).toBe(1800);
+    expect(details[0].proof.denominator_isk).toBe(2400);
+    expect(details[0].proof.formula_expression).toContain('4\u202f200');
+  });
+
+  it('enforces strict temporal anteriority (rejects allocations where buy occurs after sell)', () => {
+    // Sale occurs on March 1st
+    const sellTx = makeTx({
+      transactionId: 9101,
+      characterId: CHAR_ID,
+      date: '2026-03-01T12:00:00Z',
+      isBuy: false,
+      locationId: 60003760,
+      quantity: 100,
+      typeId: TRITANIUM_TYPE_ID,
+      typeName: 'Tritanium',
+      unitPrice: 10.0,
+    });
+
+    // Buy occurs on March 5th (FUTURE relative to sale)
+    const futureBuyTx = makeTx({
+      transactionId: 9102,
+      characterId: CHAR_ID,
+      date: '2026-03-05T12:00:00Z',
+      isBuy: true,
+      locationId: 60003760,
+      quantity: 100,
+      typeId: TRITANIUM_TYPE_ID,
+      typeName: 'Tritanium',
+      unitPrice: 5.0,
+    });
+
+    ledgerRepository.saveTransactions([sellTx, futureBuyTx]);
+
+    // Manual allocation must fail
+    const res = roiService.createExplicitAllocation({
+      character_id: CHAR_ID,
+      sell_transaction_id: 9101,
+      buy_transaction_id: 9102,
+      quantity_to_allocate: 100,
+    });
+    expect(res.success).toBe(false);
+    expect(res.error).toContain('antérieure ou égale');
+
+    // Auto FIFO must not match future buy
+    const fifoResult = roiService.autoReconcileFifo({ characterId: CHAR_ID });
+    expect(fifoResult.allocations_created).toBe(0);
+    expect(fifoResult.sales_unmatched).toBe(1);
+  });
+
+  it('persists multiple allocations in a single batch with saveAllocations', () => {
+    const alloc1: ExplicitCostAllocation = {
+      id: 'test-alloc-1',
+      character_id: CHAR_ID,
+      sell_transaction_id: 1,
+      source_type: 'TRANSACTION',
+      buy_transaction_id: 10,
+      type_id: TRITANIUM_TYPE_ID,
+      type_name: 'Tritanium',
+      quantity_allocated: 50,
+      unit_buy_price: 4.0,
+      allocated_buy_cost: 200,
+      allocated_buy_fees: 0,
+      allocated_sell_fees: 0,
+      buy_location_id: 60003760,
+      buy_hub_id: 'jita',
+      buy_hub_name: 'Jita',
+      sell_location_id: 60003760,
+      sell_hub_id: 'jita',
+      sell_hub_name: 'Jita',
+      reconciliation_mode: 'FIFO_AUTOMATIC',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      version: 1,
+    };
+    const alloc2: ExplicitCostAllocation = {
+      id: 'test-alloc-2',
+      character_id: CHAR_ID,
+      sell_transaction_id: 2,
+      source_type: 'TRANSACTION',
+      buy_transaction_id: 11,
+      type_id: TRITANIUM_TYPE_ID,
+      type_name: 'Tritanium',
+      quantity_allocated: 50,
+      unit_buy_price: 4.0,
+      allocated_buy_cost: 200,
+      allocated_buy_fees: 0,
+      allocated_sell_fees: 0,
+      buy_location_id: 60003760,
+      buy_hub_id: 'jita',
+      buy_hub_name: 'Jita',
+      sell_location_id: 60003760,
+      sell_hub_id: 'jita',
+      sell_hub_name: 'Jita',
+      reconciliation_mode: 'FIFO_AUTOMATIC',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      version: 1,
+    };
+
+    roiRepository.saveAllocations([alloc1, alloc2]);
+    const stored = roiRepository.listAllocations(CHAR_ID);
+    expect(stored.some((a) => a.id === 'test-alloc-1')).toBe(true);
+    expect(stored.some((a) => a.id === 'test-alloc-2')).toBe(true);
   });
 });

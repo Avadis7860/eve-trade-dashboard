@@ -140,11 +140,12 @@ export class UniverseService {
       }
     }
 
-    // Fill remaining missing IDs with fallbacks
+    // Fill remaining missing IDs with fallbacks and cache them to avoid repeated failed queries
     for (const id of ids) {
       if (!result.has(id)) {
         const fallback = this.isStructureId(id) ? `Structure #${id}` : `ID #${id}`;
         result.set(id, fallback);
+        this.cache.set(id, { id, name: fallback, category: this.isStructureId(id) ? 'structure' : 'unknown' });
       }
     }
 

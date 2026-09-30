@@ -148,6 +148,7 @@ export function createRoiRouter(
         buy_character_id,
         sell_transaction_id,
         buy_transaction_id,
+        opening_balance_id,
         quantity_to_allocate,
         custom_buy_fees,
         custom_sell_fees,
@@ -161,9 +162,9 @@ export function createRoiRouter(
         return;
       }
 
-      if (!sell_transaction_id || !buy_transaction_id || !quantity_to_allocate) {
+      if (!sell_transaction_id || (!buy_transaction_id && !opening_balance_id) || !quantity_to_allocate) {
         return res.status(400).json({
-          error: 'sell_transaction_id, buy_transaction_id et quantity_to_allocate requis',
+          error: 'sell_transaction_id, (buy_transaction_id ou opening_balance_id) et quantity_to_allocate requis',
         });
       }
 
@@ -171,7 +172,8 @@ export function createRoiRouter(
         character_id: targetCharId,
         buy_character_id: buy_character_id ? Number(buy_character_id) : undefined,
         sell_transaction_id: Number(sell_transaction_id),
-        buy_transaction_id: Number(buy_transaction_id),
+        buy_transaction_id: buy_transaction_id ? Number(buy_transaction_id) : undefined,
+        opening_balance_id: opening_balance_id ? String(opening_balance_id) : undefined,
         quantity_to_allocate: Number(quantity_to_allocate),
         custom_buy_fees: custom_buy_fees !== undefined ? Number(custom_buy_fees) : undefined,
         custom_sell_fees: custom_sell_fees !== undefined ? Number(custom_sell_fees) : undefined,
@@ -199,6 +201,135 @@ export function createRoiRouter(
         return res.status(404).json({ error: 'Allocation introuvable ou non autorisée' });
       }
       return res.json({ success: true });
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      return res.status(500).json({ error: errorMsg });
+    }
+  });
+
+  // GET /api/roi/opening-balances - List opening balance lots
+  router.get('/opening-balances', (req: Request, res: Response) => {
+    try {
+      const session = (req as Request & { session: UserSession }).session;
+      const requestedCharId = req.query.character_id ? Number(req.query.character_id) : undefined;
+
+      let characterIds: number[] | undefined;
+      if (typeof req.query.character_ids === 'string') {
+        characterIds = req.query.character_ids.split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n));
+      } else if (!requestedCharId && session.characters && Object.keys(session.characters).length > 1) {
+        characterIds = Object.keys(session.characters).map(Number);
+      }
+
+      const idsToValidate = characterIds || (requestedCharId ? [requestedCharId] : [session.activeCharacterId || session.characterId]);
+      const access = validateCharacterSessionAccess(session, idsToValidate);
+      if (!access.allowed) {
+        res.status(403).json({ error: 'Accès refusé pour ce personnage' });
+        return;
+      }
+
+      const characterId = characterIds && characterIds.length > 0 ? undefined : (requestedCharId || session.activeCharacterId || session.characterId);
+      const openingBalances = roiService.listOpeningBalances(characterId, characterIds);
+      return res.json({ openingBalances });
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      return res.status(500).json({ error: errorMsg });
+    }
+  });
+
+  // POST /api/roi/opening-balances - Declare a new opening inventory balance lot
+  router.post('/opening-balances', (req: Request, res: Response) => {
+    try {
+      const session = (req as Request & { session: UserSession }).session;
+      const {
+        character_id,
+        type_id,
+        type_name,
+        quantity,
+        unit_cost_isk,
+        location_id,
+        location_name,
+        acquisition_date,
+        justification,
+      } = req.body;
+
+      const targetCharId = character_id ? Number(character_id) : (session.activeCharacterId || session.characterId);
+      const access = validateCharacterSessionAccess(session, targetCharId);
+      if (!access.allowed) {
+        res.status(403).json({ error: 'Accès refusé pour ce personnage' });
+        return;
+      }
+
+      const result = roiService.createOpeningBalance({
+        character_id: targetCharId,
+        type_id: Number(type_id),
+        type_name,
+        quantity: Number(quantity),
+        unit_cost_isk: Number(unit_cost_isk),
+        location_id: Number(location_id),
+        location_name,
+        acquisition_date,
+        justification,
+      });
+
+      if (!result.success) {
+        return res.status(400).json({ error: result.error });
+      }
+
+      return res.status(201).json({ opening_balance: result.opening_balance });
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      return res.status(500).json({ error: errorMsg });
+    }
+  });
+
+  // DELETE /api/roi/opening-balances/:id - Delete an opening balance lot
+  router.delete('/opening-balances/:id', (req: Request, res: Response) => {
+    try {
+      const session = (req as Request & { session: UserSession }).session;
+      const { id } = req.params;
+      const result = roiService.deleteOpeningBalance(id, session.activeCharacterId || session.characterId);
+      if (!result.success) {
+        return res.status(400).json({ error: result.error });
+      }
+      return res.json({ success: true });
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      return res.status(500).json({ error: errorMsg });
+    }
+  });
+
+  // GET /api/roi/sales-reconciliation - Line-by-line sales audit with arithmetic proofs
+  router.get('/sales-reconciliation', (req: Request, res: Response) => {
+    try {
+      const session = (req as Request & { session: UserSession }).session;
+      const requestedCharId = req.query.character_id ? Number(req.query.character_id) : undefined;
+
+      let characterIds: number[] | undefined;
+      if (typeof req.query.character_ids === 'string') {
+        characterIds = req.query.character_ids.split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n));
+      } else if (!requestedCharId && session.characters && Object.keys(session.characters).length > 1) {
+        characterIds = Object.keys(session.characters).map(Number);
+      }
+
+      const idsToValidate = characterIds || (requestedCharId ? [requestedCharId] : [session.activeCharacterId || session.characterId]);
+      const access = validateCharacterSessionAccess(session, idsToValidate);
+      if (!access.allowed) {
+        res.status(403).json({ error: 'Accès refusé pour ce personnage' });
+        return;
+      }
+
+      const characterId = characterIds && characterIds.length > 0 ? undefined : (requestedCharId || session.activeCharacterId || session.characterId);
+
+      const salesDetails = roiService.getSalesReconciliationDetails({
+        character_id: characterId,
+        character_ids: characterIds,
+        start_date: req.query.start_date as string,
+        end_date: req.query.end_date as string,
+        type_id: req.query.type_id ? Number(req.query.type_id) : undefined,
+        sell_hub_id: req.query.sell_hub_id as string,
+      });
+
+      return res.json({ sales: salesDetails });
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
       return res.status(500).json({ error: errorMsg });

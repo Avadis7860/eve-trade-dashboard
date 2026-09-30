@@ -1,7 +1,7 @@
 import type { CharacterTransaction, CharacterWalletJournalEntry } from '../ledger/types.ts';
 import type { CharacterOrderSnapshot, RestockItem } from '../orders/types.ts';
 import type { HubDefinition, HubLocationMapping } from '../hubs/types.ts';
-import type { ExplicitCostAllocation } from '../roi/types.ts';
+import type { ExplicitCostAllocation, OpeningBalanceLot } from '../roi/types.ts';
 import type { CharacterAsset } from '../assets/types.ts';
 import type { SyncState } from '../sync/types.ts';
 
@@ -20,6 +20,7 @@ export interface AppBackupData {
   };
   roi: {
     allocations: ExplicitCostAllocation[];
+    openingBalances?: OpeningBalanceLot[];
   };
   assets: {
     assets: CharacterAsset[];

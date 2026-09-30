@@ -1,6 +1,6 @@
 # PHASE-08 — Réconciliation financière et métriques versionnées
 
-**Type :** moteur financier & domaine · **Dépendances :** 07 · **État :** Planifiée
+**Type :** moteur financier & domaine · **Dépendances :** 07 · **État :** Terminé
 
 ---
 
@@ -58,11 +58,11 @@
 
 ## 6. Critères d'acceptation mesurables
 
-- [ ] 100% des allocations préservent la règle d'antériorité temporelle de l'achat sur la vente.
-- [ ] Aucun frais ou taxe n'est comptabilisé deux fois dans le calcul du bénéfice réalisé TTC.
-- [ ] La somme des quantités allouées sur un achat ne dépasse jamais la quantité brute de cet achat.
-- [ ] Les métriques retournées par `/api/roi/summary` incluent pour chaque ligne la décomposition détaillée (CA brut, coût matière, frais achat, frais vente, profit TTC, ROI TTC, statut de couverture).
-- [ ] Suite complète de tests unitaires et d'intégration validée (`vitest run`).
+- [x] 100% des allocations préservent la règle d'antériorité temporelle de l'achat sur la vente.
+- [x] Aucun frais ou taxe n'est comptabilisé deux fois dans le calcul du bénéfice réalisé TTC.
+- [x] La somme des quantités allouées sur un achat ne dépasse jamais la quantité brute de cet achat.
+- [x] Les métriques retournées par `/api/roi/summary` incluent pour chaque ligne la décomposition détaillée (CA brut, coût matière, frais achat, frais vente, profit TTC, ROI TTC, statut de couverture).
+- [x] Suite complète de tests unitaires et d'intégration validée (`vitest run`).
 
 ---
 

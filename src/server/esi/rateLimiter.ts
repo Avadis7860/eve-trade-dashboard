@@ -4,6 +4,7 @@ export class EsiRateLimiter {
   private activeRequests = 0;
   private maxConcurrent: number;
   private queue: Array<() => void> = [];
+  private suspensionTimer: NodeJS.Timeout | null = null;
 
   // ESI Error budget (starts at 100 per minute)
   private errorLimitRemain = 100;
@@ -17,24 +18,71 @@ export class EsiRateLimiter {
   }
 
   /**
-   * Acquires a concurrency slot, waiting if max concurrency or rate limit suspension is active
+   * Schedules a drain when current suspension period expires
    */
-  public async acquire(): Promise<void> {
-    while (this.isSuspended()) {
-      const waitMs = Math.max(100, this.suspendedUntil - Date.now());
-      await new Promise((resolve) => setTimeout(resolve, Math.min(waitMs, 5000)));
+  private scheduleSuspensionDrain(): void {
+    if (this.suspensionTimer) {
+      clearTimeout(this.suspensionTimer);
+      this.suspensionTimer = null;
     }
+    if (this.isSuspended()) {
+      const delay = Math.max(50, this.suspendedUntil - Date.now() + 50);
+      this.suspensionTimer = setTimeout(() => {
+        this.suspensionTimer = null;
+        this.drainQueue();
+      }, delay);
+      this.suspensionTimer.unref?.();
+    }
+  }
 
-    if (this.activeRequests < this.maxConcurrent) {
-      this.activeRequests++;
+  /**
+   * Drains waiting requests from queue up to maxConcurrent as long as not suspended
+   */
+  private drainQueue(): void {
+    if (this.isSuspended()) {
+      this.scheduleSuspensionDrain();
       return;
     }
 
-    return new Promise<void>((resolve) => {
-      this.queue.push(() => {
+    while (this.queue.length > 0 && this.activeRequests < this.maxConcurrent) {
+      const next = this.queue.shift();
+      if (next) {
         this.activeRequests++;
+        next();
+      }
+    }
+  }
+
+  /**
+   * Acquires a concurrency slot, waiting if max concurrency or rate limit suspension is active.
+   * Includes safety timeout to prevent permanent deadlocks.
+   */
+  public acquire(timeoutMs: number = 30000): Promise<void> {
+    if (!this.isSuspended() && this.activeRequests < this.maxConcurrent && this.queue.length === 0) {
+      this.activeRequests++;
+      return Promise.resolve();
+    }
+
+    return new Promise<void>((resolve, reject) => {
+      let timer: NodeJS.Timeout | null = null;
+      const callback = () => {
+        if (timer) clearTimeout(timer);
         resolve();
-      });
+      };
+
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          const idx = this.queue.indexOf(callback);
+          if (idx !== -1) {
+            this.queue.splice(idx, 1);
+          }
+          reject(new Error(`ESI rate limiter acquire timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+        timer.unref?.();
+      }
+
+      this.queue.push(callback);
+      this.drainQueue();
     });
   }
 
@@ -43,11 +91,7 @@ export class EsiRateLimiter {
    */
   public release(): void {
     this.activeRequests = Math.max(0, this.activeRequests - 1);
-
-    if (this.queue.length > 0 && this.activeRequests < this.maxConcurrent && !this.isSuspended()) {
-      const next = this.queue.shift();
-      if (next) next();
-    }
+    this.drainQueue();
   }
 
   /**
@@ -73,6 +117,7 @@ export class EsiRateLimiter {
         // If error budget drops dangerously low (<= 5), suspend until reset to avoid 420 hard ban
         if (this.errorLimitRemain <= 5) {
           this.suspendedUntil = Math.max(this.suspendedUntil, this.errorLimitResetTime);
+          this.scheduleSuspensionDrain();
         }
       }
     }
@@ -81,6 +126,7 @@ export class EsiRateLimiter {
       const retrySeconds = parseInt(retryAfterHeader, 10);
       if (!isNaN(retrySeconds) && retrySeconds > 0) {
         this.suspendedUntil = Math.max(this.suspendedUntil, Date.now() + retrySeconds * 1000);
+        this.scheduleSuspensionDrain();
       }
     }
   }
@@ -92,6 +138,7 @@ export class EsiRateLimiter {
     const defaultDelay = statusCode === 420 ? 60000 : 10000; // 60s for 420, 10s for 429
     const delayMs = retryAfterSeconds && retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : defaultDelay;
     this.suspendedUntil = Date.now() + delayMs;
+    this.scheduleSuspensionDrain();
   }
 
   /**
@@ -123,6 +170,10 @@ export class EsiRateLimiter {
    * Resets limiter (useful in test suites)
    */
   public reset(): void {
+    if (this.suspensionTimer) {
+      clearTimeout(this.suspensionTimer);
+      this.suspensionTimer = null;
+    }
     this.activeRequests = 0;
     this.queue = [];
     this.errorLimitRemain = 100;

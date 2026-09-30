@@ -1,6 +1,6 @@
 import type { SchemaMigration } from './types.ts';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const INITIAL_MIGRATION_SQL = `
 -- Schema Migrations Table
@@ -146,7 +146,9 @@ CREATE TABLE IF NOT EXISTS explicit_cost_allocations (
   buy_character_id BIGINT,
   sell_character_id BIGINT,
   sell_transaction_id BIGINT NOT NULL,
-  buy_transaction_id BIGINT NOT NULL,
+  buy_transaction_id BIGINT,
+  opening_balance_id TEXT,
+  source_type TEXT NOT NULL DEFAULT 'TRANSACTION',
   type_id INTEGER NOT NULL,
   type_name TEXT NOT NULL,
   quantity_allocated INTEGER NOT NULL,
@@ -163,6 +165,31 @@ CREATE TABLE IF NOT EXISTS explicit_cost_allocations (
 CREATE INDEX IF NOT EXISTS idx_alloc_char ON explicit_cost_allocations (character_id);
 CREATE INDEX IF NOT EXISTS idx_alloc_buy_tx ON explicit_cost_allocations (buy_transaction_id);
 CREATE INDEX IF NOT EXISTS idx_alloc_sell_tx ON explicit_cost_allocations (sell_transaction_id);
+
+-- Opening Balance Lots Table
+CREATE TABLE IF NOT EXISTS opening_balances (
+  id TEXT PRIMARY KEY,
+  character_id BIGINT NOT NULL,
+  type_id INTEGER NOT NULL,
+  type_name TEXT NOT NULL,
+  quantity INTEGER NOT NULL,
+  allocated_quantity INTEGER NOT NULL DEFAULT 0,
+  remaining_quantity INTEGER NOT NULL,
+  unit_cost_isk NUMERIC(20, 2) NOT NULL,
+  total_cost_isk NUMERIC(20, 2) NOT NULL,
+  location_id BIGINT NOT NULL,
+  location_name TEXT,
+  hub_id TEXT NOT NULL,
+  hub_name TEXT NOT NULL,
+  acquisition_date TEXT NOT NULL,
+  justification TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS idx_opening_char ON opening_balances (character_id);
+CREATE INDEX IF NOT EXISTS idx_opening_type ON opening_balances (type_id);
 
 -- Character Assets Table
 CREATE TABLE IF NOT EXISTS character_assets (
@@ -207,5 +234,33 @@ export const MIGRATIONS: SchemaMigration[] = [
     version: 1,
     name: '001_initial_relational_schema',
     upSql: INITIAL_MIGRATION_SQL,
+  },
+  {
+    version: 2,
+    name: '002_opening_balances_table',
+    upSql: `
+      CREATE TABLE IF NOT EXISTS opening_balances (
+        id TEXT PRIMARY KEY,
+        character_id BIGINT NOT NULL,
+        type_id INTEGER NOT NULL,
+        type_name TEXT NOT NULL,
+        quantity INTEGER NOT NULL,
+        allocated_quantity INTEGER NOT NULL DEFAULT 0,
+        remaining_quantity INTEGER NOT NULL,
+        unit_cost_isk NUMERIC(20, 2) NOT NULL,
+        total_cost_isk NUMERIC(20, 2) NOT NULL,
+        location_id BIGINT NOT NULL,
+        location_name TEXT,
+        hub_id TEXT NOT NULL,
+        hub_name TEXT NOT NULL,
+        acquisition_date TEXT NOT NULL,
+        justification TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1
+      );
+      CREATE INDEX IF NOT EXISTS idx_opening_char ON opening_balances (character_id);
+      CREATE INDEX IF NOT EXISTS idx_opening_type ON opening_balances (type_id);
+    `,
   },
 ];

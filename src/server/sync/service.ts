@@ -53,6 +53,7 @@ export class SyncService {
   private assetsRepo: IAssetsRepository;
   private syncRepo: ISyncRepository;
   private universeService: UniverseService;
+  private inaccessibleCorpCharacters: Set<number> = new Set();
 
   constructor(
     esiClient: EsiClient = defaultEsiClient,
@@ -472,6 +473,8 @@ export class SyncService {
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>
   ): Promise<void> {
+    if (this.inaccessibleCorpCharacters.has(characterId)) return;
+
     try {
       // 1. Fetch character public info to get corporation_id
       const charInfoRes = await this.esiClient.get<{ corporation_id: number }>(`/characters/${characterId}/`, {
@@ -480,10 +483,11 @@ export class SyncService {
       });
 
       const corpId = charInfoRes.data?.corporation_id;
-      if (!corpId) return;
+      // In EVE Online, NPC corporations have IDs < 2,000,000 and do not have player-accessible wallets
+      if (!corpId || corpId < 2000000) return;
 
       // 2. Fetch corporation divisions (wallets)
-      let divisions: Array<{ division: number; balance: number }> = [{ division: 1, balance: 0 }];
+      let divisions: Array<{ division: number; balance: number }> = [];
       try {
         const divisionsRes = await this.esiClient.get<Array<{ division: number; balance: number }>>(
           `/corporations/${corpId}/wallets/`,
@@ -493,8 +497,12 @@ export class SyncService {
           divisions = divisionsRes.data;
         }
       } catch {
-        // If divisions endpoint is forbidden, fallback to division 1
+        // If 403 Forbidden or scope error, character lacks corp wallet roles - mark and stop immediately
+        this.inaccessibleCorpCharacters.add(characterId);
+        return;
       }
+
+      if (divisions.length === 0) return;
 
       for (const div of divisions) {
         const divisionNumber = div.division || 1;
@@ -538,7 +546,7 @@ export class SyncService {
         }
       }
     } catch (err) {
-      // Gracefully ignore corporation sync failure if character doesn't have corp director role
+      this.inaccessibleCorpCharacters.add(characterId);
       console.warn(`[SyncService] Corporation wallet sync not accessible for character ${characterId}: ${(err as Error).message}`);
     }
   }
@@ -661,6 +669,8 @@ export class SyncService {
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>
   ): Promise<void> {
+    if (this.inaccessibleCorpCharacters.has(characterId)) return;
+
     try {
       const charInfoRes = await this.esiClient.get<{ corporation_id: number }>(`/characters/${characterId}/`, {
         accessToken,
@@ -668,7 +678,7 @@ export class SyncService {
       });
 
       const corpId = charInfoRes.data?.corporation_id;
-      if (!corpId) return;
+      if (!corpId || corpId < 2000000) return;
 
       const paginated = await fetchXPages<RawEsiAsset>(
         this.esiClient,
@@ -679,6 +689,11 @@ export class SyncService {
           maxPages: 10,
         }
       );
+
+      if (paginated.status === 'ERROR' && paginated.error?.includes('Forbidden')) {
+        this.inaccessibleCorpCharacters.add(characterId);
+        return;
+      }
 
       const rawItems = paginated.data;
       if (rawItems.length > 0) {

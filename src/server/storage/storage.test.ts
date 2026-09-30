@@ -100,6 +100,7 @@ describe('Phase 07 — Persistent Storage, PostgreSQL Durability & History Relia
       character_id: 9001,
       buy_character_id: 9001,
       sell_character_id: 9001,
+      source_type: 'TRANSACTION',
       buy_transaction_id: 100001,
       sell_transaction_id: 100002,
       type_id: 34,

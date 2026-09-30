@@ -115,6 +115,46 @@ describe('ESI Gateway — Rate Limiting, Error Budget & Suspension', () => {
     rateLimiter.handleRateLimitHit(429, 15);
     expect(rateLimiter.isSuspended()).toBe(true);
   });
+
+  it('automatically unblocks queued requests when suspension expires without deadlocking', async () => {
+    const limiter = new EsiRateLimiter(2);
+    // Fill all 2 slots
+    await limiter.acquire();
+    await limiter.acquire();
+
+    // Trigger short 100ms suspension
+    limiter.handleRateLimitHit(429, 0.1);
+    expect(limiter.isSuspended()).toBe(true);
+
+    // Queue 3rd request while suspended and at max concurrency
+    let thirdResolved = false;
+    const thirdPromise = limiter.acquire().then(() => {
+      thirdResolved = true;
+    });
+
+    expect(thirdResolved).toBe(false);
+
+    // Release 1st slot while still suspended
+    limiter.release();
+    expect(thirdResolved).toBe(false);
+
+    // Wait 150ms for suspension to expire
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await thirdPromise;
+
+    expect(thirdResolved).toBe(true);
+    limiter.release();
+    limiter.release();
+  });
+
+  it('rejects acquire with timeout error when acquire timeout expires', async () => {
+    const limiter = new EsiRateLimiter(1);
+    await limiter.acquire();
+
+    // Try acquiring with 50ms timeout while slot is full
+    await expect(limiter.acquire(50)).rejects.toThrow('ESI rate limiter acquire timed out after 50ms');
+    limiter.release();
+  });
 });
 
 describe('ESI Gateway — Client Retries, 304 Handling & Errors', () => {

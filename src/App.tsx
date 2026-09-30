@@ -218,11 +218,77 @@ export interface HubPairPerformance {
   transaction_count: number;
 }
 
+export interface OpeningBalanceLot {
+  id: string;
+  character_id: number;
+  type_id: number;
+  type_name: string;
+  quantity: number;
+  allocated_quantity: number;
+  remaining_quantity: number;
+  unit_cost_isk: number;
+  total_cost_isk: number;
+  location_id: number;
+  location_name?: string;
+  hub_id: string;
+  hub_name: string;
+  acquisition_date: string;
+  justification: string;
+  created_at: string;
+  updated_at: string;
+  version: number;
+}
+
+export interface FormulaProof {
+  as_of: string;
+  gross_revenue_isk: number;
+  allocated_buy_cost_isk: number;
+  allocated_buy_fees_isk: number;
+  allocated_sell_fees_isk: number;
+  total_investment_ttc_isk: number;
+  realized_profit_ttc_isk: number | null;
+  roi_percent_ttc: number | null;
+  formula_expression: string;
+  numerator_isk: number | null;
+  denominator_isk: number | null;
+}
+
+export interface SaleReconciliationDetail {
+  sale_transaction_id: number;
+  sale_character_id: number;
+  date: string;
+  type_id: number;
+  type_name: string;
+  quantity_sold: number;
+  unit_sale_price_isk: number;
+  gross_revenue_isk: number;
+  allocated_quantity: number;
+  unallocated_quantity: number;
+  allocated_buy_cost_isk: number;
+  allocated_buy_fees_isk: number;
+  allocated_sell_fees_isk: number;
+  total_investment_ttc_isk: number;
+  realized_profit_ttc_isk: number | null;
+  roi_percent_ttc: number | null;
+  coverage_status: 'COMPLETE' | 'PARTIAL' | 'UNKNOWN' | 'EMPTY';
+  coverage_percent: number;
+  location_id: number;
+  location_name?: string;
+  hub_id: string;
+  hub_name: string;
+  allocations: ExplicitCostAllocation[];
+  proof: FormulaProof;
+}
+
 export interface ExplicitCostAllocation {
   id: string;
   character_id: number;
+  buy_character_id?: number;
+  sell_character_id?: number;
   sell_transaction_id: number;
-  buy_transaction_id: number;
+  source_type?: 'TRANSACTION' | 'OPENING_BALANCE';
+  buy_transaction_id?: number;
+  opening_balance_id?: string;
   type_id: number;
   type_name: string;
   quantity_allocated: number;
@@ -240,7 +306,9 @@ export interface ExplicitCostAllocation {
 
 export interface UnsoldInventoryItem {
   character_id: number;
-  buy_transaction_id: number;
+  source_type?: 'TRANSACTION' | 'OPENING_BALANCE';
+  buy_transaction_id?: number;
+  opening_balance_id?: string;
   type_id: number;
   type_name: string;
   buy_date: string;
@@ -253,9 +321,11 @@ export interface UnsoldInventoryItem {
   location_id: number;
   hub_id: string;
   hub_name: string;
+  justification?: string;
 }
 
 export interface RoiFinancialSummary {
+  version?: number;
   as_of: string;
   character_id?: number;
   period_label: string;
@@ -273,6 +343,7 @@ export interface RoiFinancialSummary {
   unsold_items_count: number;
   coverage_status: 'COMPLETE' | 'PARTIAL' | 'UNKNOWN' | 'EMPTY';
   coverage_percent: number;
+  proof?: FormulaProof;
   hub_pairs: HubPairPerformance[];
 }
 
@@ -337,6 +408,7 @@ export default function App() {
   const [summary, setSummary] = useState<LedgerSummary | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatusResponse | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [ledgerLoading, setLedgerLoading] = useState(false);
   const [selectedTx, setSelectedTx] = useState<CharacterTransaction | null>(null);
   const [selectedTxDetail, setSelectedTxDetail] = useState<{
@@ -501,14 +573,23 @@ export default function App() {
   const handleSync = async () => {
     if (isSyncing || !session) return;
     setIsSyncing(true);
+    setSyncError(null);
 
     try {
       const res = await fetch('/api/ledger/sync', { method: 'POST' });
       if (res.ok) {
+        const data = await res.json();
+        if (data.errors && data.errors.length > 0) {
+          setSyncError(data.errors.join(' | '));
+        }
         await Promise.all([fetchLedgerData(), fetchOrdersData(), fetchRoiAndHubsData()]);
+      } else {
+        const errJson = await res.json().catch(() => null);
+        setSyncError(errJson?.error || `Erreur de synchronisation (${res.status})`);
       }
     } catch (err) {
       console.error('Sync failed:', err);
+      setSyncError((err as Error).message || 'Erreur réseau lors de la synchronisation');
     } finally {
       setIsSyncing(false);
     }
@@ -1247,6 +1328,21 @@ export default function App() {
                 </button>
               </div>
             </div>
+
+            {syncError && (
+              <div className="p-3.5 rounded-xl border border-red-500/30 bg-red-950/20 text-red-300 text-xs flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                  <span>{syncError}</span>
+                </div>
+                <button
+                  onClick={() => setSyncError(null)}
+                  className="text-red-400 hover:text-red-200 text-xs font-semibold px-2 py-1 rounded bg-red-900/30 hover:bg-red-900/50 cursor-pointer"
+                >
+                  Ignorer
+                </button>
+              </div>
+            )}
 
             {/* TAB 0: OVERVIEW (CENTRAL DASHBOARD) */}
             {activeTab === 'overview' && (

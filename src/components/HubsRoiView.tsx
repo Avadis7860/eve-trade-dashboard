@@ -319,12 +319,19 @@ export const HubsRoiView: React.FC<HubsRoiViewProps> = ({
                     </td>
                   </tr>
                 ) : (
-                  unsoldInventory.map((item) => (
-                    <tr key={item.buy_transaction_id} className="hover:bg-slate-800/40 transition-colors">
+                  unsoldInventory.map((item, idx) => (
+                    <tr key={item.buy_transaction_id || item.opening_balance_id || idx} className="hover:bg-slate-800/40 transition-colors">
                       <td className="py-3 px-4 font-mono text-slate-400">
                         {new Date(item.buy_date).toLocaleDateString('fr-FR')}
                       </td>
-                      <td className="py-3 px-4 font-medium text-slate-200">{item.type_name}</td>
+                      <td className="py-3 px-4 font-medium text-slate-200">
+                        {item.type_name}
+                        {item.source_type === 'OPENING_BALANCE' && (
+                          <span className="ml-2 text-[10px] font-mono px-1.5 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded">
+                            Stock Initial
+                          </span>
+                        )}
+                      </td>
                       <td className="py-3 px-4 text-slate-300">{item.hub_name}</td>
                       <td className="py-3 px-4 text-right font-mono text-amber-300 font-bold">
                         {item.remaining_quantity.toLocaleString()} / {item.original_quantity.toLocaleString()}
@@ -385,7 +392,7 @@ export const HubsRoiView: React.FC<HubsRoiViewProps> = ({
                       {a.type_name} — {a.quantity_allocated.toLocaleString()} unités
                     </div>
                     <div className="text-[11px] text-slate-400 font-mono">
-                      Vente #{a.sell_transaction_id} ({a.sell_hub_name}) ← Achat #{a.buy_transaction_id} ({a.buy_hub_name} @ {formatIsk(a.unit_buy_price)})
+                      Vente #{a.sell_transaction_id} ({a.sell_hub_name}) ← {a.source_type === 'OPENING_BALANCE' ? `Stock d'ouverture (${a.buy_hub_name} @ ${formatIsk(a.unit_buy_price)})` : `Achat #${a.buy_transaction_id} (${a.buy_hub_name} @ ${formatIsk(a.unit_buy_price)})`}
                     </div>
                     <div className="text-[11px] text-slate-500 font-mono">
                       Coût: {formatIsk(a.allocated_buy_cost)} | Frais Achat: {formatIsk(a.allocated_buy_fees)} | Frais Vente: {formatIsk(a.allocated_sell_fees)}

@@ -47,10 +47,10 @@ export function createOrdersRouter(
       sortOrder,
       page,
       pageSize,
-      character_id,
     } = req.query;
 
-    const targetCharId = character_id ? Number(character_id) : (session.activeCharacterId || session.characterId);
+    const rawCharId = req.query.character_id ?? req.query.characterId;
+    const targetCharId = rawCharId !== undefined ? Number(rawCharId) : (session.activeCharacterId || session.characterId);
     const access = validateCharacterSessionAccess(session, targetCharId);
     if (!access.allowed) {
       res.status(403).json({ error: 'Accès refusé pour ce personnage' });
@@ -78,7 +78,8 @@ export function createOrdersRouter(
    */
   router.get('/summary', requireSession, (req: Request, res: Response) => {
     const session = (req as Request & { session: NonNullable<Awaited<ReturnType<typeof authService.getValidSession>>> }).session;
-    const requestedCharId = req.query.character_id ? Number(req.query.character_id) : (session.activeCharacterId || session.characterId);
+    const rawCharId = req.query.character_id ?? req.query.characterId;
+    const requestedCharId = rawCharId !== undefined ? Number(rawCharId) : (session.activeCharacterId || session.characterId);
 
     const access = validateCharacterSessionAccess(session, requestedCharId);
     if (!access.allowed) {
@@ -96,7 +97,8 @@ export function createOrdersRouter(
    */
   router.get('/restock', requireSession, (req: Request, res: Response) => {
     const session = (req as Request & { session: NonNullable<Awaited<ReturnType<typeof authService.getValidSession>>> }).session;
-    const requestedCharId = req.query.character_id ? Number(req.query.character_id) : (session.activeCharacterId || session.characterId);
+    const rawCharId = req.query.character_id ?? req.query.characterId;
+    const requestedCharId = rawCharId !== undefined ? Number(rawCharId) : (session.activeCharacterId || session.characterId);
 
     const access = validateCharacterSessionAccess(session, requestedCharId);
     if (!access.allowed) {
@@ -114,7 +116,8 @@ export function createOrdersRouter(
    */
   router.post('/restock/generate', requireSession, (req: Request, res: Response) => {
     const session = (req as Request & { session: NonNullable<Awaited<ReturnType<typeof authService.getValidSession>>> }).session;
-    const requestedCharId = req.body.character_id ? Number(req.body.character_id) : (session.activeCharacterId || session.characterId);
+    const rawCharId = req.body.character_id ?? req.body.characterId;
+    const requestedCharId = rawCharId !== undefined ? Number(rawCharId) : (session.activeCharacterId || session.characterId);
 
     const access = validateCharacterSessionAccess(session, requestedCharId);
     if (!access.allowed) {
@@ -134,7 +137,8 @@ export function createOrdersRouter(
     const session = (req as Request & { session: NonNullable<Awaited<ReturnType<typeof authService.getValidSession>>> }).session;
     const dto: CreateRestockItemDto = req.body;
 
-    const targetCharId = req.body.character_id ? Number(req.body.character_id) : (session.activeCharacterId || session.characterId);
+    const rawCharId = req.body.character_id ?? req.body.characterId;
+    const targetCharId = rawCharId !== undefined ? Number(rawCharId) : (session.activeCharacterId || session.characterId);
     const access = validateCharacterSessionAccess(session, targetCharId);
     if (!access.allowed) {
       res.status(403).json({ error: 'Accès refusé pour ce personnage' });
@@ -159,7 +163,8 @@ export function createOrdersRouter(
     const itemId = req.params.id;
     const updates: UpdateRestockItemDto = req.body;
 
-    const targetCharId = req.body.character_id ? Number(req.body.character_id) : (session.activeCharacterId || session.characterId);
+    const rawCharId = req.body.character_id ?? req.body.characterId;
+    const targetCharId = rawCharId !== undefined ? Number(rawCharId) : (session.activeCharacterId || session.characterId);
     const access = validateCharacterSessionAccess(session, targetCharId);
     if (!access.allowed) {
       res.status(403).json({ error: 'Accès refusé pour ce personnage' });
@@ -182,7 +187,8 @@ export function createOrdersRouter(
   router.delete('/restock/:id', requireSession, (req: Request, res: Response) => {
     const session = (req as Request & { session: NonNullable<Awaited<ReturnType<typeof authService.getValidSession>>> }).session;
     const itemId = req.params.id;
-    const targetCharId = req.query.character_id ? Number(req.query.character_id) : (session.activeCharacterId || session.characterId);
+    const rawCharId = req.query.character_id ?? req.query.characterId;
+    const targetCharId = rawCharId !== undefined ? Number(rawCharId) : (session.activeCharacterId || session.characterId);
 
     const access = validateCharacterSessionAccess(session, targetCharId);
     if (!access.allowed) {

@@ -34,15 +34,17 @@ export function createRoiRouter(
   router.post('/reconcile', (req: Request, res: Response) => {
     try {
       const session = (req as Request & { session: UserSession }).session;
-      const { character_id, character_ids, type_id } = req.body;
+      const rawCharId = req.body.character_id ?? req.body.characterId;
+      const rawCharIds = req.body.character_ids ?? req.body.characterIds;
+      const { type_id } = req.body;
 
       let targetCharIds: number[] | undefined;
       let targetCharId: number | undefined;
 
-      if (Array.isArray(character_ids) && character_ids.length > 0) {
-        targetCharIds = character_ids.map(Number);
-      } else if (character_id) {
-        targetCharId = Number(character_id);
+      if (Array.isArray(rawCharIds) && rawCharIds.length > 0) {
+        targetCharIds = rawCharIds.map(Number);
+      } else if (rawCharId !== undefined) {
+        targetCharId = Number(rawCharId);
       } else if (session.characters && Object.keys(session.characters).length > 1) {
         targetCharIds = Object.keys(session.characters).map(Number);
       } else {
@@ -73,11 +75,13 @@ export function createRoiRouter(
   router.get('/summary', (req: Request, res: Response) => {
     try {
       const session = (req as Request & { session: UserSession }).session;
-      const requestedCharId = req.query.character_id ? Number(req.query.character_id) : undefined;
+      const rawCharId = req.query.character_id ?? req.query.characterId;
+      const rawCharIds = req.query.character_ids ?? req.query.characterIds;
+      const requestedCharId = rawCharId !== undefined ? Number(rawCharId) : undefined;
 
       let characterIds: number[] | undefined;
-      if (typeof req.query.character_ids === 'string') {
-        characterIds = req.query.character_ids.split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n));
+      if (typeof rawCharIds === 'string') {
+        characterIds = rawCharIds.split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n));
       } else if (!requestedCharId && session.characters && Object.keys(session.characters).length > 1) {
         characterIds = Object.keys(session.characters).map(Number);
       }
@@ -112,12 +116,14 @@ export function createRoiRouter(
   router.get('/allocations', (req: Request, res: Response) => {
     try {
       const session = (req as Request & { session: UserSession }).session;
-      const requestedCharId = req.query.character_id ? Number(req.query.character_id) : undefined;
+      const rawCharId = req.query.character_id ?? req.query.characterId;
+      const rawCharIds = req.query.character_ids ?? req.query.characterIds;
+      const requestedCharId = rawCharId !== undefined ? Number(rawCharId) : undefined;
       const sellTxId = req.query.sell_transaction_id ? Number(req.query.sell_transaction_id) : undefined;
 
       let characterIds: number[] | undefined;
-      if (typeof req.query.character_ids === 'string') {
-        characterIds = req.query.character_ids.split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n));
+      if (typeof rawCharIds === 'string') {
+        characterIds = rawCharIds.split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n));
       } else if (!requestedCharId && session.characters && Object.keys(session.characters).length > 1) {
         characterIds = Object.keys(session.characters).map(Number);
       }
@@ -211,11 +217,13 @@ export function createRoiRouter(
   router.get('/opening-balances', (req: Request, res: Response) => {
     try {
       const session = (req as Request & { session: UserSession }).session;
-      const requestedCharId = req.query.character_id ? Number(req.query.character_id) : undefined;
+      const rawCharId = req.query.character_id ?? req.query.characterId;
+      const rawCharIds = req.query.character_ids ?? req.query.characterIds;
+      const requestedCharId = rawCharId !== undefined ? Number(rawCharId) : undefined;
 
       let characterIds: number[] | undefined;
-      if (typeof req.query.character_ids === 'string') {
-        characterIds = req.query.character_ids.split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n));
+      if (typeof rawCharIds === 'string') {
+        characterIds = rawCharIds.split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n));
       } else if (!requestedCharId && session.characters && Object.keys(session.characters).length > 1) {
         characterIds = Object.keys(session.characters).map(Number);
       }
@@ -240,8 +248,8 @@ export function createRoiRouter(
   router.post('/opening-balances', (req: Request, res: Response) => {
     try {
       const session = (req as Request & { session: UserSession }).session;
+      const rawCharId = req.body.character_id ?? req.body.characterId;
       const {
-        character_id,
         type_id,
         type_name,
         quantity,
@@ -252,7 +260,7 @@ export function createRoiRouter(
         justification,
       } = req.body;
 
-      const targetCharId = character_id ? Number(character_id) : (session.activeCharacterId || session.characterId);
+      const targetCharId = rawCharId !== undefined ? Number(rawCharId) : (session.activeCharacterId || session.characterId);
       const access = validateCharacterSessionAccess(session, targetCharId);
       if (!access.allowed) {
         res.status(403).json({ error: 'Accès refusé pour ce personnage' });
@@ -302,11 +310,13 @@ export function createRoiRouter(
   router.get('/sales-reconciliation', (req: Request, res: Response) => {
     try {
       const session = (req as Request & { session: UserSession }).session;
-      const requestedCharId = req.query.character_id ? Number(req.query.character_id) : undefined;
+      const rawCharId = req.query.character_id ?? req.query.characterId;
+      const rawCharIds = req.query.character_ids ?? req.query.characterIds;
+      const requestedCharId = rawCharId !== undefined ? Number(rawCharId) : undefined;
 
       let characterIds: number[] | undefined;
-      if (typeof req.query.character_ids === 'string') {
-        characterIds = req.query.character_ids.split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n));
+      if (typeof rawCharIds === 'string') {
+        characterIds = rawCharIds.split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n));
       } else if (!requestedCharId && session.characters && Object.keys(session.characters).length > 1) {
         characterIds = Object.keys(session.characters).map(Number);
       }
@@ -340,11 +350,13 @@ export function createRoiRouter(
   router.get('/unsold-inventory', (req: Request, res: Response) => {
     try {
       const session = (req as Request & { session: UserSession }).session;
-      const requestedCharId = req.query.character_id ? Number(req.query.character_id) : undefined;
+      const rawCharId = req.query.character_id ?? req.query.characterId;
+      const rawCharIds = req.query.character_ids ?? req.query.characterIds;
+      const requestedCharId = rawCharId !== undefined ? Number(rawCharId) : undefined;
 
       let characterIds: number[] | undefined;
-      if (typeof req.query.character_ids === 'string') {
-        characterIds = req.query.character_ids.split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n));
+      if (typeof rawCharIds === 'string') {
+        characterIds = rawCharIds.split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n));
       } else if (!requestedCharId && session.characters && Object.keys(session.characters).length > 1) {
         characterIds = Object.keys(session.characters).map(Number);
       }

@@ -19,6 +19,11 @@ import type {
 
 export const CURRENT_SCHEMA_VERSION = 2;
 
+export interface RestoreBackupOptions {
+  authorizedCharacterIds?: number[];
+  allowGlobalOverwrite?: boolean;
+}
+
 export class BackupRestoreService {
   constructor(
     private ledgerRepo: ILedgerRepository = defaultLedgerRepository,
@@ -38,9 +43,10 @@ export class BackupRestoreService {
   }
 
   /**
-   * Exports the entire application state into a verifiable snapshot
+   * Exports application state into a verifiable snapshot.
+   * If authorizedCharacterIds is provided, strictly filters records to those characters.
    */
-  public exportBackup(): AppBackupSnapshot {
+  public exportBackup(authorizedCharacterIds?: number[]): AppBackupSnapshot {
     const ledgerData = this.ledgerRepo.dumpData();
     const ordersData = this.ordersRepo.dumpData();
     const hubsData = this.hubsRepo.dumpData();
@@ -48,28 +54,72 @@ export class BackupRestoreService {
     const assetsData = this.assetsRepo.dumpData();
     const syncData = this.syncRepo.dumpData();
 
+    const authSet =
+      authorizedCharacterIds && authorizedCharacterIds.length > 0
+        ? new Set(authorizedCharacterIds)
+        : null;
+
+    const transactions = authSet
+      ? ledgerData.transactions.filter((t) => authSet.has(t.characterId))
+      : ledgerData.transactions;
+
+    const journalEntries = authSet
+      ? ledgerData.journalEntries.filter((j) => authSet.has(j.characterId))
+      : ledgerData.journalEntries;
+
+    const snapshots = authSet
+      ? ordersData.snapshots.filter((o) => authSet.has(o.characterId))
+      : ordersData.snapshots;
+
+    const restockItems = authSet
+      ? ordersData.restockItems.filter((r) => authSet.has(r.characterId))
+      : ordersData.restockItems;
+
+    const allocations = authSet
+      ? roiData.allocations.filter((a) => {
+          const char = a.character_id;
+          const buyChar = a.buy_character_id || char;
+          const sellChar = a.sell_character_id || char;
+          return authSet.has(char) || (authSet.has(buyChar) && authSet.has(sellChar));
+        })
+      : roiData.allocations;
+
+    const openingBalances = authSet
+      ? (roiData.openingBalances || []).filter(
+          (ob) => ob.character_id === undefined || authSet.has(ob.character_id)
+        )
+      : roiData.openingBalances || [];
+
+    const assets = authSet
+      ? assetsData.assets.filter((a) => authSet.has(a.characterId))
+      : assetsData.assets;
+
+    const states = authSet
+      ? syncData.states.filter((s) => authSet.has(s.characterId))
+      : syncData.states;
+
     const data: AppBackupData = {
       ledger: {
-        transactions: ledgerData.transactions,
-        journalEntries: ledgerData.journalEntries,
+        transactions,
+        journalEntries,
       },
       orders: {
-        snapshots: ordersData.snapshots,
-        restockItems: ordersData.restockItems,
+        snapshots,
+        restockItems,
       },
       hubs: {
         definitions: hubsData.hubs,
         mappings: hubsData.mappings,
       },
       roi: {
-        allocations: roiData.allocations,
-        openingBalances: roiData.openingBalances || [],
+        allocations,
+        openingBalances,
       },
       assets: {
-        assets: assetsData.assets,
+        assets,
       },
       sync: {
-        states: syncData.states,
+        states,
       },
     };
 
@@ -145,19 +195,131 @@ export class BackupRestoreService {
 
   /**
    * Restores application state atomically from a verified backup snapshot.
-   * If any error occurs, rolls back to original state.
+   * Supports scoped restore per authorized characters or global restore with rollback guarantee.
    */
-  public restoreBackup(snapshot: AppBackupSnapshot): {
+  public restoreBackup(
+    snapshot: AppBackupSnapshot,
+    options?: RestoreBackupOptions
+  ): {
     success: boolean;
     restoredCounts?: Record<string, number>;
     error?: string;
+    unauthorized?: boolean;
   } {
     const verification = this.verifyBackup(snapshot);
     if (!verification.valid) {
       return { success: false, error: verification.error };
     }
 
-    // Capture pre-restore snapshot for atomic rollback guarantee
+    const authSet =
+      options?.authorizedCharacterIds && options.authorizedCharacterIds.length > 0
+        ? new Set(options.authorizedCharacterIds)
+        : null;
+
+    // In scoped restore mode, verify that the snapshot doesn't contain unauthorized character data
+    if (authSet && !options?.allowGlobalOverwrite) {
+      const charsInSnapshot = new Set<number>();
+      for (const t of snapshot.data.ledger.transactions) charsInSnapshot.add(t.characterId);
+      for (const j of snapshot.data.ledger.journalEntries) charsInSnapshot.add(j.characterId);
+      for (const o of snapshot.data.orders.snapshots) charsInSnapshot.add(o.characterId);
+      for (const r of snapshot.data.orders.restockItems) charsInSnapshot.add(r.characterId);
+      for (const a of snapshot.data.roi.allocations) {
+        if (a.character_id) charsInSnapshot.add(a.character_id);
+        if (a.buy_character_id) charsInSnapshot.add(a.buy_character_id);
+        if (a.sell_character_id) charsInSnapshot.add(a.sell_character_id);
+      }
+      for (const ob of (snapshot.data.roi.openingBalances || [])) {
+        if (ob.character_id !== undefined) charsInSnapshot.add(ob.character_id);
+      }
+      for (const a of snapshot.data.assets.assets) charsInSnapshot.add(a.characterId);
+      for (const s of snapshot.data.sync.states) charsInSnapshot.add(s.characterId);
+
+      const unauthorizedIds = Array.from(charsInSnapshot).filter((id) => !authSet.has(id));
+      if (unauthorizedIds.length > 0) {
+        return {
+          success: false,
+          unauthorized: true,
+          error: `Accès refusé : la sauvegarde contient des données pour des personnages non autorisés (${unauthorizedIds.join(', ')})`,
+        };
+      }
+
+      // Capture pre-restore snapshot for atomic rollback guarantee
+      const rollbackSnapshot = this.exportBackup();
+
+      try {
+        const { data } = snapshot;
+
+        // Clear existing data only for the authorized characters
+        for (const charId of authSet) {
+          this.ledgerRepo.clearCharacter(charId);
+          this.ordersRepo.clearCharacter(charId);
+          this.roiRepo.clearCharacter(charId);
+          this.assetsRepo.clearAssets(charId);
+          this.syncRepo.clearCharacter(charId);
+        }
+
+        // Restore scoped records
+        if (data.ledger.transactions.length > 0) {
+          this.ledgerRepo.saveTransactions(data.ledger.transactions);
+        }
+        if (data.ledger.journalEntries.length > 0) {
+          this.ledgerRepo.saveJournalEntries(data.ledger.journalEntries);
+        }
+        if (data.orders.snapshots.length > 0) {
+          this.ordersRepo.saveOrderSnapshots(data.orders.snapshots);
+        }
+        for (const item of data.orders.restockItems) {
+          this.ordersRepo.createRestockItem(item);
+        }
+        if (data.roi.allocations.length > 0) {
+          this.roiRepo.saveAllocations(data.roi.allocations);
+        }
+        if (data.roi.openingBalances) {
+          for (const ob of data.roi.openingBalances) {
+            this.roiRepo.saveOpeningBalance(ob);
+          }
+        }
+        if (data.assets.assets.length > 0) {
+          this.assetsRepo.saveAssets(data.assets.assets);
+        }
+        for (const st of data.sync.states) {
+          this.syncRepo.updateSyncState(st.characterId, st.resource, st);
+        }
+
+        // Upsert hubs and mappings
+        for (const hub of data.hubs.definitions) {
+          this.hubsRepo.upsertHub(hub);
+        }
+        for (const mapping of data.hubs.mappings) {
+          this.hubsRepo.upsertMapping(mapping);
+        }
+
+        return {
+          success: true,
+          restoredCounts: {
+            transactions: data.ledger.transactions.length,
+            journalEntries: data.ledger.journalEntries.length,
+            orders: data.orders.snapshots.length,
+            restockItems: data.orders.restockItems.length,
+            hubs: data.hubs.definitions.length,
+            mappings: data.hubs.mappings.length,
+            allocations: data.roi.allocations.length,
+            openingBalances: data.roi.openingBalances?.length || 0,
+            assets: data.assets.assets.length,
+            syncStates: data.sync.states.length,
+          },
+        };
+      } catch (err) {
+        // Clean rollback to pre-restore snapshot
+        this.restoreBackup(rollbackSnapshot, { allowGlobalOverwrite: true });
+        return {
+          success: false,
+          error: `Restauration cloisonnée échouée et annulée avec succès : ${(err as Error).message}`,
+        };
+      }
+    }
+
+    // Global restore mode (with rollback snapshot)
     const rollbackSnapshot = this.exportBackup();
 
     try {

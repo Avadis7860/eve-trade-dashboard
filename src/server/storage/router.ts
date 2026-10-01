@@ -16,7 +16,7 @@ export function createBackupRouter(backupService: BackupRestoreService = default
 
   /**
    * GET /api/backup/export
-   * Exports full application snapshot with cryptographic checksum
+   * Exports application snapshot strictly scoped to the active session's authorized characters
    */
   router.get('/export', (req: Request, res: Response) => {
     const session = getSession(req);
@@ -24,7 +24,11 @@ export function createBackupRouter(backupService: BackupRestoreService = default
       return res.status(401).json({ error: 'Session non authentifiée' });
     }
 
-    const backup = backupService.exportBackup();
+    const authorizedCharIds = session.characters
+      ? Object.keys(session.characters).map(Number)
+      : [session.activeCharacterId || session.characterId];
+
+    const backup = backupService.exportBackup(authorizedCharIds);
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition', `attachment; filename="eve-trade-dashboard-backup-${Date.now()}.json"`);
     return res.json(backup);
@@ -32,7 +36,7 @@ export function createBackupRouter(backupService: BackupRestoreService = default
 
   /**
    * POST /api/backup/restore
-   * Validates and restores full application snapshot atomically
+   * Validates and restores application snapshot in scoped mode (only authorized characters without altering others)
    */
   router.post('/restore', (req: Request, res: Response) => {
     const session = getSession(req);
@@ -40,11 +44,16 @@ export function createBackupRouter(backupService: BackupRestoreService = default
       return res.status(401).json({ error: 'Session non authentifiée' });
     }
 
+    const authorizedCharIds = session.characters
+      ? Object.keys(session.characters).map(Number)
+      : [session.activeCharacterId || session.characterId];
+
     const snapshot = req.body as AppBackupSnapshot;
-    const result = backupService.restoreBackup(snapshot);
+    const result = backupService.restoreBackup(snapshot, { authorizedCharacterIds: authorizedCharIds });
 
     if (!result.success) {
-      return res.status(400).json({ error: result.error });
+      const statusCode = result.unauthorized ? 403 : 400;
+      return res.status(statusCode).json({ error: result.error });
     }
 
     return res.json({

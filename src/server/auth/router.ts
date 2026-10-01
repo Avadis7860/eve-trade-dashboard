@@ -6,10 +6,11 @@ const SESSION_COOKIE_NAME = 'eve_session_id';
 
 function getCookieOptions(req: Request) {
   const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https' || process.env.NODE_ENV === 'production';
+  const sameSiteSetting = (process.env.COOKIE_SAMESITE as 'none' | 'lax' | 'strict' | undefined) || (isSecure ? 'lax' : 'lax');
   return {
     httpOnly: true,
     secure: isSecure,
-    sameSite: (isSecure ? 'none' : 'lax') as 'none' | 'lax',
+    sameSite: sameSiteSetting,
     path: '/',
     maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
   };
@@ -17,10 +18,11 @@ function getCookieOptions(req: Request) {
 
 function getClearCookieOptions(req: Request) {
   const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https' || process.env.NODE_ENV === 'production';
+  const sameSiteSetting = (process.env.COOKIE_SAMESITE as 'none' | 'lax' | 'strict' | undefined) || (isSecure ? 'lax' : 'lax');
   return {
     httpOnly: true,
     secure: isSecure,
-    sameSite: (isSecure ? 'none' : 'lax') as 'none' | 'lax',
+    sameSite: sameSiteSetting,
     path: '/',
   };
 }

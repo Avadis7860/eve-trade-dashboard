@@ -207,7 +207,7 @@ export class PostgresDatabaseAdapter implements IDatabaseAdapter {
     if (typeof connectionString === 'string') {
       this.pool = new Pool({
         connectionString,
-        ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
+        ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: true } : undefined,
         connectionTimeoutMillis: 10000,
         idleTimeoutMillis: 30000,
         max: 20,

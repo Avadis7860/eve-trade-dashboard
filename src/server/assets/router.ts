@@ -30,12 +30,14 @@ export function createAssetsRouter(
 
   router.get('/', (req: Request, res: Response) => {
     const session = (req as Request & { session: UserSession }).session;
-    const characterIdParam = req.query.character_id ? Number(req.query.character_id) : undefined;
-    const characterIdsParam = req.query.character_ids
-      ? String(req.query.character_ids).split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n))
+    const rawCharId = req.query.character_id ?? req.query.characterId;
+    const rawCharIds = req.query.character_ids ?? req.query.characterIds;
+    const characterIdParam = rawCharId !== undefined ? Number(rawCharId) : undefined;
+    const characterIdsParam = rawCharIds !== undefined
+      ? String(rawCharIds).split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n))
       : undefined;
 
-    const idsToValidate = characterIdsParam || (characterIdParam ? [characterIdParam] : [session.activeCharacterId || session.characterId]);
+    const idsToValidate = characterIdsParam || (characterIdParam !== undefined ? [characterIdParam] : [session.activeCharacterId || session.characterId]);
     const access = validateCharacterSessionAccess(session, idsToValidate);
     if (!access.allowed) {
       res.status(403).json({ error: 'Accès refusé pour ce personnage' });
@@ -65,12 +67,14 @@ export function createAssetsRouter(
 
   router.get('/summary', (req: Request, res: Response) => {
     const session = (req as Request & { session: UserSession }).session;
-    const characterIdParam = req.query.character_id ? Number(req.query.character_id) : undefined;
-    const characterIdsParam = req.query.character_ids
-      ? String(req.query.character_ids).split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n))
+    const rawCharId = req.query.character_id ?? req.query.characterId;
+    const rawCharIds = req.query.character_ids ?? req.query.characterIds;
+    const characterIdParam = rawCharId !== undefined ? Number(rawCharId) : undefined;
+    const characterIdsParam = rawCharIds !== undefined
+      ? String(rawCharIds).split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n))
       : undefined;
 
-    const idsToValidate = characterIdsParam || (characterIdParam ? [characterIdParam] : [session.activeCharacterId || session.characterId]);
+    const idsToValidate = characterIdsParam || (characterIdParam !== undefined ? [characterIdParam] : [session.activeCharacterId || session.characterId]);
     const access = validateCharacterSessionAccess(session, idsToValidate);
     if (!access.allowed) {
       res.status(403).json({ error: 'Accès refusé pour ce personnage' });
@@ -92,21 +96,27 @@ export function createAssetsRouter(
     }
 
     const locationId = req.query.location_id ? Number(req.query.location_id) : undefined;
-    const characterIdsParam = req.query.character_ids
-      ? String(req.query.character_ids).split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n))
-      : undefined;
+    const rawCharId = req.query.character_id ?? req.query.characterId;
+    const rawCharIds = req.query.character_ids ?? req.query.characterIds;
+    const characterIdsParam = rawCharIds !== undefined
+      ? String(rawCharIds).split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n))
+      : (rawCharId !== undefined ? [Number(rawCharId)] : undefined);
 
-    if (characterIdsParam) {
-      const access = validateCharacterSessionAccess(session, characterIdsParam);
-      if (!access.allowed) {
-        res.status(403).json({ error: 'Accès refusé pour ce personnage' });
-        return;
-      }
+    const authorizedIds = session.characters
+      ? Object.keys(session.characters).map(Number)
+      : [session.activeCharacterId || session.characterId];
+
+    const idsToValidate = characterIdsParam || authorizedIds;
+    const access = validateCharacterSessionAccess(session, idsToValidate);
+    if (!access.allowed) {
+      res.status(403).json({ error: 'Accès refusé pour ce personnage' });
+      return;
     }
 
-    const breakdown = service.getStockBreakdown(typeId, characterIdsParam);
+    const effectiveCharIds = characterIdsParam || authorizedIds;
+    const breakdown = service.getStockBreakdown(typeId, effectiveCharIds);
     const specificLocationQty = locationId !== undefined
-      ? service.getStockForType(typeId, locationId, characterIdsParam)
+      ? service.getStockForType(typeId, locationId, effectiveCharIds)
       : undefined;
 
     res.json({

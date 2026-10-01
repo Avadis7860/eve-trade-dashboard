@@ -8,12 +8,18 @@ const SENSITIVE_PATTERNS = [
   /access_token["']?\s*[:=]\s*["']?[A-Za-z0-9\-_.]+["']?/gi,
   /refresh_token["']?\s*[:=]\s*["']?[A-Za-z0-9\-_.]+["']?/gi,
   /code_verifier["']?\s*[:=]\s*["']?[A-Za-z0-9\-_.]+["']?/gi,
+  /code_challenge["']?\s*[:=]\s*["']?[A-Za-z0-9\-_.]+["']?/gi,
   /client_secret["']?\s*[:=]\s*["']?[A-Za-z0-9\-_.]+["']?/gi,
   /eve_session_id=[A-Za-z0-9\-_.]+/gi,
+  /csrf[-_]?token["']?\s*[:=]\s*["']?[A-Za-z0-9\-_.]+["']?/gi,
+  /[?&](access_token|refresh_token|code_verifier|code|client_secret)=[^&\s]+/gi,
+  /["']?authorization["']?\s*[:=]\s*["'][^"']+["']/gi,
 ];
 
 export function sanitizeLogMessage(message: unknown): string {
-  if (typeof message !== 'string') {
+  if (message instanceof Error) {
+    message = message.stack || `${message.name}: ${message.message}`;
+  } else if (typeof message !== 'string') {
     try {
       message = JSON.stringify(message);
     } catch {

@@ -28,6 +28,7 @@ export interface IRoiRepository {
   getInventoryLots(characterId?: number, characterIds?: number[], typeId?: number): InventoryLot[];
   getUnsoldInventory(characterId?: number, characterIds?: number[]): UnsoldInventoryItem[];
   dumpData(): { allocations: ExplicitCostAllocation[]; openingBalances?: OpeningBalanceLot[] };
+  clearCharacter(characterId: number): void;
   restoreData(data: { allocations: ExplicitCostAllocation[]; openingBalances?: OpeningBalanceLot[] }, sync?: boolean): void;
 }
 
@@ -320,6 +321,29 @@ export class PersistentRoiRepository implements IRoiRepository {
       allocations: Array.from(this.allocations.values()),
       openingBalances: Array.from(this.openingBalances.values()),
     };
+  }
+
+  clearCharacter(characterId: number): void {
+    let modified = false;
+    for (const [id, alloc] of Array.from(this.allocations.entries())) {
+      if (
+        alloc.character_id === characterId ||
+        alloc.buy_character_id === characterId ||
+        alloc.sell_character_id === characterId
+      ) {
+        this.allocations.delete(id);
+        modified = true;
+      }
+    }
+    for (const [id, ob] of Array.from(this.openingBalances.entries())) {
+      if (ob.character_id === characterId) {
+        this.openingBalances.delete(id);
+        modified = true;
+      }
+    }
+    if (modified) {
+      this.syncToStorage();
+    }
   }
 
   restoreData(data: { allocations: ExplicitCostAllocation[]; openingBalances?: OpeningBalanceLot[] }, sync = true): void {
@@ -743,6 +767,19 @@ export class PostgresRoiRepository implements IRoiRepository {
 
   public dumpData(): { allocations: ExplicitCostAllocation[]; openingBalances?: OpeningBalanceLot[] } {
     return this.fallbackMemory.dumpData();
+  }
+
+  public clearCharacter(characterId: number): void {
+    this.fallbackMemory.clearCharacter(characterId);
+    this.clearCharacterAsync(characterId).catch(() => {});
+  }
+
+  public async clearCharacterAsync(characterId: number): Promise<void> {
+    await this.adapter.execute(
+      'DELETE FROM explicit_cost_allocations WHERE character_id = $1 OR buy_character_id = $1 OR sell_character_id = $1',
+      [characterId]
+    );
+    await this.adapter.execute('DELETE FROM opening_balances WHERE character_id = $1', [characterId]);
   }
 
   public restoreData(data: { allocations: ExplicitCostAllocation[]; openingBalances?: OpeningBalanceLot[] }, sync = true): void {

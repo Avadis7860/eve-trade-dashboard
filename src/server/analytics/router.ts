@@ -34,16 +34,18 @@ export function createAnalyticsRouter(
    */
   const extractCharactersAndValidate = (req: Request, res: Response) => {
     const session = (req as Request & { session: UserSession }).session;
-    const characterIdParam = req.query.character_id ? Number(req.query.character_id) : undefined;
-    const characterIdsParam = req.query.character_ids
-      ? String(req.query.character_ids)
+    const rawCharId = req.query.character_id ?? req.query.characterId;
+    const rawCharIds = req.query.character_ids ?? req.query.characterIds;
+    const characterIdParam = rawCharId !== undefined ? Number(rawCharId) : undefined;
+    const characterIdsParam = rawCharIds !== undefined
+      ? String(rawCharIds)
           .split(',')
           .map((id) => Number(id.trim()))
           .filter((n) => !isNaN(n))
       : undefined;
 
     const idsToValidate =
-      characterIdsParam || (characterIdParam ? [characterIdParam] : [session.activeCharacterId || session.characterId]);
+      characterIdsParam || (characterIdParam !== undefined ? [characterIdParam] : [session.activeCharacterId || session.characterId]);
     const access = validateCharacterSessionAccess(session, idsToValidate);
     if (!access.allowed) {
       res.status(403).json({ error: 'Accès refusé pour ce personnage' });

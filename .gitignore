@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Production build outputs
+dist/
+
+# Persistent local data (must never be committed to git)
+/.data/*
+!/.data/eve_trade_store.example.json
+!/.data/.gitkeep
+
+# Temporary files & SQLite databases
+*.json.tmp
+*.db
+*.sqlite
+
+# Local environment secrets
+.env
+.env.local

@@ -86,6 +86,22 @@ Requête HTTP -> Session Cookie (HttpOnly, Secure)
 - Rapport d'audit de sécurité des routes HTTP (matrice des codes de réponse 401/403).
 - Vérification de l'absence de fichiers `.data/*.json` dans `git ls-files`.
 
+## Résultats et Preuves d'Exécution (Phase R06 Terminée)
+- **Nettoyage Git :**
+  - `git ls-files .data/` : Seul `.data/eve_trade_store.example.json` est tracé. Le fichier réel `eve_trade_store.json` a été déréférencé et exclu via `/.data/*` dans `.gitignore`.
+  - Aucune clé secrète, jeton OAuth ou donnée de personnage réel n'est tracée dans le dépôt.
+- **Matrice des codes d'accès HTTP & Isolation Multi-Personnages :**
+  - Non authentifié sur toute route privée : `HTTP 401 Unauthorized`.
+  - Requête d'un personnage non rattaché à la session (`/api/ledger/transactions?characterId=9999`, `/api/orders?characterId=9999`, `/api/assets?character_id=9999`, `/api/capital/summary?character_id=9999`, `/api/roi/summary?character_id=9999`) : `HTTP 403 Forbidden` (`Accès refusé pour ce personnage`).
+  - Restauration de sauvegarde contenant un personnage non autorisé (`/api/backup/restore`) : `HTTP 403 Forbidden`.
+  - Restauration avec empreinte altérée ou invalide : `HTTP 400 Bad Request` (`checksum mismatch`).
+- **Restauration cloisonnée (Scoped Restore) :**
+  - La restauration des données de Personnage A n'altère ni n'écrase les données de Personnage C en base (certifié par tests unitaires).
+- **Sanitisation des journaux :**
+  - `src/server/utils/logger.ts` expurge rigoureusement les tokens Bearer, refresh tokens, codes PKCE, client secrets, et tokens inclus dans les requêtes/erreurs réseau ESI (`[REDACTED]`).
+- **PostgreSQL TLS :**
+  - Enforcement strict `ssl: { rejectUnauthorized: true }` en production.
+
 ## Dépendances vers les autres phases
 - **Bloque :** Phase R7 (Tests complets), Phase R8 (Observabilité).
 - **Dépend de :** Phase R01.

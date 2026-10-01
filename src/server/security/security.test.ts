@@ -1,11 +1,14 @@
 // @vitest-environment node
-import { describe, it, expect, beforeEach } from 'vitest';
-import type { Request, Response } from 'express';
+import { describe, it, expect, beforeEach, beforeAll } from 'vitest';
+import type { Request, Response, Express } from 'express';
+import request from 'supertest';
 import { defaultSessionStore } from '../auth/sessionStore.ts';
 import { DEFAULT_SCOPES } from '../auth/service.ts';
 import { sanitizeLogMessage } from '../utils/logger.ts';
 import { validateCharacterSessionAccess, securityHeadersMiddleware, csrfProtectionMiddleware } from '../middleware/security.ts';
 import type { UserSession } from '../auth/types.ts';
+import { createApp } from '../../../server.ts';
+import { defaultBackupService } from '../storage/backupService.ts';
 
 describe('PHASE-H01 — Security Hardening Test Suite', () => {
   beforeEach(() => {
@@ -232,6 +235,105 @@ describe('PHASE-H01 — Security Hardening Test Suite', () => {
       const deleted = defaultSessionStore.deleteSession(session.sessionId);
       expect(deleted).toBe(true);
       expect(defaultSessionStore.getSession(session.sessionId)).toBeNull();
+    });
+  });
+
+  describe('7. Phase R06 — HTTP Multi-Tenant Route Isolation & Secret Non-Exposition', () => {
+    let app: Express;
+    let sessionA: UserSession;
+
+    beforeAll(async () => {
+      app = await createApp();
+    });
+
+    beforeEach(() => {
+      defaultSessionStore.clearAll();
+      sessionA = defaultSessionStore.createSession({
+        characterId: 10001,
+        characterName: 'Character A',
+        scopes: DEFAULT_SCOPES,
+        accessToken: 'access_token_pilot_a',
+        refreshToken: 'refresh_token_pilot_a',
+        expiresAt: Date.now() + 3600000,
+      });
+    });
+
+    it('rejects access to Character B data with HTTP 403 Forbidden when authenticated as Character A (/api/ledger/transactions?characterId=9999)', async () => {
+      const res = await request(app)
+        .get('/api/ledger/transactions?characterId=9999')
+        .set('Cookie', `eve_session_id=${sessionA.sessionId}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain('Accès refusé');
+    });
+
+    it('rejects access to Character B data on orders, assets, capital, and roi endpoints with HTTP 403 Forbidden', async () => {
+      const resOrders = await request(app)
+        .get('/api/orders?characterId=9999')
+        .set('Cookie', `eve_session_id=${sessionA.sessionId}`);
+      expect(resOrders.status).toBe(403);
+
+      const resAssets = await request(app)
+        .get('/api/assets?character_id=9999')
+        .set('Cookie', `eve_session_id=${sessionA.sessionId}`);
+      expect(resAssets.status).toBe(403);
+
+      const resCapital = await request(app)
+        .get('/api/capital/summary?character_id=9999')
+        .set('Cookie', `eve_session_id=${sessionA.sessionId}`);
+      expect(resCapital.status).toBe(403);
+
+      const resRoi = await request(app)
+        .get('/api/roi/summary?character_id=9999')
+        .set('Cookie', `eve_session_id=${sessionA.sessionId}`);
+      expect(resRoi.status).toBe(403);
+    });
+
+    it('rejects restoring a backup with unauthorized character data with HTTP 403 Forbidden', async () => {
+      // Create backup containing data for character 9999 (not in sessionA)
+      const unauthorizedBackup = defaultBackupService.exportBackup();
+      unauthorizedBackup.data.ledger.transactions.push({
+        id: '9999:1',
+        characterId: 9999,
+        transactionId: 1,
+        date: '2026-09-01T10:00:00Z',
+        typeId: 34,
+        quantity: 10,
+        unitPrice: 5.0,
+        totalValue: 50,
+        isBuy: true,
+        isPersonal: true,
+        journalRefId: 1,
+        locationId: 60003760,
+        clientId: 9999,
+        source: 'test',
+        observedAt: Date.now(),
+      });
+      unauthorizedBackup.checksum = defaultBackupService.computeChecksum(unauthorizedBackup.data);
+
+      const res = await request(app)
+        .post('/api/backup/restore')
+        .set('Cookie', `eve_session_id=${sessionA.sessionId}`)
+        .send(unauthorizedBackup);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain('non autorisés');
+    });
+
+    it('ensures logs never expose secrets even when capturing ESI network errors and error objects', () => {
+      const networkError = new Error('ESI request failed (500) for https://esi.evetech.net/v1/characters/10001/orders/?token=secret_esi_token_abc');
+      networkError.stack = `Error: ESI network failed
+        at fetch (https://esi.evetech.net/v1/?access_token=secret_access_xyz)
+        with Header Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.token_payload
+        and code_verifier="secret_pkce_verifier_999"`;
+
+      const sanitized = sanitizeLogMessage(networkError);
+
+      expect(sanitized).not.toContain('secret_esi_token_abc');
+      expect(sanitized).not.toContain('secret_access_xyz');
+      expect(sanitized).not.toContain('eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.token_payload');
+      expect(sanitized).not.toContain('secret_pkce_verifier_999');
+      expect(sanitized).toContain('[REDACTED]');
     });
   });
 });

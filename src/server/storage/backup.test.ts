@@ -288,4 +288,157 @@ describe('Storage & Backup Reliability Service (Phase H02)', () => {
     expect(report.status).toBe('CORRUPTED');
     expect(report.issues.some((i) => i.message.includes('Over-allocated buy transaction'))).toBe(true);
   });
+
+  describe('Phase R06 — Security Isolation & Scoped Backup/Restore', () => {
+    it('exports a scoped backup containing only authorized characters', () => {
+      const txA: CharacterTransaction = {
+        id: '1001:1',
+        characterId: 1001,
+        transactionId: 1,
+        date: '2026-09-01T10:00:00Z',
+        typeId: 34,
+        quantity: 100,
+        unitPrice: 5.0,
+        totalValue: 500,
+        isBuy: true,
+        isPersonal: true,
+        journalRefId: 10,
+        locationId: 60003760,
+        clientId: 1,
+        source: 'test',
+        observedAt: Date.now(),
+      };
+      const txB: CharacterTransaction = {
+        id: '2002:2',
+        characterId: 2002,
+        transactionId: 2,
+        date: '2026-09-02T10:00:00Z',
+        typeId: 34,
+        quantity: 200,
+        unitPrice: 5.5,
+        totalValue: 1100,
+        isBuy: true,
+        isPersonal: true,
+        journalRefId: 11,
+        locationId: 60003760,
+        clientId: 2,
+        source: 'test',
+        observedAt: Date.now(),
+      };
+      ledgerRepo.saveTransactions([txA, txB]);
+
+      // Scoped export for character 1001 only
+      const backupA = backupService.exportBackup([1001]);
+      expect(backupA.data.ledger.transactions).toHaveLength(1);
+      expect(backupA.data.ledger.transactions[0].characterId).toBe(1001);
+      expect(backupA.checksum).toMatch(/^[a-f0-9]{64}$/);
+      expect(backupService.verifyBackup(backupA).valid).toBe(true);
+    });
+
+    it('restores scoped backup for Character A without modifying or corrupting Character C data in database', () => {
+      // Seed Character A (1001) and Character C (3003)
+      const txA: CharacterTransaction = {
+        id: '1001:10',
+        characterId: 1001,
+        transactionId: 10,
+        date: '2026-09-01T10:00:00Z',
+        typeId: 34,
+        quantity: 100,
+        unitPrice: 5.0,
+        totalValue: 500,
+        isBuy: true,
+        isPersonal: true,
+        journalRefId: 1,
+        locationId: 60003760,
+        clientId: 10,
+        source: 'test',
+        observedAt: Date.now(),
+      };
+      const txC: CharacterTransaction = {
+        id: '3003:30',
+        characterId: 3003,
+        transactionId: 30,
+        date: '2026-09-01T11:00:00Z',
+        typeId: 35,
+        quantity: 500,
+        unitPrice: 10.0,
+        totalValue: 5000,
+        isBuy: true,
+        isPersonal: true,
+        journalRefId: 2,
+        locationId: 60003760,
+        clientId: 30,
+        source: 'test',
+        observedAt: Date.now(),
+      };
+      ledgerRepo.saveTransactions([txA, txC]);
+
+      // Export backup for character A
+      const backupA = backupService.exportBackup([1001]);
+
+      // Character A data gets modified, but Character C data remains
+      ledgerRepo.clearCharacter(1001);
+      expect(ledgerRepo.countTransactions(1001)).toBe(0);
+      expect(ledgerRepo.countTransactions(3003)).toBe(1);
+
+      // Restore Character A in scoped mode
+      const result = backupService.restoreBackup(backupA, { authorizedCharacterIds: [1001] });
+      expect(result.success).toBe(true);
+      expect(result.restoredCounts?.transactions).toBe(1);
+
+      // Character A is restored
+      expect(ledgerRepo.countTransactions(1001)).toBe(1);
+      expect(ledgerRepo.getTransactionById(1001, 10)).not.toBeNull();
+
+      // Character C is completely intact and untouched
+      expect(ledgerRepo.countTransactions(3003)).toBe(1);
+      expect(ledgerRepo.getTransactionById(3003, 30)?.totalValue).toBe(5000);
+    });
+
+    it('strictly rejects restoring a backup containing characters outside authorizedCharacterIds (tenant traversal prevention)', () => {
+      const txB: CharacterTransaction = {
+        id: '2002:99',
+        characterId: 2002,
+        transactionId: 99,
+        date: '2026-09-01T10:00:00Z',
+        typeId: 34,
+        quantity: 10,
+        unitPrice: 5.0,
+        totalValue: 50,
+        isBuy: true,
+        isPersonal: true,
+        journalRefId: 9,
+        locationId: 60003760,
+        clientId: 99,
+        source: 'test',
+        observedAt: Date.now(),
+      };
+      ledgerRepo.saveTransactions([txB]);
+
+      const backupB = backupService.exportBackup([2002]);
+
+      // User session is only authorized for character 1001, attempts to restore backup containing 2002
+      const result = backupService.restoreBackup(backupB, { authorizedCharacterIds: [1001] });
+      expect(result.success).toBe(false);
+      expect(result.unauthorized).toBe(true);
+      expect(result.error).toContain('non autorisés');
+    });
+
+    it('rejects backup with invalid cryptographic SHA-256 fingerprint if a single character is modified', () => {
+      const backup = backupService.exportBackup();
+      const serialized = JSON.stringify(backup);
+
+      // Modify a character inside the data payload
+      const tamperedSerialized = serialized.replace('"hubs":{', '"hubs":{"tampered":true,');
+      const tamperedObj = JSON.parse(tamperedSerialized);
+
+      const verification = backupService.verifyBackup(tamperedObj);
+      expect(verification.valid).toBe(false);
+      expect(verification.error).toContain('checksum mismatch');
+
+      const restoreRes = backupService.restoreBackup(tamperedObj);
+      expect(restoreRes.success).toBe(false);
+      expect(restoreRes.error).toContain('checksum mismatch');
+    });
+  });
 });

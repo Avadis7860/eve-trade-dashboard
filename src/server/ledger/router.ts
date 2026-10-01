@@ -58,14 +58,15 @@ export function createLedgerRouter(
       sortOrder,
       page,
       pageSize,
-      character_id,
-      character_ids,
     } = req.query;
 
-    const requestedCharId = character_id ? Number(character_id) : undefined;
-    const requestedCharIds = character_ids
-      ? String(character_ids).split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n))
-      : (requestedCharId ? [requestedCharId] : undefined);
+    const rawCharId = req.query.character_id ?? req.query.characterId;
+    const rawCharIds = req.query.character_ids ?? req.query.characterIds;
+
+    const requestedCharId = rawCharId !== undefined ? Number(rawCharId) : undefined;
+    const requestedCharIds = rawCharIds !== undefined
+      ? String(rawCharIds).split(',').map((id) => Number(id.trim())).filter((n) => !isNaN(n))
+      : (requestedCharId !== undefined ? [requestedCharId] : undefined);
 
     if (requestedCharIds) {
       const access = validateCharacterSessionAccess(session, requestedCharIds);
@@ -134,7 +135,8 @@ export function createLedgerRouter(
    */
   router.get('/journal', requireSession, (req: Request, res: Response) => {
     const session = (req as Request & { session: NonNullable<Awaited<ReturnType<typeof authService.getValidSession>>> }).session;
-    const requestedCharId = req.query.character_id ? Number(req.query.character_id) : session.characterId;
+    const rawCharId = req.query.character_id ?? req.query.characterId;
+    const requestedCharId = rawCharId !== undefined ? Number(rawCharId) : session.characterId;
 
     const access = validateCharacterSessionAccess(session, requestedCharId);
     if (!access.allowed) {
@@ -155,15 +157,18 @@ export function createLedgerRouter(
    */
   router.get('/summary', requireSession, (req: Request, res: Response) => {
     const session = (req as Request & { session: NonNullable<Awaited<ReturnType<typeof authService.getValidSession>>> }).session;
+    const rawCharIds = req.query.character_ids ?? req.query.characterIds;
+    const rawCharId = req.query.character_id ?? req.query.characterId;
+
     let characterIds: number[] | undefined;
-    if (typeof req.query.character_ids === 'string') {
-      characterIds = req.query.character_ids.split(',').map(Number).filter((n) => !isNaN(n));
-    } else if (session.characters && Object.keys(session.characters).length > 1 && !req.query.character_id) {
+    if (typeof rawCharIds === 'string') {
+      characterIds = rawCharIds.split(',').map(Number).filter((n) => !isNaN(n));
+    } else if (session.characters && Object.keys(session.characters).length > 1 && rawCharId === undefined) {
       characterIds = Object.keys(session.characters).map(Number);
     }
-    const requestedCharId = req.query.character_id ? Number(req.query.character_id) : (characterIds ? undefined : session.characterId);
+    const requestedCharId = rawCharId !== undefined ? Number(rawCharId) : (characterIds ? undefined : session.characterId);
 
-    const idsToValidate = characterIds || (requestedCharId ? [requestedCharId] : [session.characterId]);
+    const idsToValidate = characterIds || (requestedCharId !== undefined ? [requestedCharId] : [session.characterId]);
     const access = validateCharacterSessionAccess(session, idsToValidate);
     if (!access.allowed) {
       res.status(403).json({ error: 'Accès refusé pour ce personnage' });
@@ -180,7 +185,8 @@ export function createLedgerRouter(
    */
   router.get('/filter-options', requireSession, (req: Request, res: Response) => {
     const session = (req as Request & { session: NonNullable<Awaited<ReturnType<typeof authService.getValidSession>>> }).session;
-    const requestedCharId = req.query.character_id ? Number(req.query.character_id) : session.characterId;
+    const rawCharId = req.query.character_id ?? req.query.characterId;
+    const requestedCharId = rawCharId !== undefined ? Number(rawCharId) : session.characterId;
 
     const access = validateCharacterSessionAccess(session, requestedCharId);
     if (!access.allowed) {
@@ -198,7 +204,8 @@ export function createLedgerRouter(
    */
   router.get('/sync-status', requireSession, (req: Request, res: Response) => {
     const session = (req as Request & { session: NonNullable<Awaited<ReturnType<typeof authService.getValidSession>>> }).session;
-    const requestedCharId = req.query.character_id ? Number(req.query.character_id) : session.characterId;
+    const rawCharId = req.query.character_id ?? req.query.characterId;
+    const requestedCharId = rawCharId !== undefined ? Number(rawCharId) : session.characterId;
 
     const access = validateCharacterSessionAccess(session, requestedCharId);
     if (!access.allowed) {
@@ -243,11 +250,11 @@ export function createLedgerRouter(
         }
       }
 
-      // 2. Ordered Post-Processing: auto-discover hubs and run FIFO reconciliation across all characters
-      const allTx = ledgerRepository.getAllTransactions();
+      // 2. Ordered Post-Processing: auto-discover hubs and run FIFO reconciliation across only these characters
+      const allCharIds = charIdsToSync.map((c) => c.characterId);
+      const allTx = ledgerRepository.getAllTransactions(undefined, allCharIds);
       hubsService.autoDiscoverHubsFromTransactions(allTx);
 
-      const allCharIds = charIdsToSync.map((c) => c.characterId);
       roiService.autoReconcileFifo({ characterIds: allCharIds });
 
       res.json({

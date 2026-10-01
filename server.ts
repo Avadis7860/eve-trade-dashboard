@@ -67,8 +67,24 @@ export async function createApp() {
     });
   });
 
-  // Auth Router
-  app.use('/api/auth', createAuthRouter());
+  // Auth Router & OAuth Callback Aliases
+  const authRouter = createAuthRouter();
+  app.use('/api/auth', authRouter);
+  app.use('/auth', authRouter);
+
+  // Direct top-level OAuth callback and login aliases
+  app.get('/callback', (req: Request, res: Response, next) => {
+    req.url = '/callback';
+    authRouter(req, res, next);
+  });
+  app.get('/api/callback', (req: Request, res: Response, next) => {
+    req.url = '/callback';
+    authRouter(req, res, next);
+  });
+  app.get('/login', (req: Request, res: Response, next) => {
+    req.url = '/login';
+    authRouter(req, res, next);
+  });
 
   // System Observability & Diagnostics Router
   app.use('/api/system', createSystemRouter());

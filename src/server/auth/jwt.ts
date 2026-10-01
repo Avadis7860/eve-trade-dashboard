@@ -32,8 +32,8 @@ export function extractAndValidateCharacterIdentity(
   const payload = parseJwtPayload(token);
 
   // Validate issuer
-  const validIssuers = ['login.eveonline.com', 'https://login.eveonline.com'];
-  if (!payload.iss || !validIssuers.includes(payload.iss)) {
+  const normalizedIss = (payload.iss || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
+  if (normalizedIss !== 'login.eveonline.com') {
     throw new Error(`Invalid token issuer: ${payload.iss}`);
   }
 
@@ -48,15 +48,15 @@ export function extractAndValidateCharacterIdentity(
     throw new Error(`Token azp mismatch: expected ${expectedClientId}, got ${payload.azp}`);
   }
 
-  // Validate and parse character ID from subject
-  if (!payload.sub || !payload.sub.startsWith('CHARACTER:EVE:')) {
-    throw new Error(`Invalid subject format: ${payload.sub}`);
+  // Validate and parse character ID from subject (supports CHARACTER:EVE:123, character:eve:123, or 123)
+  if (!payload.sub) {
+    throw new Error('Missing subject in token claims');
   }
 
-  const characterIdStr = payload.sub.replace('CHARACTER:EVE:', '');
+  const characterIdStr = payload.sub.replace(/^character:eve:/i, '');
   const characterId = parseInt(characterIdStr, 10);
   if (isNaN(characterId) || characterId <= 0) {
-    throw new Error(`Invalid character ID parsed from subject: ${characterIdStr}`);
+    throw new Error(`Invalid character ID parsed from subject: ${payload.sub}`);
   }
 
   if (!payload.name) {

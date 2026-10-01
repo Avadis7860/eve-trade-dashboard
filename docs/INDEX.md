@@ -2,6 +2,8 @@
 
 | Besoin | Document |
 |---|---|
+| Audit technique approfondi Post-Phase 12 | [AUDIT-POST-PHASE-12](AUDIT-POST-PHASE-12.md) |
+| Masterplan Assurance Fiabilité & Traçabilité | [MASTERPLAN-ASSURANCE-FIABILITE](MASTERPLAN-ASSURANCE-FIABILITE.md) |
 | Plan et statut des phases | [MASTERPLAN](MASTERPLAN.md) |
 | Roadmap Fiabilité & Performance | [MASTERPLAN-RELIABILITY-PERFORMANCE](MASTERPLAN-RELIABILITY-PERFORMANCE.md) |
 | Audit produit existant & modèle cible | [PRODUCT_REDESIGN_AUDIT](PRODUCT_REDESIGN_AUDIT.md) |
@@ -37,10 +39,18 @@
 - [10 Product 360 et analyses temporelles](phases/PHASE-10-product-360-analytics.md) — *Terminé*
 - [10.bis Soldes réels des wallets, filtrage de liquidité et scopes ESI complets](phases/PHASE-10bis-wallets-and-scopes.md) — *Terminé*
 - [11 Opérations, réapprovisionnement et transferts](phases/PHASE-11-restock-and-transfers.md) — *Terminé*
-- [12 Refonte du cockpit, navigation et intégration UX](phases/PHASE-12-cockpit-and-ux-redesign.md) — *Planifiée*
-- [H03 Hardening UX, performance et release](phases/PHASE-H03-quality-release.md) — *Suspendue (Gel fonctionnel)*
+- [12 Refonte du cockpit, navigation et intégration UX](phases/PHASE-12-cockpit-and-ux-redesign.md) — *Terminé*
 
-## Roadmap Prioritaire — Fiabilité & Performance (Gel Fonctionnel)
+## Roadmap Post-Audit — Assurance Fiabilité & Traçabilité (Série F)
+- [F01 Cycle de vie sync, annulation réelle et persistance asynchrone](phases/PHASE-F01-sync-concurrency-lifecycle.md) — *Prête à démarrer*
+- [F02 Intégrité du stockage, anti-écrasement et vérité des données](phases/PHASE-F02-data-integrity-storage.md) — *Planifiée*
+- [F03 Invariants financiers, détection chronologique et valorisation FIFO](phases/PHASE-F03-financial-inventory-invariants.md) — *Planifiée*
+- [F04 Preuves de qualification réelles : PostgreSQL CI et tests E2E navigateur](phases/PHASE-F04-testing-ci-real-postgres-e2e.md) — *Planifiée*
+
+## Release Finale
+- [H03 Hardening UX, performance et release](phases/PHASE-H03-quality-release.md) — *Planifiée (après série F)*
+
+## Roadmap Historique — Fiabilité & Performance (R00–R08)
 - [R00 Baseline, mesure et gel fonctionnel](phases/PHASE-R00-baseline.md) — *Terminé*
 - [R01 Persistance et stockage durable PostgreSQL](phases/PHASE-R01-persistence.md) — *Terminé*
 - [R02 Complétude, pagination et vérité des états](phases/PHASE-R02-completeness-pagination.md) — *Terminé*
@@ -51,4 +61,4 @@
 - [R07 Stratégie de tests complète (Domain, SQL, HTTP, UI, E2E)](phases/PHASE-R07-testing-strategy.md) — *Terminé*
 - [R08 Observabilité et critères de production](phases/PHASE-R08-observability-production.md) — *Terminé*
 
-Le masterplan et le masterplan de fiabilité sont les sources de vérité sur les statuts. Ne pas dupliquer ici les plans détaillés.
+Le masterplan, le masterplan d'assurance fiabilité et le rapport d'audit post-phase 12 sont les sources de vérité sur les statuts. Ne pas dupliquer ici les plans détaillés.

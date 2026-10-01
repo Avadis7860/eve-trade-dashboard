@@ -58,3 +58,13 @@ export interface SyncResult {
   error?: string;
   asOf: number;
 }
+
+export interface SyncAllResult {
+  transactions: SyncResult;
+  journal: SyncResult;
+  orders: SyncResult;
+  assets: SyncResult;
+  wallet?: SyncResult;
+  corpWallets?: SyncResult;
+  corpAssets?: SyncResult;
+}

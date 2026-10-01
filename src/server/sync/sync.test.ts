@@ -323,4 +323,73 @@ describe('Sync Module (Sales Ledger & Orders Synchronization)', () => {
       expect(walletRepo.getCorporationWallets()).toHaveLength(0);
     });
   });
+
+  describe('Phase F01 — Orders Completeness Qualification & Resilient syncAll', () => {
+    it('qualifies order sync as PARTIAL and records reason when historical orders fetch fails (S0-4 fix)', async () => {
+      const mockActiveOrders = [
+        {
+          order_id: 9001,
+          type_id: 34,
+          region_id: 10000002,
+          location_id: 60003760,
+          range: 'region',
+          is_buy_order: false,
+          price: 5.5,
+          volume_total: 1000,
+          volume_remain: 1000,
+          issued: '2026-09-20T10:00:00Z',
+          duration: 90,
+        },
+      ];
+
+      vi.spyOn(esiClient, 'get').mockImplementation(async (path: string) => {
+        if (path.includes('/orders/history/')) {
+          throw new Error('504 Gateway Timeout on historical orders');
+        }
+        if (path.includes('/orders/')) {
+          return {
+            data: mockActiveOrders as unknown as typeof mockActiveOrders,
+            meta: { status: 200, fromCache: false, fetchedAt: Date.now() },
+          } as never;
+        }
+        return { data: [] as never, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } };
+      });
+
+      const result = await syncService.syncCharacterOrders(1001, 'dummy-token');
+
+      // Must be PARTIAL, not falsely COMPLETE!
+      expect(result.status).toBe('PARTIAL');
+      expect(result.coverageStatus).toBe('PARTIAL');
+      expect(result.hasMore).toBe(true);
+      expect(result.error).toContain('504 Gateway Timeout');
+
+      const savedState = await syncRepo.getSyncStateAsync(1001, 'character_orders');
+      expect(savedState.status).toBe('PARTIAL');
+      expect(savedState.coverageStatus).toBe('PARTIAL');
+      expect(savedState.errorMessage).toContain('504 Gateway Timeout');
+    });
+
+    it('syncAll resiliently handles partial failures and returns corporation resources without rejecting (S1-4 fix)', async () => {
+      vi.spyOn(esiClient, 'get').mockImplementation(async (path: string) => {
+        if (path.includes('/wallet/transactions/')) {
+          throw new Error('Transactions connection failed');
+        }
+        if (path.includes('/characters/1001/wallet/')) {
+          return { data: 5000000, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        return { data: [], meta: { status: 200, fromCache: false, fetchedAt: Date.now(), pages: 1 } } as never;
+      });
+
+      const allRes = await syncService.syncAll(1001, 'dummy-token');
+
+      // The 4 other endpoints and corp endpoints should not be aborted by the 1 failure
+      expect(allRes.transactions.status).toBe('ERROR');
+      expect(allRes.transactions.error).toContain('Transactions connection failed');
+      expect(allRes.journal.status).toBe('COMPLETE');
+      expect(allRes.orders.status).toBe('COMPLETE');
+      expect(allRes.assets.status).toBe('COMPLETE');
+      expect(allRes.wallet?.status).toBe('COMPLETE');
+      expect(allRes.wallet?.itemsFetched).toBe(1);
+    });
+  });
 });

@@ -16,7 +16,7 @@ import type { CharacterTransaction, CharacterWalletJournalEntry } from '../ledge
 import type { RawEsiOrder, CharacterOrderSnapshot } from '../orders/types.ts';
 import type { RawEsiAsset, CharacterAsset } from '../assets/types.ts';
 import { evaluateOrderLifecycle, calculateExpirationIso } from '../orders/lifecycle.ts';
-import type { SyncResult, SyncResourceType } from './types.ts';
+import type { SyncResult, SyncResourceType, SyncAllResult } from './types.ts';
 import type { IWalletRepository } from '../ledger/walletRepository.ts';
 import { defaultWalletRepository } from '../ledger/walletRepository.ts';
 import type { WalletBalanceSnapshot, WalletSyncMode } from '../capital/types.ts';
@@ -95,8 +95,8 @@ export class SyncService {
     options?: { resume?: boolean; maxItems?: number; forceRevalidate?: boolean }
   ): Promise<SyncResult> {
     const key = `sync:${characterId}:wallet_transactions`;
-    return this.coordinator.enqueue(key, () =>
-      this.executeSyncWalletTransactions(characterId, accessToken, refreshTokenFn, options)
+    return this.coordinator.enqueue(key, (signal) =>
+      this.executeSyncWalletTransactions(characterId, accessToken, refreshTokenFn, { ...options, signal })
     );
   }
 
@@ -104,12 +104,12 @@ export class SyncService {
     characterId: number,
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>,
-    options?: { resume?: boolean; maxItems?: number; forceRevalidate?: boolean }
+    options?: { resume?: boolean; maxItems?: number; forceRevalidate?: boolean; signal?: AbortSignal }
   ): Promise<SyncResult> {
     const resource: SyncResourceType = 'wallet_transactions';
     const startTime = Date.now();
 
-    const previousState = this.syncRepo.getSyncState(characterId, resource);
+    const previousState = await this.syncRepo.getSyncStateAsync(characterId, resource);
     const shouldResume =
       options?.resume !== false &&
       previousState.status === 'PARTIAL' &&
@@ -117,7 +117,7 @@ export class SyncService {
       previousState.hasMore === true;
     const initialFromId = shouldResume ? previousState.lastSuccessfulId : undefined;
 
-    this.syncRepo.updateSyncState(characterId, resource, {
+    await this.syncRepo.updateSyncStateAsync(characterId, resource, {
       status: 'SYNCING',
       lastSyncStartedAt: startTime,
     });
@@ -136,6 +136,7 @@ export class SyncService {
           pageSize: 2500,
           initialFromId,
           forceRevalidate: options?.forceRevalidate,
+          signal: options?.signal,
           onBatchSuccess: async (lowestId, batchItems) => {
             if (batchItems.length > 0) {
               const typeIds = batchItems.map((tx) => tx.type_id);
@@ -176,7 +177,7 @@ export class SyncService {
               newCount += saveResult.inserted;
 
               const totalPersisted = this.ledgerRepo.countTransactions(characterId);
-              this.syncRepo.updateSyncState(characterId, resource, {
+              await this.syncRepo.updateSyncStateAsync(characterId, resource, {
                 lastSuccessfulId: lowestId,
                 totalRecords: totalPersisted,
                 itemsCount: totalPersisted,
@@ -190,7 +191,7 @@ export class SyncService {
       const totalPersisted = this.ledgerRepo.countTransactions(characterId);
       const finalStatus = paginated.status;
 
-      this.syncRepo.updateSyncState(characterId, resource, {
+      await this.syncRepo.updateSyncStateAsync(characterId, resource, {
         status: finalStatus,
         coverageStatus: finalStatus,
         hasMore: paginated.hasMore,
@@ -220,7 +221,7 @@ export class SyncService {
       const errorMsg = (err as Error).message || 'Sync failed unexpectedly';
       const totalPersisted = this.ledgerRepo.countTransactions(characterId);
 
-      this.syncRepo.updateSyncState(characterId, resource, {
+      await this.syncRepo.updateSyncStateAsync(characterId, resource, {
         status: 'ERROR',
         coverageStatus: 'ERROR',
         lastSyncCompletedAt: Date.now(),
@@ -254,8 +255,8 @@ export class SyncService {
     options?: { resume?: boolean; maxPages?: number; forceRevalidate?: boolean }
   ): Promise<SyncResult> {
     const key = `sync:${characterId}:wallet_journal`;
-    return this.coordinator.enqueue(key, () =>
-      this.executeSyncWalletJournal(characterId, accessToken, refreshTokenFn, options)
+    return this.coordinator.enqueue(key, (signal) =>
+      this.executeSyncWalletJournal(characterId, accessToken, refreshTokenFn, { ...options, signal })
     );
   }
 
@@ -263,12 +264,12 @@ export class SyncService {
     characterId: number,
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>,
-    options?: { resume?: boolean; maxPages?: number; forceRevalidate?: boolean }
+    options?: { resume?: boolean; maxPages?: number; forceRevalidate?: boolean; signal?: AbortSignal }
   ): Promise<SyncResult> {
     const resource: SyncResourceType = 'wallet_journal';
     const startTime = Date.now();
 
-    const previousState = this.syncRepo.getSyncState(characterId, resource);
+    const previousState = await this.syncRepo.getSyncStateAsync(characterId, resource);
     const shouldResume =
       options?.resume !== false &&
       previousState.status === 'PARTIAL' &&
@@ -278,7 +279,7 @@ export class SyncService {
     const startPage = shouldResume ? previousState.lastPage! + 1 : 1;
     const maxPages = options?.maxPages || 5;
 
-    this.syncRepo.updateSyncState(characterId, resource, {
+    await this.syncRepo.updateSyncStateAsync(characterId, resource, {
       status: 'SYNCING',
       lastSyncStartedAt: startTime,
     });
@@ -296,6 +297,7 @@ export class SyncService {
           startPage,
           maxPages,
           forceRevalidate: options?.forceRevalidate,
+          signal: options?.signal,
           onPageSuccess: async (page, rawItems) => {
             if (page > highestPageFetched) {
               highestPageFetched = page;
@@ -327,7 +329,7 @@ export class SyncService {
             }
 
             const currentTotal = this.ledgerRepo.getJournalEntries(characterId, 1, 1).total;
-            this.syncRepo.updateSyncState(characterId, resource, {
+            await this.syncRepo.updateSyncStateAsync(characterId, resource, {
               lastPage: page,
               totalRecords: currentTotal,
               itemsCount: currentTotal,
@@ -341,7 +343,7 @@ export class SyncService {
       const totalPersisted = journalResult.total;
       const finalStatus = paginated.status;
 
-      this.syncRepo.updateSyncState(characterId, resource, {
+      await this.syncRepo.updateSyncStateAsync(characterId, resource, {
         status: finalStatus,
         coverageStatus: finalStatus,
         hasMore: paginated.hasMore,
@@ -371,7 +373,7 @@ export class SyncService {
       const errorMsg = (err as Error).message || 'Journal sync failed';
       const journalResult = this.ledgerRepo.getJournalEntries(characterId, 1, 1);
 
-      this.syncRepo.updateSyncState(characterId, resource, {
+      await this.syncRepo.updateSyncStateAsync(characterId, resource, {
         status: 'ERROR',
         coverageStatus: 'ERROR',
         lastSyncCompletedAt: Date.now(),
@@ -405,8 +407,8 @@ export class SyncService {
     options?: { forceRevalidate?: boolean }
   ): Promise<SyncResult> {
     const key = `sync:${characterId}:character_orders`;
-    return this.coordinator.enqueue(key, () =>
-      this.executeSyncCharacterOrders(characterId, accessToken, refreshTokenFn, options)
+    return this.coordinator.enqueue(key, (signal) =>
+      this.executeSyncCharacterOrders(characterId, accessToken, refreshTokenFn, { ...options, signal })
     );
   }
 
@@ -414,13 +416,13 @@ export class SyncService {
     characterId: number,
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>,
-    options?: { forceRevalidate?: boolean }
+    options?: { forceRevalidate?: boolean; signal?: AbortSignal }
   ): Promise<SyncResult> {
     const resource: SyncResourceType = 'character_orders';
     const startTime = Date.now();
     const observedAt = Date.now();
 
-    this.syncRepo.updateSyncState(characterId, resource, {
+    await this.syncRepo.updateSyncStateAsync(characterId, resource, {
       status: 'SYNCING',
       lastSyncStartedAt: startTime,
     });
@@ -429,22 +431,31 @@ export class SyncService {
       // 1. Fetch active orders
       const activeRes = await this.esiClient.get<RawEsiOrder[]>(
         `/characters/${characterId}/orders/`,
-        { accessToken, refreshTokenFn, forceRevalidate: options?.forceRevalidate }
+        { accessToken, refreshTokenFn, forceRevalidate: options?.forceRevalidate, signal: options?.signal }
       );
 
       const rawActive = Array.isArray(activeRes.data) ? activeRes.data : [];
 
       // 2. Fetch historical orders (up to 3 pages)
       let rawHistory: RawEsiOrder[] = [];
+      let historyFailed = false;
+      let historyErrorMsg: string | undefined;
+
       try {
         const historyRes = await fetchXPages<RawEsiOrder>(
           this.esiClient,
           `/characters/${characterId}/orders/history/`,
-          { accessToken, refreshTokenFn, maxPages: 3, forceRevalidate: options?.forceRevalidate }
+          { accessToken, refreshTokenFn, maxPages: 3, forceRevalidate: options?.forceRevalidate, signal: options?.signal }
         );
         rawHistory = historyRes.data || [];
+        if (historyRes.status === 'ERROR' || historyRes.status === 'PARTIAL') {
+          historyFailed = true;
+          historyErrorMsg = historyRes.error || `Historical orders fetch incomplete (${historyRes.status})`;
+        }
       } catch (histErr) {
-        console.warn('[SyncService] Historical orders fetch skipped:', (histErr as Error).message);
+        historyFailed = true;
+        historyErrorMsg = (histErr as Error).message || 'Historical orders fetch failed';
+        console.warn('[SyncService] Historical orders fetch failed:', historyErrorMsg);
       }
 
       // 3. Resolve universe names
@@ -534,23 +545,27 @@ export class SyncService {
       this.ordersRepo.markMissingOrdersAsDisappeared(characterId, activeOrderIds, observedAt);
 
       const totalTracked = this.ordersRepo.getOrdersForCharacter(characterId).length;
+      const finalStatus = historyFailed ? 'PARTIAL' : 'COMPLETE';
+      const coverageStatus = historyFailed ? 'PARTIAL' : 'COMPLETE';
 
-      this.syncRepo.updateSyncState(characterId, resource, {
-        status: 'COMPLETE',
-        coverageStatus: 'COMPLETE',
-        hasMore: false,
+      await this.syncRepo.updateSyncStateAsync(characterId, resource, {
+        status: finalStatus,
+        coverageStatus,
+        hasMore: historyFailed,
         lastSyncCompletedAt: Date.now(),
         totalRecords: totalTracked,
         itemsCount: totalTracked,
         newRecordsInLastSync: saveResult.inserted,
+        errorMessage: historyFailed ? historyErrorMsg : undefined,
       });
 
       return {
         resource,
         characterId,
-        status: 'COMPLETE',
-        coverageStatus: 'COMPLETE',
-        hasMore: false,
+        status: finalStatus,
+        coverageStatus,
+        hasMore: historyFailed,
+        error: historyFailed ? historyErrorMsg : undefined,
         itemsFetched: rawActive.length + rawHistory.length,
         newItemsPersisted: saveResult.inserted,
         totalPersisted: totalTracked,
@@ -561,7 +576,7 @@ export class SyncService {
       const errorMsg = (err as Error).message || 'Orders sync failed';
       const totalTracked = this.ordersRepo.getOrdersForCharacter(characterId).length;
 
-      this.syncRepo.updateSyncState(characterId, resource, {
+      await this.syncRepo.updateSyncStateAsync(characterId, resource, {
         status: 'ERROR',
         coverageStatus: 'ERROR',
         lastSyncCompletedAt: Date.now(),
@@ -595,8 +610,8 @@ export class SyncService {
     options?: { forceRevalidate?: boolean }
   ): Promise<SyncResult> {
     const key = `sync:${characterId}:character_wallet`;
-    return this.coordinator.enqueue(key, () =>
-      this.executeSyncCharacterWallet(characterId, accessToken, refreshTokenFn, options)
+    return this.coordinator.enqueue(key, (signal) =>
+      this.executeSyncCharacterWallet(characterId, accessToken, refreshTokenFn, { ...options, signal })
     );
   }
 
@@ -604,13 +619,13 @@ export class SyncService {
     characterId: number,
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>,
-    options?: { forceRevalidate?: boolean }
+    options?: { forceRevalidate?: boolean; signal?: AbortSignal }
   ): Promise<SyncResult> {
     const resource: SyncResourceType = 'character_wallet';
     const startTime = Date.now();
     const observedAt = Date.now();
 
-    this.syncRepo.updateSyncState(characterId, resource, {
+    await this.syncRepo.updateSyncStateAsync(characterId, resource, {
       status: 'SYNCING',
       lastSyncStartedAt: startTime,
     });
@@ -618,10 +633,13 @@ export class SyncService {
     try {
       const res = await this.esiClient.get<number>(
         `/characters/${characterId}/wallet/`,
-        { accessToken, refreshTokenFn, forceRevalidate: options?.forceRevalidate }
+        { accessToken, refreshTokenFn, forceRevalidate: options?.forceRevalidate, signal: options?.signal }
       );
 
-      const balance = typeof res.data === 'number' ? res.data : Number(res.data) || 0;
+      const balance = typeof res.data === 'number' ? res.data : Number(res.data);
+      if (isNaN(balance)) {
+        throw new Error(`Invalid wallet balance received from ESI: ${res.data}`);
+      }
       const characterName = this.universeService.getNameSync(characterId, 'Character');
 
       const snapshot: WalletBalanceSnapshot = {
@@ -638,7 +656,7 @@ export class SyncService {
 
       this.walletRepo.saveWalletSnapshot(snapshot);
 
-      this.syncRepo.updateSyncState(characterId, resource, {
+      await this.syncRepo.updateSyncStateAsync(characterId, resource, {
         status: 'COMPLETE',
         coverageStatus: 'COMPLETE',
         hasMore: false,
@@ -663,7 +681,7 @@ export class SyncService {
     } catch (err) {
       const errorMsg = (err as Error).message || 'Character wallet balance sync failed';
 
-      this.syncRepo.updateSyncState(characterId, resource, {
+      await this.syncRepo.updateSyncStateAsync(characterId, resource, {
         status: 'ERROR',
         coverageStatus: 'ERROR',
         lastSyncCompletedAt: Date.now(),
@@ -695,12 +713,10 @@ export class SyncService {
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>,
     options?: { walletSyncMode?: WalletSyncMode }
-  ): Promise<void> {
-    if (options?.walletSyncMode === 'CHARACTERS_ONLY') return;
-
+  ): Promise<SyncResult> {
     const key = `sync:${characterId}:corporation_wallets`;
-    return this.coordinator.enqueue(key, () =>
-      this.executeSyncCorporationWallets(characterId, accessToken, refreshTokenFn, options)
+    return this.coordinator.enqueue(key, (signal) =>
+      this.executeSyncCorporationWallets(characterId, accessToken, refreshTokenFn, { ...options, signal })
     );
   }
 
@@ -708,28 +724,87 @@ export class SyncService {
     characterId: number,
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>,
-    options?: { walletSyncMode?: WalletSyncMode }
-  ): Promise<void> {
-    if (options?.walletSyncMode === 'CHARACTERS_ONLY') return;
-    if (this.inaccessibleCorpCharacters.has(characterId)) return;
+    options?: { walletSyncMode?: WalletSyncMode; signal?: AbortSignal }
+  ): Promise<SyncResult> {
+    const resource: SyncResourceType = 'corporation_wallets';
+    const startTime = Date.now();
+
+    if (options?.walletSyncMode === 'CHARACTERS_ONLY') {
+      return {
+        resource,
+        characterId,
+        status: 'COMPLETE',
+        coverageStatus: 'COMPLETE',
+        hasMore: false,
+        itemsFetched: 0,
+        newItemsPersisted: 0,
+        totalPersisted: 0,
+        durationMs: Date.now() - startTime,
+        asOf: Date.now(),
+      };
+    }
+
+    if (this.inaccessibleCorpCharacters.has(characterId)) {
+      return {
+        resource,
+        characterId,
+        status: 'PARTIAL',
+        coverageStatus: 'PARTIAL',
+        hasMore: false,
+        itemsFetched: 0,
+        newItemsPersisted: 0,
+        totalPersisted: 0,
+        durationMs: Date.now() - startTime,
+        error: 'Corporation wallets inaccessible or forbidden for this character',
+        asOf: Date.now(),
+      };
+    }
+
+    await this.syncRepo.updateSyncStateAsync(characterId, resource, {
+      status: 'SYNCING',
+      lastSyncStartedAt: startTime,
+    });
 
     try {
       // 1. Fetch character public info to get corporation_id
       const charInfoRes = await this.esiClient.get<{ corporation_id: number }>(`/characters/${characterId}/`, {
         accessToken,
         refreshTokenFn,
+        signal: options?.signal,
       });
 
       const corpId = charInfoRes.data?.corporation_id;
       // In EVE Online, NPC corporations have IDs < 2,000,000 and do not have player-accessible wallets
-      if (!corpId || corpId < 2000000) return;
+      if (!corpId || corpId < 2000000) {
+        await this.syncRepo.updateSyncStateAsync(characterId, resource, {
+          status: 'COMPLETE',
+          coverageStatus: 'COMPLETE',
+          hasMore: false,
+          lastSyncCompletedAt: Date.now(),
+          totalRecords: 0,
+          itemsCount: 0,
+          newRecordsInLastSync: 0,
+        });
+        return {
+          resource,
+          characterId,
+          status: 'COMPLETE',
+          coverageStatus: 'COMPLETE',
+          hasMore: false,
+          itemsFetched: 0,
+          newItemsPersisted: 0,
+          totalPersisted: 0,
+          durationMs: Date.now() - startTime,
+          asOf: Date.now(),
+        };
+      }
 
       // 2. Fetch corporation division balances (wallets)
       let divisions: Array<{ division: number; balance: number }> = [];
       try {
         const divisionsRes = await this.esiClient.get<Array<{ division: number; balance: number }>>(
           `/corporations/${corpId}/wallets/`,
-          { accessToken, refreshTokenFn }
+          { accessToken, refreshTokenFn, signal: options?.signal }
         );
         if (Array.isArray(divisionsRes.data) && divisionsRes.data.length > 0) {
           divisions = divisionsRes.data;
@@ -737,10 +812,50 @@ export class SyncService {
       } catch {
         // If 403 Forbidden or scope error, character lacks corp wallet roles - mark and stop immediately
         this.inaccessibleCorpCharacters.add(characterId);
-        return;
+        await this.syncRepo.updateSyncStateAsync(characterId, resource, {
+          status: 'PARTIAL',
+          coverageStatus: 'PARTIAL',
+          hasMore: false,
+          lastSyncCompletedAt: Date.now(),
+          errorMessage: 'Lacks corporation wallet roles',
+        });
+        return {
+          resource,
+          characterId,
+          status: 'PARTIAL',
+          coverageStatus: 'PARTIAL',
+          hasMore: false,
+          itemsFetched: 0,
+          newItemsPersisted: 0,
+          totalPersisted: 0,
+          durationMs: Date.now() - startTime,
+          error: 'Lacks corporation wallet roles',
+          asOf: Date.now(),
+        };
       }
 
-      if (divisions.length === 0) return;
+      if (divisions.length === 0) {
+        await this.syncRepo.updateSyncStateAsync(characterId, resource, {
+          status: 'COMPLETE',
+          coverageStatus: 'COMPLETE',
+          hasMore: false,
+          lastSyncCompletedAt: Date.now(),
+          totalRecords: 0,
+          itemsCount: 0,
+        });
+        return {
+          resource,
+          characterId,
+          status: 'COMPLETE',
+          coverageStatus: 'COMPLETE',
+          hasMore: false,
+          itemsFetched: 0,
+          newItemsPersisted: 0,
+          totalPersisted: 0,
+          durationMs: Date.now() - startTime,
+          asOf: Date.now(),
+        };
+      }
 
       // 3. Fetch division names via GET /corporations/{corpId}/divisions/ (scope: esi-corporations.read_divisions.v1)
       const divisionNames = new Map<number, string>();
@@ -750,6 +865,7 @@ export class SyncService {
         }>(`/corporations/${corpId}/divisions/`, {
           accessToken,
           refreshTokenFn,
+          signal: options?.signal,
         });
         if (divNamesRes.data?.wallet && Array.isArray(divNamesRes.data.wallet)) {
           for (const d of divNamesRes.data.wallet) {
@@ -775,6 +891,7 @@ export class SyncService {
 
       // 5. Persist real balances for each corporation division
       const observedAt = Date.now();
+      let totalJournalFetched = 0;
       for (const div of divisions) {
         const divisionNumber = div.division || 1;
         const divisionName = divisionNames.get(divisionNumber) || (divisionNumber === 1 ? 'Master Wallet' : `Division ${divisionNumber}`);
@@ -803,10 +920,12 @@ export class SyncService {
               accessToken,
               refreshTokenFn,
               maxPages: 3,
+              signal: options?.signal,
             }
           );
 
           if (paginatedJournal.data && paginatedJournal.data.length > 0) {
+            totalJournalFetched += paginatedJournal.data.length;
             const entries: CharacterWalletJournalEntry[] = paginatedJournal.data.map((raw) => ({
               id: `${characterId}:corp:${corpId}:${divisionNumber}:${raw.id}`,
               characterId,
@@ -832,12 +951,56 @@ export class SyncService {
             this.ledgerRepo.saveJournalEntries(entries);
           }
         } catch {
-          // Ignore division errors (e.g. 403 lack of role for specific division)
+          // Ignore division errors
         }
       }
+
+      await this.syncRepo.updateSyncStateAsync(characterId, resource, {
+        status: 'COMPLETE',
+        coverageStatus: 'COMPLETE',
+        hasMore: false,
+        lastSyncCompletedAt: Date.now(),
+        totalRecords: divisions.length,
+        itemsCount: divisions.length,
+        newRecordsInLastSync: divisions.length,
+      });
+
+      return {
+        resource,
+        characterId,
+        status: 'COMPLETE',
+        coverageStatus: 'COMPLETE',
+        hasMore: false,
+        itemsFetched: divisions.length + totalJournalFetched,
+        newItemsPersisted: divisions.length,
+        totalPersisted: divisions.length,
+        durationMs: Date.now() - startTime,
+        asOf: Date.now(),
+      };
     } catch (err) {
       this.inaccessibleCorpCharacters.add(characterId);
-      console.warn(`[SyncService] Corporation wallet sync not accessible for character ${characterId}: ${(err as Error).message}`);
+      const errorMsg = (err as Error).message || 'Corporation wallet sync failed';
+      console.warn(`[SyncService] Corporation wallet sync not accessible for character ${characterId}: ${errorMsg}`);
+
+      await this.syncRepo.updateSyncStateAsync(characterId, resource, {
+        status: 'ERROR',
+        coverageStatus: 'ERROR',
+        lastSyncCompletedAt: Date.now(),
+        errorMessage: errorMsg,
+      });
+
+      return {
+        resource,
+        characterId,
+        status: 'ERROR',
+        coverageStatus: 'ERROR',
+        itemsFetched: 0,
+        newItemsPersisted: 0,
+        totalPersisted: 0,
+        durationMs: Date.now() - startTime,
+        error: errorMsg,
+        asOf: Date.now(),
+      };
     }
   }
 
@@ -851,8 +1014,8 @@ export class SyncService {
     options?: { resume?: boolean; maxPages?: number; forceRevalidate?: boolean }
   ): Promise<SyncResult> {
     const key = `sync:${characterId}:character_assets`;
-    return this.coordinator.enqueue(key, () =>
-      this.executeSyncCharacterAssets(characterId, accessToken, refreshTokenFn, options)
+    return this.coordinator.enqueue(key, (signal) =>
+      this.executeSyncCharacterAssets(characterId, accessToken, refreshTokenFn, { ...options, signal })
     );
   }
 
@@ -860,13 +1023,13 @@ export class SyncService {
     characterId: number,
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>,
-    options?: { resume?: boolean; maxPages?: number; forceRevalidate?: boolean }
+    options?: { resume?: boolean; maxPages?: number; forceRevalidate?: boolean; signal?: AbortSignal }
   ): Promise<SyncResult> {
     const resource: SyncResourceType = 'character_assets';
     const startTime = Date.now();
     const observedAt = Date.now();
 
-    const previousState = this.syncRepo.getSyncState(characterId, resource);
+    const previousState = await this.syncRepo.getSyncStateAsync(characterId, resource);
     const shouldResume =
       options?.resume !== false &&
       previousState.status === 'PARTIAL' &&
@@ -876,7 +1039,7 @@ export class SyncService {
     const startPage = shouldResume ? previousState.lastPage! + 1 : 1;
     const maxPages = options?.maxPages || 10;
 
-    this.syncRepo.updateSyncState(characterId, resource, {
+    await this.syncRepo.updateSyncStateAsync(characterId, resource, {
       status: 'SYNCING',
       lastSyncStartedAt: startTime,
     });
@@ -894,13 +1057,13 @@ export class SyncService {
           startPage,
           maxPages,
           forceRevalidate: options?.forceRevalidate,
+          signal: options?.signal,
           onPageSuccess: async (page, rawItems) => {
             if (page > highestPageFetched) {
               highestPageFetched = page;
             }
             if (rawItems.length > 0) {
               const typedItems = rawItems as RawEsiAsset[];
-              // Collect type IDs and universe location IDs (exclude nested item IDs which cannot be resolved via /universe/names/)
               const typeIds = typedItems.map((a) => a.type_id);
               const nonItemLocationIds = typedItems
                 .filter((a) => a.location_type !== 'item')
@@ -936,7 +1099,7 @@ export class SyncService {
             }
 
             const currentTotal = this.assetsRepo.getAllAssets(characterId).length;
-            this.syncRepo.updateSyncState(characterId, resource, {
+            await this.syncRepo.updateSyncStateAsync(characterId, resource, {
               lastPage: page,
               totalRecords: currentTotal,
               itemsCount: currentTotal,
@@ -949,7 +1112,7 @@ export class SyncService {
       const totalPersisted = this.assetsRepo.getAllAssets(characterId).length;
       const finalStatus = paginated.status;
 
-      this.syncRepo.updateSyncState(characterId, resource, {
+      await this.syncRepo.updateSyncStateAsync(characterId, resource, {
         status: finalStatus,
         coverageStatus: finalStatus,
         hasMore: paginated.hasMore,
@@ -979,7 +1142,7 @@ export class SyncService {
       const errorMsg = (err as Error).message || 'Assets sync failed';
       const totalPersisted = this.assetsRepo.getAllAssets(characterId).length;
 
-      this.syncRepo.updateSyncState(characterId, resource, {
+      await this.syncRepo.updateSyncStateAsync(characterId, resource, {
         status: 'ERROR',
         coverageStatus: 'ERROR',
         lastSyncCompletedAt: Date.now(),
@@ -1010,28 +1173,73 @@ export class SyncService {
     characterId: number,
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>
-  ): Promise<void> {
+  ): Promise<SyncResult> {
     const key = `sync:${characterId}:corporation_assets`;
-    return this.coordinator.enqueue(key, () =>
-      this.executeSyncCorporationAssets(characterId, accessToken, refreshTokenFn)
+    return this.coordinator.enqueue(key, (signal) =>
+      this.executeSyncCorporationAssets(characterId, accessToken, refreshTokenFn, { signal })
     );
   }
 
   private async executeSyncCorporationAssets(
     characterId: number,
     accessToken: string,
-    refreshTokenFn?: () => Promise<string | null>
-  ): Promise<void> {
-    if (this.inaccessibleCorpCharacters.has(characterId)) return;
+    refreshTokenFn?: () => Promise<string | null>,
+    options?: { signal?: AbortSignal }
+  ): Promise<SyncResult> {
+    const resource: SyncResourceType = 'corporation_assets';
+    const startTime = Date.now();
+
+    if (this.inaccessibleCorpCharacters.has(characterId)) {
+      return {
+        resource,
+        characterId,
+        status: 'PARTIAL',
+        coverageStatus: 'PARTIAL',
+        hasMore: false,
+        itemsFetched: 0,
+        newItemsPersisted: 0,
+        totalPersisted: 0,
+        durationMs: Date.now() - startTime,
+        error: 'Corporation assets inaccessible or forbidden for this character',
+        asOf: Date.now(),
+      };
+    }
+
+    await this.syncRepo.updateSyncStateAsync(characterId, resource, {
+      status: 'SYNCING',
+      lastSyncStartedAt: startTime,
+    });
 
     try {
       const charInfoRes = await this.esiClient.get<{ corporation_id: number }>(`/characters/${characterId}/`, {
         accessToken,
         refreshTokenFn,
+        signal: options?.signal,
       });
 
       const corpId = charInfoRes.data?.corporation_id;
-      if (!corpId || corpId < 2000000) return;
+      if (!corpId || corpId < 2000000) {
+        await this.syncRepo.updateSyncStateAsync(characterId, resource, {
+          status: 'COMPLETE',
+          coverageStatus: 'COMPLETE',
+          hasMore: false,
+          lastSyncCompletedAt: Date.now(),
+          totalRecords: 0,
+          itemsCount: 0,
+        });
+        return {
+          resource,
+          characterId,
+          status: 'COMPLETE',
+          coverageStatus: 'COMPLETE',
+          hasMore: false,
+          itemsFetched: 0,
+          newItemsPersisted: 0,
+          totalPersisted: 0,
+          durationMs: Date.now() - startTime,
+          asOf: Date.now(),
+        };
+      }
 
       const paginated = await fetchXPages<RawEsiAsset>(
         this.esiClient,
@@ -1040,15 +1248,36 @@ export class SyncService {
           accessToken,
           refreshTokenFn,
           maxPages: 10,
+          signal: options?.signal,
         }
       );
 
       if (paginated.status === 'ERROR' && paginated.error?.includes('Forbidden')) {
         this.inaccessibleCorpCharacters.add(characterId);
-        return;
+        await this.syncRepo.updateSyncStateAsync(characterId, resource, {
+          status: 'PARTIAL',
+          coverageStatus: 'PARTIAL',
+          hasMore: false,
+          lastSyncCompletedAt: Date.now(),
+          errorMessage: 'Lacks corporation asset director roles',
+        });
+        return {
+          resource,
+          characterId,
+          status: 'PARTIAL',
+          coverageStatus: 'PARTIAL',
+          hasMore: false,
+          itemsFetched: 0,
+          newItemsPersisted: 0,
+          totalPersisted: 0,
+          durationMs: Date.now() - startTime,
+          error: 'Lacks corporation asset director roles',
+          asOf: Date.now(),
+        };
       }
 
       const rawItems = paginated.data;
+      let insertedCount = 0;
       if (rawItems.length > 0) {
         const typeIds = rawItems.map((a) => a.type_id);
         const nonItemLocationIds = rawItems
@@ -1082,10 +1311,57 @@ export class SyncService {
           };
         });
 
-        this.assetsRepo.saveAssets(assets);
+        const saveRes = this.assetsRepo.saveAssets(assets);
+        insertedCount = saveRes.inserted;
       }
+
+      await this.syncRepo.updateSyncStateAsync(characterId, resource, {
+        status: paginated.status,
+        coverageStatus: paginated.status,
+        hasMore: paginated.hasMore,
+        lastSyncCompletedAt: Date.now(),
+        totalRecords: rawItems.length,
+        itemsCount: rawItems.length,
+        newRecordsInLastSync: insertedCount,
+        errorMessage: paginated.error,
+      });
+
+      return {
+        resource,
+        characterId,
+        status: paginated.status,
+        coverageStatus: paginated.status,
+        hasMore: paginated.hasMore,
+        itemsFetched: paginated.totalFetched,
+        newItemsPersisted: insertedCount,
+        totalPersisted: rawItems.length,
+        durationMs: Date.now() - startTime,
+        error: paginated.error,
+        asOf: Date.now(),
+      };
     } catch (err) {
-      console.warn(`[SyncService] Corporation assets sync skipped for character ${characterId}: ${(err as Error).message}`);
+      const errorMsg = (err as Error).message || 'Corporation assets sync failed';
+      console.warn(`[SyncService] Corporation assets sync skipped for character ${characterId}: ${errorMsg}`);
+
+      await this.syncRepo.updateSyncStateAsync(characterId, resource, {
+        status: 'ERROR',
+        coverageStatus: 'ERROR',
+        lastSyncCompletedAt: Date.now(),
+        errorMessage: errorMsg,
+      });
+
+      return {
+        resource,
+        characterId,
+        status: 'ERROR',
+        coverageStatus: 'ERROR',
+        itemsFetched: 0,
+        newItemsPersisted: 0,
+        totalPersisted: 0,
+        durationMs: Date.now() - startTime,
+        error: errorMsg,
+        asOf: Date.now(),
+      };
     }
   }
 
@@ -1099,26 +1375,59 @@ export class SyncService {
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>,
     options?: { forceRevalidate?: boolean; walletSyncMode?: WalletSyncMode }
-  ): Promise<{ transactions: SyncResult; journal: SyncResult; orders: SyncResult; assets: SyncResult; wallet?: SyncResult }> {
+  ): Promise<SyncAllResult> {
     const key = `syncAll:${characterId}`;
     return this.coordinator.coalesce(key, async () => {
       const forceRevalidate = options?.forceRevalidate ?? true;
-      // 1. Launch independent resources in parallel through the bounded worker pool
-      const [transactions, journal, orders, assets, wallet] = await Promise.all([
+
+      const fallbackErrorResult = (resource: SyncResourceType, errorMsg: string): SyncResult => ({
+        resource,
+        characterId,
+        status: 'ERROR',
+        coverageStatus: 'ERROR',
+        itemsFetched: 0,
+        newItemsPersisted: 0,
+        totalPersisted: 0,
+        durationMs: 0,
+        error: errorMsg,
+        asOf: Date.now(),
+      });
+
+      // 1. Launch independent resources in parallel through the bounded worker pool using Promise.allSettled
+      const [txSettled, jnSettled, ordSettled, astSettled, walSettled, corpWalSettled, corpAstSettled] = await Promise.allSettled([
         this.syncWalletTransactions(characterId, accessToken, refreshTokenFn, { forceRevalidate }),
         this.syncWalletJournal(characterId, accessToken, refreshTokenFn, { forceRevalidate }),
         this.syncCharacterOrders(characterId, accessToken, refreshTokenFn, { forceRevalidate }),
         this.syncCharacterAssets(characterId, accessToken, refreshTokenFn, { forceRevalidate }),
         this.syncCharacterWallet(characterId, accessToken, refreshTokenFn, { forceRevalidate }),
-      ]);
-
-      // 2. Launch secondary / corp resources in parallel (non-blocking for core result)
-      await Promise.allSettled([
         this.syncCorporationWallets(characterId, accessToken, refreshTokenFn, { walletSyncMode: options?.walletSyncMode }),
         this.syncCorporationAssets(characterId, accessToken, refreshTokenFn),
       ]);
 
-      return { transactions, journal, orders, assets, wallet };
+      const transactions = txSettled.status === 'fulfilled'
+        ? txSettled.value
+        : fallbackErrorResult('wallet_transactions', (txSettled.reason as Error)?.message || 'Transactions sync failed');
+
+      const journal = jnSettled.status === 'fulfilled'
+        ? jnSettled.value
+        : fallbackErrorResult('wallet_journal', (jnSettled.reason as Error)?.message || 'Journal sync failed');
+
+      const orders = ordSettled.status === 'fulfilled'
+        ? ordSettled.value
+        : fallbackErrorResult('character_orders', (ordSettled.reason as Error)?.message || 'Orders sync failed');
+
+      const assets = astSettled.status === 'fulfilled'
+        ? astSettled.value
+        : fallbackErrorResult('character_assets', (astSettled.reason as Error)?.message || 'Assets sync failed');
+
+      const wallet = walSettled.status === 'fulfilled'
+        ? walSettled.value
+        : fallbackErrorResult('character_wallet', (walSettled.reason as Error)?.message || 'Wallet sync failed');
+
+      const corpWallets = corpWalSettled.status === 'fulfilled' ? corpWalSettled.value : undefined;
+      const corpAssets = corpAstSettled.status === 'fulfilled' ? corpAstSettled.value : undefined;
+
+      return { transactions, journal, orders, assets, wallet, corpWallets, corpAssets };
     });
   }
 
@@ -1136,7 +1445,7 @@ export class SyncService {
   ): Promise<
     Array<{
       characterId: number;
-      result: { transactions: SyncResult; journal: SyncResult; orders: SyncResult; assets: SyncResult; wallet?: SyncResult } | null;
+      result: SyncAllResult | null;
       error: string | null;
     }>
   > {
@@ -1166,4 +1475,3 @@ export class SyncService {
 }
 
 export const defaultSyncService = new SyncService();
-

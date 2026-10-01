@@ -945,4 +945,34 @@ describe('Phase R01 — PostgreSQL Durable Persistence & SQL Repositories', () =
     expect(res.total).toBeGreaterThanOrEqual(1);
     expect(res.freshness).toBe('FRESH');
   });
+
+  it('16. (Phase F01) Verifies PostgresSyncRepository persists state durably across simulated process restart (S0-2 fix)', async () => {
+    // 1. Initial repo instance writes sync state to Postgres
+    await syncRepo.updateSyncStateAsync(1001, 'wallet_transactions', {
+      status: 'PARTIAL',
+      coverageStatus: 'PARTIAL',
+      lastSuccessfulId: 778899,
+      lastPage: 4,
+      totalRecords: 1500,
+      newRecordsInLastSync: 250,
+      hasMore: true,
+      errorMessage: 'Interrupted by rate limiter',
+    });
+
+    // 2. Simulate complete server process restart by creating a new PostgresSyncRepository with empty in-memory state
+    const freshSyncRepoAfterRestart = new PostgresSyncRepository(adapter);
+
+    // 3. Read state from DB via getSyncStateAsync
+    const restoredState = await freshSyncRepoAfterRestart.getSyncStateAsync(1001, 'wallet_transactions');
+    expect(restoredState.characterId).toBe(1001);
+    expect(restoredState.resource).toBe('wallet_transactions');
+    expect(restoredState.status).toBe('PARTIAL');
+    expect(restoredState.coverageStatus).toBe('PARTIAL');
+    expect(restoredState.lastSuccessfulId).toBe(778899);
+    expect(restoredState.lastPage).toBe(4);
+    expect(restoredState.totalRecords).toBe(1500);
+    expect(restoredState.newRecordsInLastSync).toBe(250);
+    expect(restoredState.hasMore).toBe(true);
+    expect(restoredState.errorMessage).toBe('Interrupted by rate limiter');
+  });
 });

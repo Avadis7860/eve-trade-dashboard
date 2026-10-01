@@ -25,8 +25,8 @@ Un seul chantier actif, une phase, une branche, un PR. Jamais sur main. Petits l
 | 10.bis | Soldes réels des wallets (personnages & divisions corpo), filtrage de liquidité et scopes ESI complets | 01–03, 09, 10 | Terminé |
 | 11 | Opérations, réapprovisionnement et transferts prioritaires | 08–10.bis | Terminé |
 | 12 | Refonte du cockpit, navigation et intégration UX | 08–11 | Terminé |
-| F01 | Cycle de vie sync, annulation réelle et persistance asynchrone | 00–12, R00–R08 | Prête à démarrer |
-| F02 | Intégrité du stockage, anti-écrasement et vérité des données | F01 | Planifiée |
+| F01 | Cycle de vie sync, annulation réelle et persistance asynchrone | 00–12, R00–R08 | Terminé |
+| F02 | Intégrité du stockage, anti-écrasement et vérité des données | F01 | Prête à démarrer |
 | F03 | Invariants financiers, détection chronologique et valorisation FIFO | F01, F02 | Planifiée |
 | F04 | Preuves de qualification réelles : PostgreSQL CI et tests E2E navigateur | F01–F03 | Planifiée |
 | H03 | Hardening UX, performance et release finale | 00–12, F01–F04 | Planifiée |

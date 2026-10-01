@@ -33,10 +33,10 @@ L'audit technique post-Phase 12 a identifié des vulnérabilités critiques dans
    Toutes les mutations de `SyncState` effectuées dans `SyncService` doivent attendre la fin de l'écriture physique en base de données avant de renvoyer le résultat.
 
 ## 5. Tests Obligatoires & Scénarios de Validation
-- [ ] Test unitaire vérifiant qu'un timeout dans le `SyncCoordinator` interrompt immédiatement la requête HTTP en cours et qu'aucune écriture en base n'a lieu après l'expiration.
-- [ ] Test de persistance prouvant qu'après un crash ou redémarrage du processus, `PostgresSyncRepository` relit l'état exact présent dans la table `sync_states`.
-- [ ] Test d'échec simulé sur `/characters/{id}/orders/history/` vérifiant que `syncCharacterOrders` retourne `status: 'PARTIAL'` et que le repository enregistre `coverageStatus: 'PARTIAL'`.
-- [ ] Test de charge multi-personnages vérifiant le respect strict du plafond de concurrence de 6 travailleurs actifs au maximum lors de timeouts simulés.
+- [x] Test unitaire vérifiant qu'un timeout dans le `SyncCoordinator` interrompt immédiatement la requête HTTP en cours et qu'aucune écriture en base n'a lieu après l'expiration.
+- [x] Test de persistance prouvant qu'après un crash ou redémarrage du processus, `PostgresSyncRepository` relit l'état exact présent dans la table `sync_states`.
+- [x] Test d'échec simulé sur `/characters/{id}/orders/history/` vérifiant que `syncCharacterOrders` retourne `status: 'PARTIAL'` et que le repository enregistre `coverageStatus: 'PARTIAL'`.
+- [x] Test de charge multi-personnages vérifiant le respect strict du plafond de concurrence de 6 travailleurs actifs au maximum lors de timeouts simulés.
 
 ## 6. Critères d'Entrée & de Sortie
 - **Entrée :** Branche dédiée `feature/F01-sync-concurrency-lifecycle` créée à partir de `main`.

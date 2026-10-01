@@ -430,4 +430,65 @@ describe('Phase R05 — Bounded Concurrency, Request Coalescing & Rate Limiting 
       expect(sentIfNoneMatch).toBe('"etag-live"'); // Sent If-None-Match
     });
   });
+
+  describe('6. Phase F01 — AbortSignal Interruptibility & Ghost Task Prevention', () => {
+    it('aborts running task via AbortSignal when coordinator timeout fires and prevents ghost writes', async () => {
+      const pool = new SyncCoordinator(2);
+      let wasAborted = false;
+      let postTimeoutExecutionReached = false;
+
+      const task = pool.enqueue(
+        'cancellable-task',
+        async (signal: AbortSignal) => {
+          signal.addEventListener('abort', () => {
+            wasAborted = true;
+          });
+
+          // Wait longer than timeout
+          await new Promise((resolve) => setTimeout(resolve, 80));
+
+          if (!signal.aborted) {
+            postTimeoutExecutionReached = true;
+          }
+          return 'should-not-reach';
+        },
+        { timeoutMs: 30 }
+      );
+
+      await expect(task).rejects.toThrow('timed out after 30ms');
+      expect(wasAborted).toBe(true);
+      expect(postTimeoutExecutionReached).toBe(false);
+      expect(pool.getStats().activeWorkers).toBe(0);
+    });
+
+    it('multi-character stress test with mixed timeouts stays strictly within concurrency bounds', async () => {
+      const pool = new SyncCoordinator(4);
+      let activeWorkersPeak = 0;
+
+      const runWithTracking = async (id: number, duration: number, signal: AbortSignal) => {
+        activeWorkersPeak = Math.max(activeWorkersPeak, pool.getStats().activeWorkers);
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(resolve, duration);
+          signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(signal.reason || new Error('Aborted'));
+          });
+        });
+        return `ok-${id}`;
+      };
+
+      const tasks = Array.from({ length: 16 }, (_, i) => {
+        const duration = i % 2 === 0 ? 60 : 15;
+        const timeoutMs = i % 2 === 0 ? 25 : 50;
+        return pool
+          .enqueue(`stress-${i}`, (signal) => runWithTracking(i, duration, signal), { timeoutMs })
+          .catch((err) => (err as Error).message);
+      });
+
+      const results = await Promise.all(tasks);
+      expect(results).toHaveLength(16);
+      expect(activeWorkersPeak).toBeLessThanOrEqual(4);
+      expect(pool.getStats().activeWorkers).toBe(0);
+    });
+  });
 });

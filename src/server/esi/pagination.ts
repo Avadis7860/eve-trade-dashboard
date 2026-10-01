@@ -14,6 +14,10 @@ export async function fetchXPages<T>(
   path: string,
   options: XPagesPaginationOptions = {}
 ): Promise<PaginatedResult<T>> {
+  if (options.signal?.aborted) {
+    throw options.signal.reason || new Error('Aborted');
+  }
+
   const maxPages = options.maxPages || 100;
   const startPage = Math.max(1, options.startPage || 1);
   const allItems: T[] = [];
@@ -30,6 +34,7 @@ export async function fetchXPages<T>(
     const firstRes = await client.get<T[]>(path, {
       ...options,
       params: { ...options.params, page: startPage },
+      signal: options.signal,
     });
 
     lastMeta = firstRes.meta;
@@ -50,9 +55,14 @@ export async function fetchXPages<T>(
 
     // 2. Fetch remaining pages sequentially
     for (let page = startPage + 1; page <= targetEndPage; page++) {
+      if (options.signal?.aborted) {
+        throw options.signal.reason || new Error('Aborted');
+      }
+
       const pageRes = await client.get<T[]>(path, {
         ...options,
         params: { ...options.params, page },
+        signal: options.signal,
       });
 
       lastMeta = pageRes.meta;
@@ -83,6 +93,9 @@ export async function fetchXPages<T>(
       reason,
     };
   } catch (err: unknown) {
+    if (options.signal?.aborted) {
+      throw options.signal.reason || (err as Error);
+    }
     const errorMsg = (err as Error)?.message || 'Pagination error';
     return {
       data: allItems,
@@ -106,6 +119,10 @@ export async function fetchFromId<T>(
   path: string,
   options: FromIdPaginationOptions<T>
 ): Promise<PaginatedResult<T>> {
+  if (options.signal?.aborted) {
+    throw options.signal.reason || new Error('Aborted');
+  }
+
   const maxItems = options.maxItems || 5000;
   const pageSize = options.pageSize || 2500;
   const fromIdParamName = options.fromIdParamName || 'from_id';
@@ -123,6 +140,10 @@ export async function fetchFromId<T>(
 
   try {
     while (allItems.length < maxItems) {
+      if (options.signal?.aborted) {
+        throw options.signal.reason || new Error('Aborted');
+      }
+
       const params: Record<string, string | number | boolean | undefined> = {
         ...options.params,
       };
@@ -134,6 +155,7 @@ export async function fetchFromId<T>(
       const res = await client.get<T[]>(path, {
         ...options,
         params,
+        signal: options.signal,
       });
 
       lastMeta = res.meta;
@@ -201,6 +223,9 @@ export async function fetchFromId<T>(
       reason,
     };
   } catch (err: unknown) {
+    if (options.signal?.aborted) {
+      throw options.signal.reason || (err as Error);
+    }
     const errorMsg = (err as Error)?.message || 'from_id pagination error';
     return {
       data: allItems,

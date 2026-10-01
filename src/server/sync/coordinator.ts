@@ -10,7 +10,7 @@ export interface SyncCoordinatorStats {
 export interface InternalQueueItem {
   id: string;
   key?: string;
-  fn: () => Promise<unknown>;
+  fn: (signal: AbortSignal) => Promise<unknown>;
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
   timeoutMs: number;
@@ -62,7 +62,7 @@ export class SyncCoordinator {
    */
   public enqueue<T>(
     key: string,
-    taskFn: () => Promise<T>,
+    taskFn: (signal: AbortSignal) => Promise<T>,
     options?: { timeoutMs?: number }
   ): Promise<T> {
     // 1. Request Coalescing: If task is already in-flight, return existing Promise
@@ -77,7 +77,7 @@ export class SyncCoordinator {
       const item: InternalQueueItem = {
         id: `${key || 'anon'}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         key,
-        fn: taskFn as () => Promise<unknown>,
+        fn: taskFn as (signal: AbortSignal) => Promise<unknown>,
         resolve: (val) => resolve(val as T),
         reject,
         timeoutMs,
@@ -120,12 +120,15 @@ export class SyncCoordinator {
   private async runTask(item: InternalQueueItem): Promise<void> {
     let timeoutTimer: NodeJS.Timeout | null = null;
     let isSettled = false;
+    const abortController = new AbortController();
 
     if (item.timeoutMs > 0) {
       timeoutTimer = setTimeout(() => {
         if (!isSettled) {
           isSettled = true;
-          item.reject(new Error(`Sync task [${item.key || item.id}] timed out after ${item.timeoutMs}ms of execution`));
+          const timeoutErr = new Error(`Sync task [${item.key || item.id}] timed out after ${item.timeoutMs}ms of execution`);
+          abortController.abort(timeoutErr);
+          item.reject(timeoutErr);
           this.onTaskFinished();
         }
       }, item.timeoutMs);
@@ -133,7 +136,7 @@ export class SyncCoordinator {
     }
 
     try {
-      const result = await item.fn();
+      const result = await item.fn(abortController.signal);
       if (!isSettled) {
         isSettled = true;
         if (timeoutTimer) clearTimeout(timeoutTimer);
@@ -145,6 +148,7 @@ export class SyncCoordinator {
       if (!isSettled) {
         isSettled = true;
         if (timeoutTimer) clearTimeout(timeoutTimer);
+        abortController.abort(err instanceof Error ? err : new Error(String(err)));
         item.reject(err);
         this.onTaskFinished();
       }

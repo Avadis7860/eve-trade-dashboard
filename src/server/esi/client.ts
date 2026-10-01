@@ -88,7 +88,19 @@ export class EsiClient {
 
         const timeout = options.timeoutMs || this.config.timeoutMs;
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), timeout);
+        const timeoutId = setTimeout(() => controller.abort(new Error(`ESI request timed out after ${timeout}ms`)), timeout);
+
+        const onParentAbort = () => {
+          controller.abort(options.signal?.reason || new Error('Request aborted'));
+        };
+
+        if (options.signal) {
+          if (options.signal.aborted) {
+            clearTimeout(timeoutId);
+            throw options.signal.reason || new Error('Request aborted');
+          }
+          options.signal.addEventListener('abort', onParentAbort, { once: true });
+        }
 
         let response: Response;
         try {
@@ -99,6 +111,9 @@ export class EsiClient {
           });
         } finally {
           clearTimeout(timeoutId);
+          if (options.signal) {
+            options.signal.removeEventListener('abort', onParentAbort);
+          }
         }
 
         // Update rate limiter with ESI error budget headers
@@ -189,6 +204,10 @@ export class EsiClient {
           throw err;
         }
 
+        if (options.signal?.aborted) {
+          throw options.signal.reason || new Error('Request aborted');
+        }
+
         // Network error / timeout
         const isAbort = (err as Error)?.name === 'AbortError';
         if (retries < maxRetries) {
@@ -233,7 +252,19 @@ export class EsiClient {
 
         const timeout = options.timeoutMs || this.config.timeoutMs;
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), timeout);
+        const timeoutId = setTimeout(() => controller.abort(new Error(`ESI request timed out after ${timeout}ms`)), timeout);
+
+        const onParentAbort = () => {
+          controller.abort(options.signal?.reason || new Error('Request aborted'));
+        };
+
+        if (options.signal) {
+          if (options.signal.aborted) {
+            clearTimeout(timeoutId);
+            throw options.signal.reason || new Error('Request aborted');
+          }
+          options.signal.addEventListener('abort', onParentAbort, { once: true });
+        }
 
         let response: Response;
         try {
@@ -245,6 +276,9 @@ export class EsiClient {
           });
         } finally {
           clearTimeout(timeoutId);
+          if (options.signal) {
+            options.signal.removeEventListener('abort', onParentAbort);
+          }
         }
 
         this.rateLimiter.updateFromHeaders(response.headers);
@@ -282,6 +316,10 @@ export class EsiClient {
       } catch (err: unknown) {
         if (err instanceof EsiHttpError) {
           throw err;
+        }
+
+        if (options.signal?.aborted) {
+          throw options.signal.reason || new Error('Request aborted');
         }
 
         const isAbort = (err as Error)?.name === 'AbortError';

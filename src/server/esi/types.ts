@@ -48,6 +48,7 @@ export interface EsiRequestOptions {
   forceRevalidate?: boolean;
   timeoutMs?: number;
   retryCount?: number;
+  signal?: AbortSignal;
   /** Function to obtain a fresh token if 401 occurs */
   refreshTokenFn?: () => Promise<string | null>;
 }

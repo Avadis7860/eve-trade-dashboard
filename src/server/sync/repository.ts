@@ -4,9 +4,13 @@ import type { IDatabaseAdapter } from '../storage/types.ts';
 
 export interface ISyncRepository {
   getSyncState(characterId: number, resource: SyncResourceType): SyncState;
+  getSyncStateAsync(characterId: number, resource: SyncResourceType): Promise<SyncState>;
   updateSyncState(characterId: number, resource: SyncResourceType, updates: Partial<SyncState>): SyncState;
+  updateSyncStateAsync(characterId: number, resource: SyncResourceType, updates: Partial<SyncState>): Promise<SyncState>;
   getFullStatus(characterId: number): FullCharacterSyncStatus;
+  getFullStatusAsync(characterId: number): Promise<FullCharacterSyncStatus>;
   clearCharacter(characterId: number): void;
+  clearCharacterAsync(characterId: number): Promise<void>;
   dumpData(): { states: SyncState[] };
   restoreData(data: { states: SyncState[] }): void;
 }
@@ -64,6 +68,10 @@ export class PersistentSyncRepository implements ISyncRepository {
     return defaultState;
   }
 
+  public async getSyncStateAsync(characterId: number, resource: SyncResourceType): Promise<SyncState> {
+    return this.getSyncState(characterId, resource);
+  }
+
   public updateSyncState(
     characterId: number,
     resource: SyncResourceType,
@@ -80,6 +88,14 @@ export class PersistentSyncRepository implements ISyncRepository {
     this.states.set(this.makeKey(characterId, resource), updated);
     this.syncToStorage();
     return updated;
+  }
+
+  public async updateSyncStateAsync(
+    characterId: number,
+    resource: SyncResourceType,
+    updates: Partial<SyncState>
+  ): Promise<SyncState> {
+    return this.updateSyncState(characterId, resource, updates);
   }
 
   public getFullStatus(characterId: number): FullCharacterSyncStatus {
@@ -105,6 +121,10 @@ export class PersistentSyncRepository implements ISyncRepository {
     };
   }
 
+  public async getFullStatusAsync(characterId: number): Promise<FullCharacterSyncStatus> {
+    return this.getFullStatus(characterId);
+  }
+
   public clearCharacter(characterId: number): void {
     for (const [key, state] of this.states.entries()) {
       if (state.characterId === characterId) {
@@ -112,6 +132,10 @@ export class PersistentSyncRepository implements ISyncRepository {
       }
     }
     this.syncToStorage();
+  }
+
+  public async clearCharacterAsync(characterId: number): Promise<void> {
+    this.clearCharacter(characterId);
   }
 
   public dumpData(): { states: SyncState[] } {
@@ -173,7 +197,9 @@ export class PostgresSyncRepository implements ISyncRepository {
       [characterId, resource]
     );
     if (res.rows.length > 0) {
-      return this.mapRowToSyncState(res.rows[0]);
+      const mapped = this.mapRowToSyncState(res.rows[0]);
+      this.fallbackMemory.updateSyncState(characterId, resource, mapped);
+      return mapped;
     }
 
     const defaultState: SyncState = {
@@ -195,6 +221,7 @@ export class PostgresSyncRepository implements ISyncRepository {
       [characterId, resource, defaultState.status, defaultState.coverageStatus, defaultState.hasMore, defaultState.itemsCount, defaultState.totalRecords, defaultState.newRecordsInLastSync, defaultState.asOf]
     );
 
+    this.fallbackMemory.updateSyncState(characterId, resource, defaultState);
     return defaultState;
   }
 
@@ -262,6 +289,7 @@ export class PostgresSyncRepository implements ISyncRepository {
       updated.asOf,
     ];
     await this.adapter.execute(sql, params);
+    this.fallbackMemory.updateSyncState(characterId, resource, updated);
     return updated;
   }
 
@@ -298,6 +326,7 @@ export class PostgresSyncRepository implements ISyncRepository {
   }
 
   public async clearCharacterAsync(characterId: number): Promise<void> {
+    this.fallbackMemory.clearCharacter(characterId);
     await this.adapter.execute('DELETE FROM sync_states WHERE character_id = $1', [characterId]);
   }
 

@@ -1,7 +1,29 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 /**
- * Sanitized logging utility for EVE Trade Dashboard
+ * Sanitized and contextual structured logging utility for EVE Trade Dashboard
  * Automatically redacts Authorization headers, OAuth tokens, client secrets, and cookies from log outputs.
+ * Correlates log entries via RequestId / CorrelationId across async flows.
  */
+
+export interface LogContext {
+  requestId?: string;
+  characterId?: number;
+  operation?: string;
+  startTime?: number;
+  [key: string]: unknown;
+}
+
+export interface StructuredLogEntry {
+  timestamp: string;
+  level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG';
+  message: string;
+  requestId?: string;
+  durationMs?: number;
+  context?: Record<string, unknown>;
+}
+
+export const logContextStorage = new AsyncLocalStorage<LogContext>();
 
 const SENSITIVE_PATTERNS = [
   /Bearer\s+[A-Za-z0-9\-_.]+/gi,
@@ -34,23 +56,80 @@ export function sanitizeLogMessage(message: unknown): string {
   return sanitized;
 }
 
+export function formatLogOutput(
+  level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG',
+  message: string,
+  extraMeta?: Record<string, unknown>
+): string {
+  const context = logContextStorage.getStore();
+  const requestId = context?.requestId;
+
+  if (process.env.LOG_FORMAT === 'json') {
+    const entry: StructuredLogEntry = {
+      timestamp: new Date().toISOString(),
+      level,
+      message,
+      requestId,
+      context: { ...context, ...extraMeta },
+    };
+    if (context?.startTime) {
+      entry.durationMs = Number((performance.now() - context.startTime).toFixed(2));
+    }
+    return JSON.stringify(entry);
+  }
+
+  const reqTag = requestId ? ` [${requestId}]` : '';
+  return `[${level}]${reqTag} ${message}`;
+}
+
 export const logger = {
+  runWithContext: <T>(context: LogContext, fn: () => T): T => {
+    return logContextStorage.run(context, fn);
+  },
+
+  getRequestId: (): string | undefined => {
+    return logContextStorage.getStore()?.requestId;
+  },
+
+  getContext: (): LogContext | undefined => {
+    return logContextStorage.getStore();
+  },
+
   info: (...args: unknown[]) => {
     const sanitized = args.map(sanitizeLogMessage).join(' ');
-    console.log(`[INFO] ${sanitized}`);
+    console.log(formatLogOutput('INFO', sanitized));
   },
+
   warn: (...args: unknown[]) => {
     const sanitized = args.map(sanitizeLogMessage).join(' ');
-    console.warn(`[WARN] ${sanitized}`);
+    console.warn(formatLogOutput('WARN', sanitized));
   },
+
   error: (...args: unknown[]) => {
     const sanitized = args.map(sanitizeLogMessage).join(' ');
-    console.error(`[ERROR] ${sanitized}`);
+    console.error(formatLogOutput('ERROR', sanitized));
   },
+
   debug: (...args: unknown[]) => {
     if (process.env.NODE_ENV !== 'production') {
       const sanitized = args.map(sanitizeLogMessage).join(' ');
-      console.log(`[DEBUG] ${sanitized}`);
+      console.log(formatLogOutput('DEBUG', sanitized));
+    }
+  },
+
+  logStructured: (
+    level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG',
+    message: string,
+    meta?: Record<string, unknown>
+  ) => {
+    const sanitized = sanitizeLogMessage(message);
+    const output = formatLogOutput(level, sanitized, meta);
+    if (level === 'ERROR') {
+      console.error(output);
+    } else if (level === 'WARN') {
+      console.warn(output);
+    } else {
+      console.log(output);
     }
   },
 };

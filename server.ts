@@ -13,6 +13,8 @@ import { createAssetsRouter } from './src/server/assets/router.ts';
 import { createCapitalRouter } from './src/server/capital/router.ts';
 import { createAnalyticsRouter } from './src/server/analytics/router.ts';
 import { createBackupRouter } from './src/server/storage/router.ts';
+import { createSystemRouter } from './src/server/system/router.ts';
+import { requestContextMiddleware } from './src/server/middleware/context.ts';
 import { securityHeadersMiddleware, csrfProtectionMiddleware } from './src/server/middleware/security.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -21,6 +23,9 @@ const __dirname = path.dirname(__filename);
 export async function createApp() {
   const app = express();
   app.disable('x-powered-by');
+
+  // Request correlation & context tracking
+  app.use(requestContextMiddleware);
 
   // Security Headers and CORS
   app.use(securityHeadersMiddleware);
@@ -56,13 +61,16 @@ export async function createApp() {
     res.json({
       name: 'EVE Trade Dashboard',
       description: 'EVE Online trade dashboard',
-      phase: 'PHASE-10-product-360-analytics',
+      phase: 'PHASE-R08-observability-production',
       status: 'operational',
     });
   });
 
   // Auth Router
   app.use('/api/auth', createAuthRouter());
+
+  // System Observability & Diagnostics Router
+  app.use('/api/system', createSystemRouter());
 
   // ESI Gateway Router
   app.use('/api/esi', createEsiRouter());

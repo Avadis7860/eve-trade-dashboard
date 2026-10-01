@@ -22,7 +22,15 @@ describe('Server API Endpoints', () => {
 
     const infoRes = await request(app).get('/api/info');
     expect(infoRes.status).toBe(200);
-    expect(infoRes.body.phase).toBe('PHASE-10-product-360-analytics');
+    expect(infoRes.body.phase).toBe('PHASE-R08-observability-production');
+
+    const metricsRes = await request(app).get('/api/system/metrics');
+    expect(metricsRes.status).toBe(200);
+    expect(metricsRes.body.system).toBeDefined();
+
+    const diagRes = await request(app).get('/api/system/diagnostics');
+    expect([200, 503]).toContain(diagRes.status);
+    expect(diagRes.body.status).toBeDefined();
   });
 
   it('protects /api/capital and /api/analytics routes against unauthenticated requests', async () => {

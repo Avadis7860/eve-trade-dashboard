@@ -1,6 +1,7 @@
 import { EsiCache, defaultEsiCache } from './cache.ts';
 import { EsiRateLimiter, defaultEsiRateLimiter } from './rateLimiter.ts';
 import type { EsiClientConfig, EsiRequestOptions, EsiResponse, EsiResponseMeta } from './types.ts';
+import { defaultMetricsCollector } from '../utils/metrics.ts';
 
 export const DEFAULT_ESI_CONFIG: EsiClientConfig = {
   baseUrl: 'https://esi.evetech.net',
@@ -40,6 +41,7 @@ export class EsiClient {
     if (!options.skipCache && !options.forceRevalidate) {
       const freshCached = this.cache.getFresh<T>(cacheKey);
       if (freshCached) {
+        defaultMetricsCollector.recordEsiRequest(path, 0, 304, true);
         return {
           data: freshCached.data,
           meta: {
@@ -64,6 +66,7 @@ export class EsiClient {
 
     while (retries <= maxRetries) {
       await this.rateLimiter.acquire();
+      const reqStart = performance.now();
 
       try {
         const headers: Record<string, string> = {
@@ -100,11 +103,13 @@ export class EsiClient {
 
         // Update rate limiter with ESI error budget headers
         this.rateLimiter.updateFromHeaders(response.headers);
+        const duration = Number((performance.now() - reqStart).toFixed(2));
 
         const meta: EsiResponseMeta = this.extractResponseMeta(response);
 
         // 3. Handle 304 Not Modified
         if (response.status === 304) {
+          defaultMetricsCollector.recordEsiRequest(path, duration, 304, true);
           if (staleCached) {
             this.cache.touch304(cacheKey, {
               expiresHeader: response.headers.get('expires'),
@@ -122,6 +127,7 @@ export class EsiClient {
 
         // 4. Handle 200 OK
         if (response.ok) {
+          defaultMetricsCollector.recordEsiRequest(path, duration, 200, false);
           const data: T = await response.json();
           this.cache.set(cacheKey, data, {
             etag: meta.etag,
@@ -134,6 +140,9 @@ export class EsiClient {
             meta,
           };
         }
+
+        // Record error in metrics
+        defaultMetricsCollector.recordEsiRequest(path, duration, response.status, false);
 
         // 5. Handle 401 Unauthorized (attempt token refresh once)
         if (response.status === 401 && options.refreshTokenFn && !didRefreshToken) {
@@ -208,6 +217,7 @@ export class EsiClient {
 
     while (retries <= maxRetries) {
       await this.rateLimiter.acquire();
+      const reqStart = performance.now();
 
       try {
         const headers: Record<string, string> = {
@@ -238,12 +248,16 @@ export class EsiClient {
         }
 
         this.rateLimiter.updateFromHeaders(response.headers);
+        const duration = Number((performance.now() - reqStart).toFixed(2));
         const meta: EsiResponseMeta = this.extractResponseMeta(response);
 
         if (response.ok) {
+          defaultMetricsCollector.recordEsiRequest(path, duration, response.status, false);
           const data: T = await response.json();
           return { data, meta };
         }
+
+        defaultMetricsCollector.recordEsiRequest(path, duration, response.status, false);
 
         if (response.status === 420 || response.status === 429) {
           this.rateLimiter.handleRateLimitHit(response.status, meta.retryAfter);

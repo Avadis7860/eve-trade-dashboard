@@ -7,12 +7,15 @@ import { UniverseService } from '../universe/service.ts';
 import { EsiClient } from '../esi/client.ts';
 import { EsiCache } from '../esi/cache.ts';
 import { EsiRateLimiter } from '../esi/rateLimiter.ts';
+import { WalletRepository } from '../ledger/walletRepository.ts';
+import type { IDatabaseAdapter } from '../storage/types.ts';
 
 describe('Sync Module (Sales Ledger & Orders Synchronization)', () => {
   let ledgerRepo: InMemoryLedgerRepository;
   let ordersRepo: InMemoryOrdersRepository;
   let syncRepo: InMemorySyncRepository;
   let universeService: UniverseService;
+  let walletRepo: WalletRepository;
   let esiClient: EsiClient;
   let syncService: SyncService;
 
@@ -20,6 +23,7 @@ describe('Sync Module (Sales Ledger & Orders Synchronization)', () => {
     ledgerRepo = new InMemoryLedgerRepository();
     ordersRepo = new InMemoryOrdersRepository();
     syncRepo = new InMemorySyncRepository();
+    walletRepo = new WalletRepository(null as unknown as IDatabaseAdapter);
     const cache = new EsiCache();
     const rateLimiter = new EsiRateLimiter();
 
@@ -37,7 +41,16 @@ describe('Sync Module (Sales Ledger & Orders Synchronization)', () => {
     );
 
     universeService = new UniverseService(esiClient);
-    syncService = new SyncService(esiClient, ledgerRepo, ordersRepo, syncRepo, universeService);
+    syncService = new SyncService(
+      esiClient,
+      ledgerRepo,
+      ordersRepo,
+      syncRepo,
+      universeService,
+      undefined,
+      undefined,
+      walletRepo
+    );
   });
 
   it('synchronizes wallet transactions with from_id pagination and persists them', async () => {
@@ -213,5 +226,101 @@ describe('Sync Module (Sales Ledger & Orders Synchronization)', () => {
     expect(savedOrders[0].orderId).toBe(9001);
     expect(savedOrders[0].state).toBe('ACTIVE');
     expect(savedOrders[0].typeName).toBe('Tritanium');
+  });
+
+  describe('Phase 10.bis Real Wallets & Corporation Divisions Sync', () => {
+    it('synchronizes real character wallet balance via GET /characters/{id}/wallet and stores snapshot', async () => {
+      vi.spyOn(esiClient, 'get').mockImplementation(async (path: string) => {
+        if (path.includes('/characters/1001/wallet/')) {
+          return { data: 12_345_678_900.5, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        return { data: [] as never, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } };
+      });
+
+      const result = await syncService.syncCharacterWallet(1001, 'dummy-token');
+      expect(result.status).toBe('COMPLETE');
+      expect(result.itemsFetched).toBe(1);
+
+      const snap = walletRepo.getCharacterWallet(1001);
+      expect(snap).toBeDefined();
+      expect(snap?.balance).toBe(12_345_678_900.5);
+      expect(snap?.type).toBe('CHARACTER');
+      expect(snap?.source).toBe('/characters/1001/wallet/');
+    });
+
+    it('synchronizes corporation divisions with real balances, names, and tags journal entries', async () => {
+      vi.spyOn(esiClient, 'get').mockImplementation(async (path: string) => {
+        if (path === '/characters/1001/') {
+          return { data: { corporation_id: 98000001 }, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path === '/corporations/98000001/wallets/') {
+          return {
+            data: [
+              { division: 1, balance: 25_000_000_000 },
+              { division: 2, balance: 5_000_000_000 },
+            ],
+            meta: { status: 200, fromCache: false, fetchedAt: Date.now() },
+          } as never;
+        }
+        if (path === '/corporations/98000001/divisions/') {
+          return {
+            data: {
+              wallet: [
+                { division: 1, name: 'Trésorerie Centrale' },
+                { division: 2, name: 'Trading Hub Jita' },
+              ],
+            },
+            meta: { status: 200, fromCache: false, fetchedAt: Date.now() },
+          } as never;
+        }
+        if (path.includes('/journal/')) {
+          return {
+            data: [
+              {
+                id: 88801,
+                date: '2026-09-20T12:00:00Z',
+                ref_type: 'transaction_tax',
+                amount: -150000,
+                balance: 24_999_850_000,
+                description: 'Taxe CCP',
+              },
+            ],
+            meta: { status: 200, fromCache: false, fetchedAt: Date.now(), pages: 1 },
+          } as never;
+        }
+        return { data: [] as never, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } };
+      });
+
+      await syncService.syncCorporationWallets(1001, 'dummy-token');
+
+      const corpWallets = walletRepo.getCorporationWallets(98000001);
+      expect(corpWallets).toHaveLength(2);
+
+      const div1 = corpWallets.find((w) => w.division === 1);
+      expect(div1?.divisionName).toBe('Trésorerie Centrale');
+      expect(div1?.balance).toBe(25_000_000_000);
+
+      const div2 = corpWallets.find((w) => w.division === 2);
+      expect(div2?.divisionName).toBe('Trading Hub Jita');
+      expect(div2?.balance).toBe(5_000_000_000);
+
+      // Verify that journal entries are saved with isCorporationWallet: true and corporationId
+      const { items: journalItems } = ledgerRepo.getJournalEntries(1001);
+      expect(journalItems.length).toBeGreaterThan(0);
+      const corpJn = journalItems.find((j) => j.journalId === 88801);
+      expect(corpJn?.isCorporationWallet).toBe(true);
+      expect(corpJn?.corporationId).toBe(98000001);
+      expect(corpJn?.division).toBe(1);
+    });
+
+    it('skips corporation wallet synchronization when walletSyncMode is CHARACTERS_ONLY', async () => {
+      const getSpy = vi.spyOn(esiClient, 'get');
+      await syncService.syncCorporationWallets(1001, 'dummy-token', undefined, {
+        walletSyncMode: 'CHARACTERS_ONLY',
+      });
+
+      expect(getSpy).not.toHaveBeenCalled();
+      expect(walletRepo.getCorporationWallets()).toHaveLength(0);
+    });
   });
 });

@@ -1,6 +1,6 @@
 # PHASE-10.bis — Soldes Réels des Wallets (Personnages & Divisions Corpo), Filtrage de Liquidité et Scopes ESI Complets
 
-**Type :** intégrité financière, synchronisation ESI & paramétrage · **Dépendances :** 01, 02, 03, 09, 10 · **État :** Planifiée
+**Type :** intégrité financière, synchronisation ESI & paramétrage · **Dépendances :** 01, 02, 03, 09, 10 · **État :** Terminé
 
 ---
 
@@ -170,12 +170,12 @@ $$Cap_{\text{libre}} = \sum_{c \in \text{Persos Actifs}} \text{Solde Réel}(c) +
 
 ## 6. Critères d'acceptation mesurables
 
-- [ ] Le solde liquide affiché correspond au solde exact retourné par `GET /characters/{character_id}/wallet` et/ou `GET /corporations/{corporation_id}/wallets` selon les portefeuilles cochés.
-- [ ] Aucune écriture de journal de corporation ne peut remplacer ou gonfler le solde d'un portefeuille personnel.
-- [ ] Un personnage désactivé dans les paramètres de liquidité (ex. personnage avec dette de 1,5B) est exclu du calcul de `liquidWalletBalanceIsk` et de `netRealCapitalIsk`, tout en restant visible à titre informatif dans le détail des portefeuilles.
-- [ ] Les divisions de portefeuille d'une même corporation ne sont jamais comptées en double lorsque plusieurs personnages de cette corporation sont connectés.
-- [ ] L'authentification EVE SSO demande l'ensemble des scopes CCP autorisés.
-- [ ] Suite de tests complète (`vitest run`), `lint`, `typecheck` et `build` au vert.
+- [x] Le solde liquide affiché correspond au solde exact retourné par `GET /characters/{character_id}/wallet` et/ou `GET /corporations/{corporation_id}/wallets` selon les portefeuilles cochés.
+- [x] Aucune écriture de journal de corporation ne peut remplacer ou gonfler le solde d'un portefeuille personnel.
+- [x] Un personnage désactivé dans les paramètres de liquidité (ex. personnage avec dette de 1,5B) est exclu du calcul de `liquidWalletBalanceIsk` et de `netRealCapitalIsk`, tout en restant visible à titre informatif dans le détail des portefeuilles.
+- [x] Les divisions de portefeuille d'une même corporation ne sont jamais comptées en double lorsque plusieurs personnages de cette corporation sont connectés.
+- [x] L'authentification EVE SSO demande l'ensemble des scopes CCP autorisés.
+- [x] Suite de tests complète (`vitest run`), `lint`, `typecheck` et `build` au vert.
 
 ---
 

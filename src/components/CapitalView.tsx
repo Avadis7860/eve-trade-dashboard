@@ -13,6 +13,10 @@ import {
   Download,
   Clock,
   HelpCircle,
+  User,
+  Sliders,
+  CheckCircle2,
+  XCircle,
 } from 'lucide-react';
 import type {
   CapitalBreakdownResponse,
@@ -20,12 +24,15 @@ import type {
 } from '../server/capital/types';
 import { positionsToCsv, triggerCsvDownload } from '../utils/csvExport';
 import { useApiQuery, fetchJson } from '../utils/apiClient';
+import type { UserPreferences } from '../utils/preferences';
 
 interface CapitalViewProps {
   formatIsk: (val: number | null | undefined) => string;
   characterIds?: number[];
   activeCharacterId?: number;
   onOpenProduct360?: (typeId: number) => void;
+  preferences?: UserPreferences;
+  onOpenPreferences?: () => void;
 }
 
 export const CapitalView: React.FC<CapitalViewProps> = ({
@@ -33,10 +40,13 @@ export const CapitalView: React.FC<CapitalViewProps> = ({
   characterIds,
   activeCharacterId,
   onOpenProduct360,
+  preferences,
+  onOpenPreferences,
 }) => {
   const [search, setSearch] = useState('');
   const [classificationFilter, setClassificationFilter] = useState<PhysicalStockClassification | 'ALL'>('ALL');
   const [dormantOnly, setDormantOnly] = useState(false);
+  const [showWalletsDetail, setShowWalletsDetail] = useState(true);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(50);
   const [sortBy, setSortBy] = useState<'typeName' | 'totalPhysicalQuantity' | 'totalCostBasisIsk' | 'committedSellOrderQuantity' | 'daysInactive'>('typeName');
@@ -53,6 +63,9 @@ export const CapitalView: React.FC<CapitalViewProps> = ({
       search,
       classificationFilter,
       dormantOnly,
+      preferences?.walletSyncMode,
+      preferences?.excludedCharacterWalletIds?.join(','),
+      preferences?.includedCorporationWallets?.join(','),
       ...(characterIds && characterIds.length > 1 ? characterIds : activeCharacterId ? [activeCharacterId] : []),
     ],
     async (signal) => {
@@ -65,6 +78,16 @@ export const CapitalView: React.FC<CapitalViewProps> = ({
         ...(classificationFilter !== 'ALL' ? { classification: classificationFilter } : {}),
         ...(dormantOnly ? { is_dormant_only: 'true' } : {}),
       });
+
+      if (preferences?.walletSyncMode) {
+        params.append('wallet_sync_mode', preferences.walletSyncMode);
+      }
+      if (preferences?.excludedCharacterWalletIds && preferences.excludedCharacterWalletIds.length > 0) {
+        params.append('excluded_character_wallet_ids', preferences.excludedCharacterWalletIds.join(','));
+      }
+      if (preferences?.includedCorporationWallets && preferences.includedCorporationWallets.length > 0) {
+        params.append('included_corporation_wallets', preferences.includedCorporationWallets.join(','));
+      }
 
       if (characterIds && characterIds.length > 1) {
         params.append('character_ids', characterIds.join(','));
@@ -201,6 +224,123 @@ export const CapitalView: React.FC<CapitalViewProps> = ({
             <span className="text-slate-500">Sell Orders</span>
           </div>
         </div>
+      </div>
+
+      {/* Phase 10.bis: Real Wallets (Characters & Corporation Divisions) Breakdown Banner */}
+      <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2.5">
+          <div className="flex items-center gap-2">
+            <Wallet className="w-4 h-4 text-emerald-400" />
+            <span className="text-xs font-bold text-white uppercase tracking-wider">
+              Détail des Portefeuilles Réels (Soldes ESI Directs)
+            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">
+              Mode : {preferences?.walletSyncMode === 'CHARACTERS_ONLY' ? 'Personnages Seuls' : preferences?.walletSyncMode === 'CORPORATION_ONLY' ? 'Corporation Seule' : 'Tous Portefeuilles'}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {onOpenPreferences && (
+              <button
+                type="button"
+                onClick={onOpenPreferences}
+                className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium flex items-center gap-1.5 transition-colors border border-slate-700"
+              >
+                <Sliders className="w-3.5 h-3.5 text-amber-400" />
+                <span>Gérer les exclusions &amp; divisions</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowWalletsDetail(!showWalletsDetail)}
+              className="text-xs text-slate-400 hover:text-slate-200 px-2 py-1"
+            >
+              {showWalletsDetail ? 'Masquer' : 'Afficher'} ({monetary?.walletSnapshots?.length || 0})
+            </button>
+          </div>
+        </div>
+
+        {showWalletsDetail && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
+            {(!monetary?.walletSnapshots || monetary.walletSnapshots.length === 0) ? (
+              <div className="col-span-full text-xs text-slate-500 italic p-3 bg-slate-950 rounded-lg text-center">
+                Aucun solde réel de portefeuille synchronisé. Les soldes seront collectés automatiquement lors de la synchronisation ESI.
+              </div>
+            ) : (
+              monetary.walletSnapshots.map((snap) => {
+                const isChar = snap.type === 'CHARACTER';
+                const isIndebted = snap.balance < 0;
+
+                return (
+                  <div
+                    key={snap.id}
+                    className={`p-3 rounded-lg border flex flex-col justify-between space-y-2 transition-colors ${
+                      snap.isIncludedInLiquid
+                        ? 'border-slate-800 bg-slate-950/80'
+                        : 'border-slate-900 bg-slate-950/30 opacity-70'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        {isChar ? (
+                          <div className="p-1.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20">
+                            <User className="w-3.5 h-3.5" />
+                          </div>
+                        ) : (
+                          <div className="p-1.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                            <Building2 className="w-3.5 h-3.5" />
+                          </div>
+                        )}
+                        <div>
+                          <div className="font-semibold text-xs text-slate-200">
+                            {isChar
+                              ? (snap.characterName || `Pilote #${snap.characterId}`)
+                              : `Division ${snap.division} — ${snap.divisionName || 'Portefeuille'}`}
+                          </div>
+                          <div className="text-[10px] text-slate-500">
+                            {isChar ? 'Portefeuille Personnel' : (snap.corporationName || `Corporation #${snap.corporationId}`)}
+                          </div>
+                        </div>
+                      </div>
+
+                      {snap.isIncludedInLiquid ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                          <CheckCircle2 className="w-3 h-3" /> Inclus
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                          <XCircle className="w-3 h-3" /> Exclu
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-baseline justify-between border-t border-slate-900 pt-2 font-mono">
+                      <span className="text-[10px] text-slate-500">Solde Réel :</span>
+                      <span
+                        className={`text-sm font-bold ${
+                          isIndebted
+                            ? 'text-rose-400'
+                            : snap.isIncludedInLiquid
+                            ? 'text-emerald-400'
+                            : 'text-slate-400'
+                        }`}
+                      >
+                        {formatIsk(snap.balance)}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[9px] text-slate-500 font-mono">
+                      <span>Source : {snap.source}</span>
+                      {isIndebted && (
+                        <span className="text-rose-400 font-semibold uppercase">Dette</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
       </div>
 
       {/* Physical Decomposition KPI Banner */}

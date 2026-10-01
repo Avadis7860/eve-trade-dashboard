@@ -98,10 +98,10 @@
 | **R2** | Complétude, pagination et vérité des états | **Terminé** | R1 | R4 à R8 | `docs/phases/PHASE-R02-completeness-pagination.md` |
 | **R3** | Architecture des requêtes frontend | **Terminé** | R0, R2 | R7, R8 | `docs/phases/PHASE-R03-frontend-query-architecture.md` |
 | **R4** | Optimisation des calculs métier et accès SQL | **Terminé** | R1, R2 | R7, R8 | `docs/phases/PHASE-R04-business-calculations-data-access.md` |
-| **R5** | Synchronisation ESI et concurrence contrôlée | **MAJEURE** | R1, R2 | R7, R8 | `docs/phases/PHASE-R05-esi-sync-concurrency.md` |
-| **R6** | Sécurité, isolation multi-perso et backup | **MAJEURE** | R1 | R7, R8 | `docs/phases/PHASE-R06-security-isolation-backup.md` |
-| **R7** | Stratégie de tests complète (Domain, SQL, HTTP, UI, E2E) | **MAJEURE** | R1–R6 | Release | `docs/phases/PHASE-R07-testing-strategy.md` |
-| **R8** | Observabilité et critères d'exploitabilité | **MAJEURE** | R1–R7 | Release | `docs/phases/PHASE-R08-observability-production.md` |
+| **R5** | Synchronisation ESI et concurrence contrôlée | **Terminé** | R1, R2 | R7, R8 | `docs/phases/PHASE-R05-esi-sync-concurrency.md` |
+| **R6** | Sécurité, isolation multi-perso et backup | **Terminé** | R1 | R7, R8 | `docs/phases/PHASE-R06-security-isolation-backup.md` |
+| **R7** | Stratégie de tests complète (Domain, SQL, HTTP, UI, E2E) | **Terminé** | R1–R6 | Release | `docs/phases/PHASE-R07-testing-strategy.md` |
+| **R8** | Observabilité et critères d'exploitabilité | **Terminé** | R1–R7 | Release | `docs/phases/PHASE-R08-observability-production.md` |
 
 ---
 

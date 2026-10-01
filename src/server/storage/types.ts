@@ -4,11 +4,13 @@ import type { HubDefinition, HubLocationMapping } from '../hubs/types.ts';
 import type { ExplicitCostAllocation, OpeningBalanceLot } from '../roi/types.ts';
 import type { CharacterAsset } from '../assets/types.ts';
 import type { SyncState } from '../sync/types.ts';
+import type { WalletBalanceSnapshot } from '../capital/types.ts';
 
 export interface AppBackupData {
   ledger: {
     transactions: CharacterTransaction[];
     journalEntries: CharacterWalletJournalEntry[];
+    walletSnapshots?: WalletBalanceSnapshot[];
   };
   orders: {
     snapshots: CharacterOrderSnapshot[];
@@ -57,6 +59,18 @@ export interface DataIntegrityReport {
     totalAllocations: number;
     totalAssets: number;
     issuesCount: number;
+    charactersCount?: number;
+    classifiedCapitalPositions?: number;
+    reconciledLots?: {
+      autoFifo: number;
+      manual: number;
+    };
+    dataQuality?: {
+      knownCount: number;
+      partialCount: number;
+      unknownCount: number;
+      qualityRatio: number;
+    };
   };
   issues: DataIntegrityIssue[];
 }

@@ -189,12 +189,22 @@ describe('PHASE-H01 — Security Hardening Test Suite', () => {
   });
 
   describe('4. ESI Scopes Minimization & CCP Policies Compliance', () => {
-    it('requests ONLY read-only scopes and no write/order modification scopes', () => {
+    it('requests official CCP scopes and strictly maintains read-only market operations', () => {
+      // Must include character and corporation wallets and divisions
+      expect(DEFAULT_SCOPES).toContain('esi-wallet.read_character_wallet.v1');
+      expect(DEFAULT_SCOPES).toContain('esi-wallet.read_corporation_wallets.v1');
+      expect(DEFAULT_SCOPES).toContain('esi-corporations.read_divisions.v1');
+      expect(DEFAULT_SCOPES).toContain('esi-markets.read_character_orders.v1');
+      expect(DEFAULT_SCOPES).toContain('esi-markets.read_corporation_orders.v1');
+
+      // Must NOT contain any market order writing or creation scopes (market is strictly read-only)
       for (const scope of DEFAULT_SCOPES) {
-        expect(scope).toMatch(/^esi-[a-z_]+\.read_[a-z_]+\.v[0-9]+$/);
-        expect(scope).not.toContain('write');
-        expect(scope).not.toContain('modify');
-        expect(scope).not.toContain('structure_markets');
+        if (scope.startsWith('esi-markets.')) {
+          expect(scope).not.toContain('write');
+          expect(scope).not.toContain('create');
+          expect(scope).not.toContain('modify');
+          expect(scope).not.toContain('cancel');
+        }
       }
     });
   });

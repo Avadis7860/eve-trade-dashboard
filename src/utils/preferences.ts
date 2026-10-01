@@ -2,11 +2,16 @@
  * User Preferences Management (Stored in localStorage with type safety and fallback defaults)
  */
 
+export type WalletSyncMode = 'CHARACTERS_ONLY' | 'CORPORATION_ONLY' | 'BOTH';
+
 export interface UserPreferences {
   defaultLandingTab: 'overview' | 'ledger' | 'orders' | 'restock' | 'hubs-roi' | 'capital' | 'journal';
   iskDisplayMode: 'full' | 'compact';
   hideCompletedOrders: boolean;
   tablePageSize: number;
+  walletSyncMode?: WalletSyncMode;
+  excludedCharacterWalletIds?: number[];
+  includedCorporationWallets?: string[];
 }
 
 const STORAGE_KEY = 'eve_trade_dashboard_preferences';
@@ -16,6 +21,9 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
   iskDisplayMode: 'full',
   hideCompletedOrders: false,
   tablePageSize: 25,
+  walletSyncMode: 'BOTH',
+  excludedCharacterWalletIds: [],
+  includedCorporationWallets: [],
 };
 
 export function loadPreferences(): UserPreferences {

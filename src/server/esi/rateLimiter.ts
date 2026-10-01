@@ -1,4 +1,5 @@
 import type { EsiRateLimitStatus } from './types.ts';
+import { defaultMetricsCollector } from '../utils/metrics.ts';
 
 export class EsiRateLimiter {
   private activeRequests = 0;
@@ -121,6 +122,11 @@ export class EsiRateLimiter {
         }
       }
     }
+
+    const remainingSec = this.errorLimitResetTime > Date.now()
+      ? Math.ceil((this.errorLimitResetTime - Date.now()) / 1000)
+      : 0;
+    defaultMetricsCollector.updateEsiRateLimit(this.errorLimitRemain, remainingSec);
 
     if (retryAfterHeader) {
       const retrySeconds = parseInt(retryAfterHeader, 10);

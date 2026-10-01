@@ -1,6 +1,6 @@
 import type { SchemaMigration } from './types.ts';
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 export const INITIAL_MIGRATION_SQL = `
 -- Schema Migrations Table
@@ -297,6 +297,28 @@ export const MIGRATIONS: SchemaMigration[] = [
       CREATE INDEX IF NOT EXISTS idx_tx_char_loc_date ON transactions (character_id, location_id, date DESC);
       CREATE INDEX IF NOT EXISTS idx_tx_char_type_loc ON transactions (character_id, type_id, location_id);
       CREATE INDEX IF NOT EXISTS idx_tx_isbuy_type ON transactions (is_buy, type_id);
+    `,
+  },
+  {
+    version: 6,
+    name: '006_wallet_snapshots_table',
+    upSql: `
+      CREATE TABLE IF NOT EXISTS wallet_snapshots (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        character_id BIGINT,
+        character_name TEXT,
+        corporation_id BIGINT,
+        corporation_name TEXT,
+        division INTEGER,
+        division_name TEXT,
+        balance NUMERIC(20, 2) NOT NULL,
+        observed_at BIGINT NOT NULL,
+        observed_by_character_id BIGINT NOT NULL,
+        source TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_wallet_char ON wallet_snapshots (character_id);
+      CREATE INDEX IF NOT EXISTS idx_wallet_corp ON wallet_snapshots (corporation_id);
     `,
   },
 ];

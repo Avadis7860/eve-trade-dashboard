@@ -35,7 +35,7 @@
 - [08 Réconciliation financière et métriques versionnées](phases/PHASE-08-financial-reconciliation.md) — *Terminé*
 - [09 Positions de capital et inventaire](phases/PHASE-09-capital-and-inventory.md) — *Terminé*
 - [10 Product 360 et analyses temporelles](phases/PHASE-10-product-360-analytics.md) — *Terminé*
-- [10.bis Soldes réels des wallets, filtrage de liquidité et scopes ESI complets](phases/PHASE-10bis-wallets-and-scopes.md) — *Suspendue (Gel fonctionnel)*
+- [10.bis Soldes réels des wallets, filtrage de liquidité et scopes ESI complets](phases/PHASE-10bis-wallets-and-scopes.md) — *Terminé*
 - [11 Opérations, réapprovisionnement et transferts](phases/PHASE-11-restock-and-transfers.md) — *Suspendue (Gel fonctionnel)*
 - [12 Refonte du cockpit, navigation et intégration UX](phases/PHASE-12-cockpit-and-ux-redesign.md) — *Suspendue (Gel fonctionnel)*
 - [H03 Hardening UX, performance et release](phases/PHASE-H03-quality-release.md) — *Suspendue (Gel fonctionnel)*
@@ -48,7 +48,7 @@
 - [R04 Optimisation des calculs métier et accès SQL](phases/PHASE-R04-business-calculations-data-access.md) — *Terminé*
 - [R05 Synchronisation ESI et concurrence contrôlée](phases/PHASE-R05-esi-sync-concurrency.md) — *Terminé*
 - [R06 Sécurité, isolation multi-perso et backup](phases/PHASE-R06-security-isolation-backup.md) — *Terminé*
-- [R07 Stratégie de tests complète (Domain, SQL, HTTP, UI, E2E)](phases/PHASE-R07-testing-strategy.md) — *Priorité MAJEURE*
-- [R08 Observabilité et critères de production](phases/PHASE-R08-observability-production.md) — *Priorité MAJEURE*
+- [R07 Stratégie de tests complète (Domain, SQL, HTTP, UI, E2E)](phases/PHASE-R07-testing-strategy.md) — *Terminé*
+- [R08 Observabilité et critères de production](phases/PHASE-R08-observability-production.md) — *Terminé*
 
 Le masterplan et le masterplan de fiabilité sont les sources de vérité sur les statuts. Ne pas dupliquer ici les plans détaillés.

@@ -9,7 +9,9 @@ export type SyncResourceType =
   | 'wallet_journal'
   | 'character_orders'
   | 'character_assets'
-  | 'corporation_assets';
+  | 'corporation_assets'
+  | 'character_wallet'
+  | 'corporation_wallets';
 
 export type SyncStatusState = 'IDLE' | 'SYNCING' | 'COMPLETE' | 'PARTIAL' | 'ERROR' | 'UNKNOWN' | 'ABSENT';
 
@@ -36,6 +38,7 @@ export interface FullCharacterSyncStatus {
   journal: SyncState;
   orders: SyncState;
   assets?: SyncState;
+  wallet?: SyncState;
   asOf: number;
   freshness: 'FRESH' | 'STALE' | 'UNKNOWN';
 }

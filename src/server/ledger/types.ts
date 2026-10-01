@@ -44,6 +44,9 @@ export interface CharacterWalletJournalEntry {
   taxReceiverId?: number;
   source: string; // e.g. "esi:/characters/{character_id}/wallet/journal/"
   observedAt: number; // UTC unix timestamp in ms
+  isCorporationWallet?: boolean;
+  corporationId?: number;
+  division?: number;
 }
 
 export type LedgerFilterType = 'ALL' | 'SELL' | 'BUY';

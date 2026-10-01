@@ -11,6 +11,33 @@ export type PhysicalStockClassification =
 
 export type CostBasisStatus = 'KNOWN' | 'PARTIAL' | 'UNKNOWN';
 
+export type WalletType = 'CHARACTER' | 'CORPORATION';
+
+export interface WalletBalanceSnapshot {
+  id: string; // e.g. "char:{characterId}" or "corp:{corporationId}:div:{division}"
+  type: WalletType;
+  characterId?: number;
+  characterName?: string;
+  corporationId?: number;
+  corporationName?: string;
+  division?: number; // 1..7 for corporation divisions
+  divisionName?: string;
+  balance: number;
+  observedAt: number;
+  observedByCharacterId: number;
+  source: string; // e.g. "/characters/{character_id}/wallet/" or "/corporations/{corporation_id}/wallets/"
+  isIncludedInLiquid: boolean;
+}
+
+export type WalletSyncMode = 'CHARACTERS_ONLY' | 'CORPORATION_ONLY' | 'BOTH';
+
+export interface WalletSyncAndCapitalSettings {
+  walletSyncMode: WalletSyncMode;
+  excludedCharacterWalletIds: number[];
+  includedCorporationWallets?: string[]; // keys like "${corporationId}:${division}"
+  excludedCorporationWallets?: string[]; // keys like "${corporationId}:${division}"
+}
+
 export interface MonetaryCapitalSummary {
   liquidWalletBalanceIsk: number;     // LIQUID_WALLET_BALANCE
   marketBuyEscrowIsk: number;         // MARKET_BUY_ESCROW
@@ -23,6 +50,10 @@ export interface MonetaryCapitalSummary {
   // Statuses & counts
   unreconciledStockUnitsCount: number; // Physical units without purchase cost
   unreconciledStockEstimatedValueStatus: CostBasisStatus;
+
+  // Real Wallets breakdown (Phase 10.bis)
+  walletSnapshots?: WalletBalanceSnapshot[];
+  walletSettings?: WalletSyncAndCapitalSettings;
 }
 
 export interface PhysicalStockPosition {
@@ -98,6 +129,8 @@ export interface CapitalSummaryResponse {
   monetary: MonetaryCapitalSummary;
   physicalSummary: PhysicalSummaryMetrics;
   dormantSummary: DormantSummaryMetrics;
+  walletSnapshots?: WalletBalanceSnapshot[];
+  walletSettings?: WalletSyncAndCapitalSettings;
 }
 
 export interface CapitalBreakdownFilters {
@@ -112,6 +145,7 @@ export interface CapitalBreakdownFilters {
   sortOrder?: 'asc' | 'desc';
   page?: number;
   pageSize?: number;
+  walletSettings?: WalletSyncAndCapitalSettings;
 }
 
 export interface CapitalBreakdownResponse {

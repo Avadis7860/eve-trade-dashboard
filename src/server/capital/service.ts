@@ -7,6 +7,8 @@ import { defaultLedgerRepository } from '../ledger/repository.ts';
 import { RoiRepository, roiRepository as defaultRoiRepository } from '../roi/repository.ts';
 import { HubsService, hubsService as defaultHubsService } from '../hubs/service.ts';
 import { UniverseService, defaultUniverseService } from '../universe/service.ts';
+import type { IWalletRepository } from '../ledger/walletRepository.ts';
+import { defaultWalletRepository } from '../ledger/walletRepository.ts';
 import { roundIsk } from '../roi/calculator.ts';
 import type {
   PhysicalStockClassification,
@@ -18,6 +20,8 @@ import type {
   CapitalSummaryResponse,
   CapitalBreakdownFilters,
   CapitalBreakdownResponse,
+  WalletBalanceSnapshot,
+  WalletSyncAndCapitalSettings,
 } from './types.ts';
 
 const IN_TRANSIT_FLAGS = new Set([
@@ -41,7 +45,8 @@ export class CapitalService {
     private ledgerRepo: ILedgerRepository = defaultLedgerRepository,
     private roiRepo: RoiRepository = defaultRoiRepository,
     private hubsService: HubsService = defaultHubsService,
-    private universeService: UniverseService = defaultUniverseService
+    private universeService: UniverseService = defaultUniverseService,
+    private walletRepo: IWalletRepository = defaultWalletRepository
   ) {}
 
   /**
@@ -283,27 +288,101 @@ export class CapitalService {
    */
   public getMonetaryCapital(
     characterId?: number,
-    characterIds?: number[]
+    characterIds?: number[],
+    settings?: WalletSyncAndCapitalSettings
   ): MonetaryCapitalSummary {
+    const effectiveSettings: WalletSyncAndCapitalSettings = {
+      walletSyncMode: settings?.walletSyncMode || 'BOTH',
+      excludedCharacterWalletIds: settings?.excludedCharacterWalletIds || [],
+      includedCorporationWallets: settings?.includedCorporationWallets,
+      excludedCorporationWallets: settings?.excludedCorporationWallets,
+    };
+
     const effectiveCharIds = characterIds && characterIds.length > 0
       ? characterIds
       : characterId !== undefined
       ? [characterId]
       : [];
 
-    // 1. Liquid Wallet Balance: Most recent balance from journal entries for each character
-    let liquidWalletBalanceIsk = 0;
     const targetCharIds = effectiveCharIds.length > 0
       ? effectiveCharIds
       : Array.from(new Set(this.ledgerRepo.getAllTransactions().map((t) => t.characterId)));
 
+    // 1. Liquid Wallet Balance (Real ESI Balances with Settings & Controlled Fallback)
+    const walletSnapshots: WalletBalanceSnapshot[] = [];
+    let liquidWalletBalanceIsk = 0;
+
+    // A. Character Wallets
     for (const charId of targetCharIds) {
-      const { items: journalItems } = this.ledgerRepo.getJournalEntries(charId, 1, 100);
-      const latestWithBalance = journalItems.find((j) => j.balance !== undefined && j.balance !== null);
-      if (latestWithBalance && latestWithBalance.balance !== undefined) {
-        liquidWalletBalanceIsk += latestWithBalance.balance;
+      let snap = this.walletRepo.getCharacterWallet(charId);
+
+      // Controlled fallback: ONLY if no real balance snapshot exists, look in personal journal entries
+      if (!snap) {
+        const { items: journalItems } = this.ledgerRepo.getJournalEntries(charId, 1, 100);
+        const latestWithBalance = journalItems.find(
+          (j) => !j.isCorporationWallet && !j.source?.includes('/corporations/') && j.balance !== undefined && j.balance !== null
+        );
+        if (latestWithBalance && latestWithBalance.balance !== undefined) {
+          const charName = this.universeService.getNameSync(charId, 'Character');
+          snap = {
+            id: `char:${charId}`,
+            type: 'CHARACTER',
+            characterId: charId,
+            characterName: charName,
+            balance: latestWithBalance.balance,
+            observedAt: latestWithBalance.observedAt || Date.now(),
+            observedByCharacterId: charId,
+            source: latestWithBalance.source || `/characters/${charId}/wallet/journal/`,
+            isIncludedInLiquid: true,
+          };
+        }
+      }
+
+      if (snap) {
+        const isExcluded = effectiveSettings.excludedCharacterWalletIds.includes(charId);
+        const isModeExcluded = effectiveSettings.walletSyncMode === 'CORPORATION_ONLY';
+        const isIncluded = !isExcluded && !isModeExcluded;
+
+        const finalSnap: WalletBalanceSnapshot = {
+          ...snap,
+          isIncludedInLiquid: isIncluded,
+        };
+        walletSnapshots.push(finalSnap);
+        if (isIncluded) {
+          liquidWalletBalanceIsk += finalSnap.balance;
+        }
       }
     }
+
+    // B. Corporation Divisions Wallets (Deduplicated by corporationId and division)
+    const corpWallets = this.walletRepo.getCorporationWallets();
+    const seenCorpDivKeys = new Set<string>();
+
+    for (const corpSnap of corpWallets) {
+      const divNum = corpSnap.division || 1;
+      const key = `${corpSnap.corporationId}:${divNum}`;
+      if (seenCorpDivKeys.has(key)) continue;
+      seenCorpDivKeys.add(key);
+
+      const isModeExcluded = effectiveSettings.walletSyncMode === 'CHARACTERS_ONLY';
+      let isIncluded = !isModeExcluded;
+
+      if (effectiveSettings.includedCorporationWallets && effectiveSettings.includedCorporationWallets.length > 0) {
+        isIncluded = isIncluded && effectiveSettings.includedCorporationWallets.includes(key);
+      } else if (effectiveSettings.excludedCorporationWallets && effectiveSettings.excludedCorporationWallets.includes(key)) {
+        isIncluded = false;
+      }
+
+      const finalSnap: WalletBalanceSnapshot = {
+        ...corpSnap,
+        isIncludedInLiquid: isIncluded,
+      };
+      walletSnapshots.push(finalSnap);
+      if (isIncluded) {
+        liquidWalletBalanceIsk += finalSnap.balance;
+      }
+    }
+
     liquidWalletBalanceIsk = roundIsk(liquidWalletBalanceIsk);
 
     // 2. Market Buy Escrow & 4. Notional Market Ask Value
@@ -362,6 +441,8 @@ export class CapitalService {
       notionalMarketAskValueIsk,
       unreconciledStockUnitsCount,
       unreconciledStockEstimatedValueStatus,
+      walletSnapshots,
+      walletSettings: effectiveSettings,
     };
   }
 
@@ -370,9 +451,10 @@ export class CapitalService {
    */
   public getCapitalSummary(
     characterId?: number,
-    characterIds?: number[]
+    characterIds?: number[],
+    settings?: WalletSyncAndCapitalSettings
   ): CapitalSummaryResponse {
-    const monetary = this.getMonetaryCapital(characterId, characterIds);
+    const monetary = this.getMonetaryCapital(characterId, characterIds, settings);
     const positions = this.getPositions(characterId, characterIds);
 
     const typeSet = new Set<number>();
@@ -444,6 +526,8 @@ export class CapitalService {
       monetary,
       physicalSummary,
       dormantSummary,
+      walletSnapshots: monetary.walletSnapshots,
+      walletSettings: monetary.walletSettings,
     };
   }
 
@@ -465,9 +549,10 @@ export class CapitalService {
       sortOrder = 'asc',
       page = 1,
       pageSize = 50,
+      walletSettings,
     } = filters;
 
-    const summary = this.getCapitalSummary(characterId, characterIds);
+    const summary = this.getCapitalSummary(characterId, characterIds, walletSettings);
     let positions = this.getPositions(characterId, characterIds);
 
     const searchLower = search ? search.trim().toLowerCase() : '';

@@ -9,6 +9,8 @@ import { HubsService } from '../hubs/service.ts';
 import { CapitalService } from './service.ts';
 import { SessionStore } from '../auth/sessionStore.ts';
 import { createCapitalRouter } from './router.ts';
+import { WalletRepository } from '../ledger/walletRepository.ts';
+import type { IDatabaseAdapter } from '../storage/types.ts';
 import type { CharacterAsset } from '../assets/types.ts';
 import type { CharacterOrderSnapshot } from '../orders/types.ts';
 import type { CharacterTransaction, CharacterWalletJournalEntry } from '../ledger/types.ts';
@@ -22,6 +24,7 @@ describe('Capital & Mutually Exclusive Inventory Engine (Phase 09)', () => {
   let roiRepo: RoiRepository;
   let hubsRepo: HubsRepository;
   let hubsService: HubsService;
+  let walletRepo: WalletRepository;
   let capitalService: CapitalService;
 
   const CHAR_1 = 90001;
@@ -36,12 +39,15 @@ describe('Capital & Mutually Exclusive Inventory Engine (Phase 09)', () => {
     roiRepo = new RoiRepository(ledgerRepo, null);
     hubsRepo = new HubsRepository(null);
     hubsService = new HubsService(hubsRepo);
+    walletRepo = new WalletRepository(null as unknown as IDatabaseAdapter);
     capitalService = new CapitalService(
       assetsRepo,
       ordersRepo,
       ledgerRepo,
       roiRepo,
-      hubsService
+      hubsService,
+      undefined,
+      walletRepo
     );
   });
 
@@ -500,6 +506,295 @@ describe('Capital & Mutually Exclusive Inventory Engine (Phase 09)', () => {
       expect(res.body.totalDormantItems).toBe(1);
       expect(res.body.items[0].typeId).toBe(38);
       expect(res.body.items[0].isDormant).toBe(true);
+    });
+  });
+
+  describe('7. Phase 10.bis — Real Wallets (Character & Corporation Divisions) and Liquidity Filtering', () => {
+    it('calculates liquid capital directly from real ESI character and corporation wallet snapshots', () => {
+      // Real character wallet snapshot
+      walletRepo.saveWalletSnapshot({
+        id: `char:${CHAR_1}`,
+        type: 'CHARACTER',
+        characterId: CHAR_1,
+        characterName: 'Pilot Alpha',
+        balance: 5_000_000_000,
+        observedAt: Date.now(),
+        observedByCharacterId: CHAR_1,
+        source: `/characters/${CHAR_1}/wallet/`,
+        isIncludedInLiquid: true,
+      });
+
+      // Real corporation division wallet snapshots (Corp 98000001, divisions 1 & 2)
+      walletRepo.saveWalletSnapshot({
+        id: 'corp:98000001:div:1',
+        type: 'CORPORATION',
+        corporationId: 98000001,
+        corporationName: 'Alpha Trading Corp',
+        division: 1,
+        divisionName: 'Master Wallet',
+        balance: 10_000_000_000,
+        observedAt: Date.now(),
+        observedByCharacterId: CHAR_1,
+        source: '/corporations/98000001/wallets/',
+        isIncludedInLiquid: true,
+      });
+
+      walletRepo.saveWalletSnapshot({
+        id: 'corp:98000001:div:2',
+        type: 'CORPORATION',
+        corporationId: 98000001,
+        corporationName: 'Alpha Trading Corp',
+        division: 2,
+        divisionName: 'Trade Hub Jita',
+        balance: 2_500_000_000,
+        observedAt: Date.now(),
+        observedByCharacterId: CHAR_1,
+        source: '/corporations/98000001/wallets/',
+        isIncludedInLiquid: true,
+      });
+
+      const monetary = capitalService.getMonetaryCapital(CHAR_1);
+      // 5B (character) + 10B (corp div 1) + 2.5B (corp div 2) = 17.5B ISK
+      expect(monetary.liquidWalletBalanceIsk).toBe(17_500_000_000);
+      expect(monetary.netRealCapitalIsk).toBe(17_500_000_000);
+      expect(monetary.walletSnapshots).toHaveLength(3);
+    });
+
+    it('excludes indebted character from liquid balance and net real capital when excludedCharacterWalletIds is configured', () => {
+      // CHAR_1 has 5B ISK
+      walletRepo.saveWalletSnapshot({
+        id: `char:${CHAR_1}`,
+        type: 'CHARACTER',
+        characterId: CHAR_1,
+        characterName: 'Pilot Alpha',
+        balance: 5_000_000_000,
+        observedAt: Date.now(),
+        observedByCharacterId: CHAR_1,
+        source: `/characters/${CHAR_1}/wallet/`,
+        isIncludedInLiquid: true,
+      });
+
+      // CHAR_2 has negative balance / debt of -1.5B ISK
+      walletRepo.saveWalletSnapshot({
+        id: `char:${CHAR_2}`,
+        type: 'CHARACTER',
+        characterId: CHAR_2,
+        characterName: 'Indebted Pilot',
+        balance: -1_500_000_000,
+        observedAt: Date.now(),
+        observedByCharacterId: CHAR_2,
+        source: `/characters/${CHAR_2}/wallet/`,
+        isIncludedInLiquid: true,
+      });
+
+      // Without exclusion: both are summed: 5B + (-1.5B) = 3.5B ISK
+      const monetaryWithoutExclusion = capitalService.getMonetaryCapital(undefined, [CHAR_1, CHAR_2]);
+      expect(monetaryWithoutExclusion.liquidWalletBalanceIsk).toBe(3_500_000_000);
+
+      // With exclusion of CHAR_2 (e.g. debt): only CHAR_1 is included: 5B ISK
+      const monetaryWithExclusion = capitalService.getMonetaryCapital(undefined, [CHAR_1, CHAR_2], {
+        walletSyncMode: 'BOTH',
+        excludedCharacterWalletIds: [CHAR_2],
+      });
+
+      expect(monetaryWithExclusion.liquidWalletBalanceIsk).toBe(5_000_000_000);
+      expect(monetaryWithExclusion.netRealCapitalIsk).toBe(5_000_000_000);
+
+      // CHAR_2 is still exposed in walletSnapshots with isIncludedInLiquid: false for transparency
+      const char2Snap = monetaryWithExclusion.walletSnapshots?.find((w) => w.characterId === CHAR_2);
+      expect(char2Snap).toBeDefined();
+      expect(char2Snap?.balance).toBe(-1_500_000_000);
+      expect(char2Snap?.isIncludedInLiquid).toBe(false);
+    });
+
+    it('deduplicates corporation wallet divisions across multiple characters from the same corporation', () => {
+      // Both CHAR_1 and CHAR_2 belong to corp 98000001 and observe division 1 balance (10B ISK)
+      walletRepo.saveWalletSnapshot({
+        id: 'corp:98000001:div:1',
+        type: 'CORPORATION',
+        corporationId: 98000001,
+        corporationName: 'Shared Corp',
+        division: 1,
+        divisionName: 'Master Wallet',
+        balance: 10_000_000_000,
+        observedAt: Date.now(),
+        observedByCharacterId: CHAR_1,
+        source: '/corporations/98000001/wallets/',
+        isIncludedInLiquid: true,
+      });
+
+      // CHAR_2 also "observes" the same corporation division
+      walletRepo.saveWalletSnapshot({
+        id: 'corp:98000001:div:1',
+        type: 'CORPORATION',
+        corporationId: 98000001,
+        corporationName: 'Shared Corp',
+        division: 1,
+        divisionName: 'Master Wallet',
+        balance: 10_000_000_000,
+        observedAt: Date.now() + 1000,
+        observedByCharacterId: CHAR_2,
+        source: '/corporations/98000001/wallets/',
+        isIncludedInLiquid: true,
+      });
+
+      const monetary = capitalService.getMonetaryCapital(undefined, [CHAR_1, CHAR_2]);
+      // Division 1 is counted once: 10B ISK (never 20B ISK!)
+      expect(monetary.liquidWalletBalanceIsk).toBe(10_000_000_000);
+      const corpDivs = monetary.walletSnapshots?.filter((w) => w.id === 'corp:98000001:div:1');
+      expect(corpDivs).toHaveLength(1);
+    });
+
+    it('respects walletSyncMode: CHARACTERS_ONLY, CORPORATION_ONLY, and BOTH', () => {
+      walletRepo.saveWalletSnapshot({
+        id: `char:${CHAR_1}`,
+        type: 'CHARACTER',
+        characterId: CHAR_1,
+        characterName: 'Pilot Alpha',
+        balance: 4_000_000_000,
+        observedAt: Date.now(),
+        observedByCharacterId: CHAR_1,
+        source: `/characters/${CHAR_1}/wallet/`,
+        isIncludedInLiquid: true,
+      });
+
+      walletRepo.saveWalletSnapshot({
+        id: 'corp:98000001:div:1',
+        type: 'CORPORATION',
+        corporationId: 98000001,
+        corporationName: 'Corp A',
+        division: 1,
+        divisionName: 'Main',
+        balance: 6_000_000_000,
+        observedAt: Date.now(),
+        observedByCharacterId: CHAR_1,
+        source: '/corporations/98000001/wallets/',
+        isIncludedInLiquid: true,
+      });
+
+      // 1. CHARACTERS_ONLY: only 4B ISK
+      const charsOnly = capitalService.getMonetaryCapital(CHAR_1, undefined, {
+        walletSyncMode: 'CHARACTERS_ONLY',
+        excludedCharacterWalletIds: [],
+      });
+      expect(charsOnly.liquidWalletBalanceIsk).toBe(4_000_000_000);
+
+      // 2. CORPORATION_ONLY: only 6B ISK
+      const corpOnly = capitalService.getMonetaryCapital(CHAR_1, undefined, {
+        walletSyncMode: 'CORPORATION_ONLY',
+        excludedCharacterWalletIds: [],
+      });
+      expect(corpOnly.liquidWalletBalanceIsk).toBe(6_000_000_000);
+
+      // 3. BOTH: 4B + 6B = 10B ISK
+      const both = capitalService.getMonetaryCapital(CHAR_1, undefined, {
+        walletSyncMode: 'BOTH',
+        excludedCharacterWalletIds: [],
+      });
+      expect(both.liquidWalletBalanceIsk).toBe(10_000_000_000);
+    });
+
+    it('isolates corporation journal entries from character personal journal fallback', () => {
+      // No real wallet snapshot in walletRepo for CHAR_1
+      // Save a corporation journal entry with balance: 50,000,000,000 ISK
+      ledgerRepo.saveJournalEntries([
+        {
+          id: `${CHAR_1}:corp:98000001:1:9999`,
+          characterId: CHAR_1,
+          journalId: 9999,
+          date: '2026-09-20T12:00:00Z',
+          refType: 'market_transaction',
+          amount: 1000000,
+          balance: 50_000_000_000,
+          description: 'Corp transaction',
+          source: '/corporations/98000001/wallets/1/journal/',
+          observedAt: Date.now(),
+          isCorporationWallet: true,
+          corporationId: 98000001,
+          division: 1,
+        },
+        // Personal journal entry with balance: 300,000,000 ISK
+        {
+          id: `${CHAR_1}:8888`,
+          characterId: CHAR_1,
+          journalId: 8888,
+          date: '2026-09-19T10:00:00Z',
+          refType: 'market_transaction',
+          amount: 500000,
+          balance: 300_000_000,
+          description: 'Personal transaction',
+          source: `/characters/${CHAR_1}/wallet/journal/`,
+          observedAt: Date.now(),
+        },
+      ]);
+
+      const monetary = capitalService.getMonetaryCapital(CHAR_1, undefined, {
+        walletSyncMode: 'CHARACTERS_ONLY',
+        excludedCharacterWalletIds: [],
+      });
+
+      // Must take personal balance 300M ISK, NOT the corp balance 50B ISK!
+      expect(monetary.liquidWalletBalanceIsk).toBe(300_000_000);
+    });
+
+    it('exposes wallet snapshots and filters via GET /api/capital/wallets and /api/capital/summary', async () => {
+      const app = express();
+      app.use(cookieParser());
+      const testSessionStore = new SessionStore();
+      const session = testSessionStore.createSession({
+        characterId: CHAR_1,
+        characterName: 'Pilot Alpha',
+        scopes: ['esi-wallet.read_character_wallet.v1'],
+        accessToken: 'mock_token',
+        refreshToken: 'mock_refresh',
+        expiresAt: Date.now() + 3600000,
+      });
+
+      walletRepo.saveWalletSnapshot({
+        id: `char:${CHAR_1}`,
+        type: 'CHARACTER',
+        characterId: CHAR_1,
+        characterName: 'Pilot Alpha',
+        balance: 1_200_000_000,
+        observedAt: Date.now(),
+        observedByCharacterId: CHAR_1,
+        source: `/characters/${CHAR_1}/wallet/`,
+        isIncludedInLiquid: true,
+      });
+
+      walletRepo.saveWalletSnapshot({
+        id: 'corp:98000001:div:1',
+        type: 'CORPORATION',
+        corporationId: 98000001,
+        corporationName: 'Corp A',
+        division: 1,
+        divisionName: 'Treasury',
+        balance: 8_000_000_000,
+        observedAt: Date.now(),
+        observedByCharacterId: CHAR_1,
+        source: '/corporations/98000001/wallets/',
+        isIncludedInLiquid: true,
+      });
+
+      const capitalRouter = createCapitalRouter(capitalService, testSessionStore);
+      app.use('/api/capital', capitalRouter);
+
+      // GET /api/capital/wallets
+      const walletsRes = await request(app)
+        .get('/api/capital/wallets')
+        .set('Cookie', [`eve_session_id=${session.sessionId}`]);
+
+      expect(walletsRes.status).toBe(200);
+      expect(walletsRes.body.wallets).toHaveLength(2);
+      expect(walletsRes.body.liquidWalletBalanceIsk).toBe(9_200_000_000);
+
+      // GET /api/capital/summary?walletSyncMode=CHARACTERS_ONLY
+      const summaryRes = await request(app)
+        .get('/api/capital/summary?walletSyncMode=CHARACTERS_ONLY')
+        .set('Cookie', [`eve_session_id=${session.sessionId}`]);
+
+      expect(summaryRes.status).toBe(200);
+      expect(summaryRes.body.monetary.liquidWalletBalanceIsk).toBe(1_200_000_000);
     });
   });
 });

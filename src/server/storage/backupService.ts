@@ -10,6 +10,7 @@ import type { IAssetsRepository } from '../assets/repository.ts';
 import { defaultAssetsRepository } from '../assets/repository.ts';
 import type { ISyncRepository } from '../sync/repository.ts';
 import { defaultSyncRepository } from '../sync/repository.ts';
+import { defaultMetricsCollector } from '../utils/metrics.ts';
 import type {
   AppBackupSnapshot,
   AppBackupData,
@@ -546,9 +547,50 @@ export class BackupRestoreService {
       }
     }
 
+    const charIds = new Set<number>();
+    for (const t of ledgerData.transactions) charIds.add(t.characterId);
+    for (const j of ledgerData.journalEntries) charIds.add(j.characterId);
+    for (const o of ordersData.snapshots) charIds.add(o.characterId);
+    for (const a of assetsData.assets) charIds.add(a.characterId);
+
+    let autoFifoCount = 0;
+    let manualCount = 0;
+    for (const alloc of roiData.allocations) {
+      if (alloc.reconciliation_mode === 'FIFO_AUTOMATIC' || !alloc.reconciliation_mode) {
+        autoFifoCount++;
+      } else {
+        manualCount++;
+      }
+    }
+
+    const totalTx = ledgerData.transactions.length;
+    const knownCount = totalTx; // In this domain, persisted ledger transactions have known immutable historical prices
+    const partialCount = issues.filter((i) => i.level === 'WARNING').length;
+    const unknownCount = issues.filter((i) => i.level === 'ERROR').length;
+    const qualityTotal = knownCount + partialCount + unknownCount;
+    const qualityRatio = qualityTotal > 0 ? Number((knownCount / qualityTotal).toFixed(4)) : 1.0;
+
     const hasErrors = issues.some((i) => i.level === 'ERROR');
     const hasWarnings = issues.some((i) => i.level === 'WARNING');
     const status = hasErrors ? 'CORRUPTED' : hasWarnings ? 'WARNING' : 'HEALTHY';
+
+    defaultMetricsCollector.recordBusinessIntegrity({
+      activeCharactersCount: charIds.size,
+      totalTransactions: ledgerData.transactions.length,
+      totalJournalEntries: ledgerData.journalEntries.length,
+      totalOrders: ordersData.snapshots.length,
+      totalAssets: assetsData.assets.length,
+      totalHubs: hubsData.hubs.length,
+      totalMappings: hubsData.mappings.length,
+      classifiedCapitalPositions: assetsData.assets.length,
+      autoFifoReconciledLots: autoFifoCount,
+      manualReconciledLots: manualCount,
+      partialStatusCount: partialCount,
+      unknownStatusCount: unknownCount,
+      knownStatusCount: knownCount,
+      dataQualityRatio: qualityRatio,
+      lastIntegrityStatus: status,
+    });
 
     return {
       status,
@@ -563,6 +605,18 @@ export class BackupRestoreService {
         totalAllocations: roiData.allocations.length,
         totalAssets: assetsData.assets.length,
         issuesCount: issues.length,
+        charactersCount: charIds.size,
+        classifiedCapitalPositions: assetsData.assets.length,
+        reconciledLots: {
+          autoFifo: autoFifoCount,
+          manual: manualCount,
+        },
+        dataQuality: {
+          knownCount,
+          partialCount,
+          unknownCount,
+          qualityRatio,
+        },
       },
       issues,
     };

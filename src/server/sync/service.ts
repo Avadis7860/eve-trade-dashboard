@@ -17,6 +17,9 @@ import type { RawEsiOrder, CharacterOrderSnapshot } from '../orders/types.ts';
 import type { RawEsiAsset, CharacterAsset } from '../assets/types.ts';
 import { evaluateOrderLifecycle, calculateExpirationIso } from '../orders/lifecycle.ts';
 import type { SyncResult, SyncResourceType } from './types.ts';
+import type { IWalletRepository } from '../ledger/walletRepository.ts';
+import { defaultWalletRepository } from '../ledger/walletRepository.ts';
+import type { WalletBalanceSnapshot, WalletSyncMode } from '../capital/types.ts';
 
 export interface RawEsiTransaction {
   transaction_id: number;
@@ -52,6 +55,7 @@ export class SyncService {
   private ledgerRepo: ILedgerRepository;
   private ordersRepo: IOrdersRepository;
   private assetsRepo: IAssetsRepository;
+  private walletRepo: IWalletRepository;
   private syncRepo: ISyncRepository;
   private universeService: UniverseService;
   private coordinator: SyncCoordinator;
@@ -64,7 +68,8 @@ export class SyncService {
     syncRepo: ISyncRepository = defaultSyncRepository,
     universeService: UniverseService = defaultUniverseService,
     assetsRepo: IAssetsRepository = defaultAssetsRepository,
-    coordinator: SyncCoordinator = defaultSyncCoordinator
+    coordinator: SyncCoordinator = defaultSyncCoordinator,
+    walletRepo: IWalletRepository = defaultWalletRepository
   ) {
     this.esiClient = esiClient;
     this.ledgerRepo = ledgerRepo;
@@ -73,6 +78,7 @@ export class SyncService {
     this.universeService = universeService;
     this.assetsRepo = assetsRepo;
     this.coordinator = coordinator;
+    this.walletRepo = walletRepo;
   }
 
   public getCoordinator(): SyncCoordinator {
@@ -580,24 +586,131 @@ export class SyncService {
   }
 
   /**
-   * Synchronizes corporation wallet journal entries (tax and broker fees) if the character has corp roles
+   * Synchronizes real character wallet balance directly from GET /characters/{character_id}/wallet
+   */
+  public async syncCharacterWallet(
+    characterId: number,
+    accessToken: string,
+    refreshTokenFn?: () => Promise<string | null>,
+    options?: { forceRevalidate?: boolean }
+  ): Promise<SyncResult> {
+    const key = `sync:${characterId}:character_wallet`;
+    return this.coordinator.enqueue(key, () =>
+      this.executeSyncCharacterWallet(characterId, accessToken, refreshTokenFn, options)
+    );
+  }
+
+  private async executeSyncCharacterWallet(
+    characterId: number,
+    accessToken: string,
+    refreshTokenFn?: () => Promise<string | null>,
+    options?: { forceRevalidate?: boolean }
+  ): Promise<SyncResult> {
+    const resource: SyncResourceType = 'character_wallet';
+    const startTime = Date.now();
+    const observedAt = Date.now();
+
+    this.syncRepo.updateSyncState(characterId, resource, {
+      status: 'SYNCING',
+      lastSyncStartedAt: startTime,
+    });
+
+    try {
+      const res = await this.esiClient.get<number>(
+        `/characters/${characterId}/wallet/`,
+        { accessToken, refreshTokenFn, forceRevalidate: options?.forceRevalidate }
+      );
+
+      const balance = typeof res.data === 'number' ? res.data : Number(res.data) || 0;
+      const characterName = this.universeService.getNameSync(characterId, 'Character');
+
+      const snapshot: WalletBalanceSnapshot = {
+        id: `char:${characterId}`,
+        type: 'CHARACTER',
+        characterId,
+        characterName,
+        balance,
+        observedAt,
+        observedByCharacterId: characterId,
+        source: `/characters/${characterId}/wallet/`,
+        isIncludedInLiquid: true,
+      };
+
+      this.walletRepo.saveWalletSnapshot(snapshot);
+
+      this.syncRepo.updateSyncState(characterId, resource, {
+        status: 'COMPLETE',
+        coverageStatus: 'COMPLETE',
+        hasMore: false,
+        lastSyncCompletedAt: Date.now(),
+        totalRecords: 1,
+        itemsCount: 1,
+        newRecordsInLastSync: 1,
+      });
+
+      return {
+        resource,
+        characterId,
+        status: 'COMPLETE',
+        coverageStatus: 'COMPLETE',
+        hasMore: false,
+        itemsFetched: 1,
+        newItemsPersisted: 1,
+        totalPersisted: 1,
+        durationMs: Date.now() - startTime,
+        asOf: Date.now(),
+      };
+    } catch (err) {
+      const errorMsg = (err as Error).message || 'Character wallet balance sync failed';
+
+      this.syncRepo.updateSyncState(characterId, resource, {
+        status: 'ERROR',
+        coverageStatus: 'ERROR',
+        lastSyncCompletedAt: Date.now(),
+        totalRecords: 0,
+        itemsCount: 0,
+        errorMessage: errorMsg,
+      });
+
+      return {
+        resource,
+        characterId,
+        status: 'ERROR',
+        coverageStatus: 'ERROR',
+        itemsFetched: 0,
+        newItemsPersisted: 0,
+        totalPersisted: 0,
+        durationMs: Date.now() - startTime,
+        error: errorMsg,
+        asOf: Date.now(),
+      };
+    }
+  }
+
+  /**
+   * Synchronizes corporation wallets (real balances, division names, and division journals) if the character has corp roles
    */
   public async syncCorporationWallets(
     characterId: number,
     accessToken: string,
-    refreshTokenFn?: () => Promise<string | null>
+    refreshTokenFn?: () => Promise<string | null>,
+    options?: { walletSyncMode?: WalletSyncMode }
   ): Promise<void> {
+    if (options?.walletSyncMode === 'CHARACTERS_ONLY') return;
+
     const key = `sync:${characterId}:corporation_wallets`;
     return this.coordinator.enqueue(key, () =>
-      this.executeSyncCorporationWallets(characterId, accessToken, refreshTokenFn)
+      this.executeSyncCorporationWallets(characterId, accessToken, refreshTokenFn, options)
     );
   }
 
   private async executeSyncCorporationWallets(
     characterId: number,
     accessToken: string,
-    refreshTokenFn?: () => Promise<string | null>
+    refreshTokenFn?: () => Promise<string | null>,
+    options?: { walletSyncMode?: WalletSyncMode }
   ): Promise<void> {
+    if (options?.walletSyncMode === 'CHARACTERS_ONLY') return;
     if (this.inaccessibleCorpCharacters.has(characterId)) return;
 
     try {
@@ -611,7 +724,7 @@ export class SyncService {
       // In EVE Online, NPC corporations have IDs < 2,000,000 and do not have player-accessible wallets
       if (!corpId || corpId < 2000000) return;
 
-      // 2. Fetch corporation divisions (wallets)
+      // 2. Fetch corporation division balances (wallets)
       let divisions: Array<{ division: number; balance: number }> = [];
       try {
         const divisionsRes = await this.esiClient.get<Array<{ division: number; balance: number }>>(
@@ -629,8 +742,58 @@ export class SyncService {
 
       if (divisions.length === 0) return;
 
+      // 3. Fetch division names via GET /corporations/{corpId}/divisions/ (scope: esi-corporations.read_divisions.v1)
+      const divisionNames = new Map<number, string>();
+      try {
+        const divNamesRes = await this.esiClient.get<{
+          wallet?: Array<{ division: number; name?: string }>;
+        }>(`/corporations/${corpId}/divisions/`, {
+          accessToken,
+          refreshTokenFn,
+        });
+        if (divNamesRes.data?.wallet && Array.isArray(divNamesRes.data.wallet)) {
+          for (const d of divNamesRes.data.wallet) {
+            if (d.division && d.name) {
+              divisionNames.set(d.division, d.name);
+            }
+          }
+        }
+      } catch {
+        // Fallback to default division labels if divisions endpoint lacks permission
+      }
+
+      // 4. Resolve corporation name
+      let corpName = this.universeService.getNameSync(corpId, 'Corporation');
+      try {
+        const nameMap = await this.universeService.resolveNames([corpId]);
+        if (nameMap.has(corpId)) {
+          corpName = nameMap.get(corpId)!;
+        }
+      } catch {
+        // Ignore resolution error
+      }
+
+      // 5. Persist real balances for each corporation division
+      const observedAt = Date.now();
       for (const div of divisions) {
         const divisionNumber = div.division || 1;
+        const divisionName = divisionNames.get(divisionNumber) || (divisionNumber === 1 ? 'Master Wallet' : `Division ${divisionNumber}`);
+
+        const corpSnapshot: WalletBalanceSnapshot = {
+          id: `corp:${corpId}:div:${divisionNumber}`,
+          type: 'CORPORATION',
+          corporationId: corpId,
+          corporationName: corpName,
+          division: divisionNumber,
+          divisionName,
+          balance: Number(div.balance) || 0,
+          observedAt,
+          observedByCharacterId: characterId,
+          source: `/corporations/${corpId}/wallets/`,
+          isIncludedInLiquid: true,
+        };
+        this.walletRepo.saveWalletSnapshot(corpSnapshot);
+
         try {
           // Fetch journal for division (containing transaction_tax and brokers_fee)
           const paginatedJournal = await fetchXPages<RawEsiJournalEntry>(
@@ -644,9 +807,8 @@ export class SyncService {
           );
 
           if (paginatedJournal.data && paginatedJournal.data.length > 0) {
-            const observedAt = Date.now();
             const entries: CharacterWalletJournalEntry[] = paginatedJournal.data.map((raw) => ({
-              id: `${characterId}:corp:${corpId}:${raw.id}`,
+              id: `${characterId}:corp:${corpId}:${divisionNumber}:${raw.id}`,
               characterId,
               journalId: raw.id,
               date: raw.date,
@@ -663,6 +825,9 @@ export class SyncService {
               taxReceiverId: raw.tax_receiver_id,
               source: `/corporations/${corpId}/wallets/${divisionNumber}/journal/`,
               observedAt,
+              isCorporationWallet: true,
+              corporationId: corpId,
+              division: divisionNumber,
             }));
             this.ledgerRepo.saveJournalEntries(entries);
           }
@@ -933,26 +1098,27 @@ export class SyncService {
     characterId: number,
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>,
-    options?: { forceRevalidate?: boolean }
-  ): Promise<{ transactions: SyncResult; journal: SyncResult; orders: SyncResult; assets: SyncResult }> {
+    options?: { forceRevalidate?: boolean; walletSyncMode?: WalletSyncMode }
+  ): Promise<{ transactions: SyncResult; journal: SyncResult; orders: SyncResult; assets: SyncResult; wallet?: SyncResult }> {
     const key = `syncAll:${characterId}`;
     return this.coordinator.coalesce(key, async () => {
       const forceRevalidate = options?.forceRevalidate ?? true;
       // 1. Launch independent resources in parallel through the bounded worker pool
-      const [transactions, journal, orders, assets] = await Promise.all([
+      const [transactions, journal, orders, assets, wallet] = await Promise.all([
         this.syncWalletTransactions(characterId, accessToken, refreshTokenFn, { forceRevalidate }),
         this.syncWalletJournal(characterId, accessToken, refreshTokenFn, { forceRevalidate }),
         this.syncCharacterOrders(characterId, accessToken, refreshTokenFn, { forceRevalidate }),
         this.syncCharacterAssets(characterId, accessToken, refreshTokenFn, { forceRevalidate }),
+        this.syncCharacterWallet(characterId, accessToken, refreshTokenFn, { forceRevalidate }),
       ]);
 
       // 2. Launch secondary / corp resources in parallel (non-blocking for core result)
       await Promise.allSettled([
-        this.syncCorporationWallets(characterId, accessToken, refreshTokenFn),
+        this.syncCorporationWallets(characterId, accessToken, refreshTokenFn, { walletSyncMode: options?.walletSyncMode }),
         this.syncCorporationAssets(characterId, accessToken, refreshTokenFn),
       ]);
 
-      return { transactions, journal, orders, assets };
+      return { transactions, journal, orders, assets, wallet };
     });
   }
 
@@ -965,11 +1131,12 @@ export class SyncService {
       accessToken: string;
       refreshTokenFn?: () => Promise<string | null>;
       forceRevalidate?: boolean;
+      walletSyncMode?: WalletSyncMode;
     }>
   ): Promise<
     Array<{
       characterId: number;
-      result: { transactions: SyncResult; journal: SyncResult; orders: SyncResult; assets: SyncResult } | null;
+      result: { transactions: SyncResult; journal: SyncResult; orders: SyncResult; assets: SyncResult; wallet?: SyncResult } | null;
       error: string | null;
     }>
   > {
@@ -977,6 +1144,7 @@ export class SyncService {
       try {
         const result = await this.syncAll(char.characterId, char.accessToken, char.refreshTokenFn, {
           forceRevalidate: char.forceRevalidate ?? true,
+          walletSyncMode: char.walletSyncMode,
         });
         return {
           characterId: char.characterId,

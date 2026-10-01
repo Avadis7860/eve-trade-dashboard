@@ -9,6 +9,7 @@ import type {
 } from './types.ts';
 import { MIGRATIONS } from './schema.ts';
 import { logger } from '../utils/logger.ts';
+import { defaultMetricsCollector } from '../utils/metrics.ts';
 
 const { Pool } = pg;
 
@@ -144,6 +145,7 @@ export class DurableFileDatabaseAdapter implements IDatabaseAdapter {
       this.inTransaction = false;
       this.transactionSnapshot = null;
       this.persist();
+      defaultMetricsCollector.recordSqlTransaction(true);
       return result;
     } catch (err) {
       if (this.transactionSnapshot) {
@@ -152,6 +154,7 @@ export class DurableFileDatabaseAdapter implements IDatabaseAdapter {
       this.inTransaction = false;
       this.transactionSnapshot = null;
       this.persist();
+      defaultMetricsCollector.recordSqlTransaction(false);
       throw err;
     }
   }
@@ -183,6 +186,12 @@ export class DurableFileDatabaseAdapter implements IDatabaseAdapter {
     this.state.data.sync.states = this.state.data.sync.states.filter(
       (s) => s.characterId !== characterId
     );
+    const ledgerAny = this.state.data.ledger as { walletSnapshots?: Array<{ characterId?: number; observedByCharacterId?: number }> };
+    if (ledgerAny.walletSnapshots) {
+      ledgerAny.walletSnapshots = ledgerAny.walletSnapshots.filter(
+        (w) => w.characterId !== characterId && w.observedByCharacterId !== characterId
+      );
+    }
     this.persist();
   }
 
@@ -291,17 +300,50 @@ export class PostgresDatabaseAdapter implements IDatabaseAdapter {
     }
   }
 
+  private classifySqlOperation(sql: string): string {
+    const trimmed = sql.trim().toLowerCase();
+    if (trimmed.includes('from transactions') || trimmed.includes('into transactions')) return 'transactions_query';
+    if (trimmed.includes('sum(') || trimmed.includes('count(') || trimmed.includes('group by')) return 'summary_aggregation';
+    if (trimmed.includes('explicit_cost_allocations') || trimmed.includes('opening_balances')) return 'fifo_reconciliation';
+    if (trimmed.includes('order_snapshots') || trimmed.includes('restock_items')) return 'orders_query';
+    if (trimmed.includes('character_assets')) return 'assets_query';
+    if (trimmed.includes('sync_states')) return 'sync_query';
+    if (trimmed.includes('schema_migrations')) return 'schema_migration';
+    return trimmed.split(/\s+/)[0] || 'generic_query';
+  }
+
   public async query<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<QueryResult<T>> {
-    const res = await this.pool.query(sql, params);
-    return {
-      rows: res.rows as T[],
-      rowCount: res.rowCount ?? 0,
-    };
+    const op = this.classifySqlOperation(sql);
+    const start = performance.now();
+    try {
+      const res = await this.pool.query(sql, params);
+      const duration = Number((performance.now() - start).toFixed(2));
+      defaultMetricsCollector.recordSqlQuery(op, duration, true);
+      defaultMetricsCollector.updatePoolStats(this.pool.totalCount - this.pool.idleCount, this.pool.totalCount);
+      return {
+        rows: res.rows as T[],
+        rowCount: res.rowCount ?? 0,
+      };
+    } catch (err) {
+      const duration = Number((performance.now() - start).toFixed(2));
+      defaultMetricsCollector.recordSqlQuery(op, duration, false);
+      throw err;
+    }
   }
 
   public async execute(sql: string, params: unknown[] = []): Promise<number> {
-    const res = await this.pool.query(sql, params);
-    return res.rowCount ?? 0;
+    const op = this.classifySqlOperation(sql);
+    const start = performance.now();
+    try {
+      const res = await this.pool.query(sql, params);
+      const duration = Number((performance.now() - start).toFixed(2));
+      defaultMetricsCollector.recordSqlQuery(op, duration, true);
+      return res.rowCount ?? 0;
+    } catch (err) {
+      const duration = Number((performance.now() - start).toFixed(2));
+      defaultMetricsCollector.recordSqlQuery(op, duration, false);
+      throw err;
+    }
   }
 
   public async getAppliedMigrationVersions(): Promise<number[]> {
@@ -325,12 +367,32 @@ export class PostgresDatabaseAdapter implements IDatabaseAdapter {
         close: () => {},
         isHealthy: () => true,
         query: async <R = Record<string, unknown>>(sql: string, params: unknown[] = []) => {
-          const res = await client.query(sql, params);
-          return { rows: res.rows as R[], rowCount: res.rowCount ?? 0 };
+          const op = this.classifySqlOperation(sql);
+          const start = performance.now();
+          try {
+            const res = await client.query(sql, params);
+            const duration = Number((performance.now() - start).toFixed(2));
+            defaultMetricsCollector.recordSqlQuery(op, duration, true);
+            return { rows: res.rows as R[], rowCount: res.rowCount ?? 0 };
+          } catch (err) {
+            const duration = Number((performance.now() - start).toFixed(2));
+            defaultMetricsCollector.recordSqlQuery(op, duration, false);
+            throw err;
+          }
         },
         execute: async (sql: string, params: unknown[] = []) => {
-          const res = await client.query(sql, params);
-          return res.rowCount ?? 0;
+          const op = this.classifySqlOperation(sql);
+          const start = performance.now();
+          try {
+            const res = await client.query(sql, params);
+            const duration = Number((performance.now() - start).toFixed(2));
+            defaultMetricsCollector.recordSqlQuery(op, duration, true);
+            return res.rowCount ?? 0;
+          } catch (err) {
+            const duration = Number((performance.now() - start).toFixed(2));
+            defaultMetricsCollector.recordSqlQuery(op, duration, false);
+            throw err;
+          }
         },
         getAppliedMigrationVersions: async () => [],
         recordMigration: async () => {},
@@ -343,15 +405,18 @@ export class PostgresDatabaseAdapter implements IDatabaseAdapter {
           await client.query('DELETE FROM opening_balances WHERE character_id = $1', [characterId]);
           await client.query('DELETE FROM character_assets WHERE character_id = $1', [characterId]);
           await client.query('DELETE FROM sync_states WHERE character_id = $1', [characterId]);
+          await client.query('DELETE FROM wallet_snapshots WHERE character_id = $1 OR observed_by_character_id = $1', [characterId]);
         },
         transaction: async <R>(nestedFn: (a: IDatabaseAdapter) => Promise<R>) => nestedFn(txAdapter),
       };
 
       const result = await fn(txAdapter);
       await client.query('COMMIT');
+      defaultMetricsCollector.recordSqlTransaction(true);
       return result;
     } catch (err) {
       await client.query('ROLLBACK');
+      defaultMetricsCollector.recordSqlTransaction(false);
       throw err;
     } finally {
       client.release();

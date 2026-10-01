@@ -1484,6 +1484,8 @@ function AppDashboard() {
                 characterIds={linkedCharacters.length > 1 ? linkedCharacters.map((c) => c.characterId) : undefined}
                 activeCharacterId={session?.characterId}
                 onOpenProduct360={(typeId) => setSelectedProduct360TypeId(typeId)}
+                preferences={preferences}
+                onOpenPreferences={() => setShowPreferencesModal(true)}
               />
             )}
 
@@ -2070,6 +2072,7 @@ function AppDashboard() {
       {showPreferencesModal && (
         <PreferencesModal
           preferences={preferences}
+          characters={linkedCharacters}
           onSave={handleSavePreferences}
           onClose={() => setShowPreferencesModal(false)}
         />

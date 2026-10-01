@@ -390,7 +390,7 @@ export class PersistentLedgerRepository implements ILedgerRepository {
     let updated = 0;
 
     for (const entry of entries) {
-      const key = this.makeJournalKey(entry.characterId, entry.journalId);
+      const key = entry.id || this.makeJournalKey(entry.characterId, entry.journalId);
       if (this.journalEntries.has(key)) {
         this.journalEntries.set(key, entry);
         updated++;

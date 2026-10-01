@@ -2,5 +2,7 @@
   "name": "EVE Trade Dashboard",
   "description": "EVE Online trade dashboard for consolidating sales, hub categorisation, order lifecycle, and ROI calculation.",
   "permissions": [],
-  "capabilities": []
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

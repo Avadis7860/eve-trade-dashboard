@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Coins,
   RefreshCw,
@@ -38,6 +38,13 @@ import {
   UserPreferences,
   formatIskValue,
 } from './utils/preferences';
+import {
+  QueryClient,
+  QueryClientProvider,
+  useQueryClient,
+  useApiQuery,
+  fetchJson,
+} from './utils/apiClient';
 
 export interface HealthStatus {
   status: string;
@@ -387,17 +394,56 @@ export interface SyncStatusResponse {
   freshness: 'FRESH' | 'STALE' | 'UNKNOWN';
 }
 
-export default function App() {
+export default function App({ client }: { client?: QueryClient } = {}) {
+  const [queryClient] = useState(() => client ?? new QueryClient());
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AppDashboard />
+    </QueryClientProvider>
+  );
+}
+
+function AppDashboard() {
+  const queryClient = useQueryClient();
   const [preferences, setPreferences] = useState<UserPreferences>(loadPreferences());
   const [showPreferencesModal, setShowPreferencesModal] = useState(false);
 
-  const [health, setHealth] = useState<HealthStatus | null>(null);
-  const [authConfigured, setAuthConfigured] = useState<boolean | null>(null);
-  const [esiStatus, setEsiStatus] = useState<EsiStatusResponse | null>(null);
-  const [session, setSession] = useState<CharacterSession | null>(null);
-  const [linkedCharacters, setLinkedCharacters] = useState<CharacterSession[]>([]);
+  // Top-level queries
+  const { data: health = null } = useApiQuery<HealthStatus>(
+    ['health'],
+    () => fetchJson('/api/health'),
+    { ttl: 60_000 }
+  );
+
+  const { data: authStatusData } = useApiQuery<AuthStatusResponse>(
+    ['auth', 'status'],
+    () => fetchJson('/api/auth/status'),
+    { ttl: 60_000 }
+  );
+  const authConfigured = authStatusData ? authStatusData.configured : null;
+
+  const {
+    data: sessionData,
+    isLoading: sessionLoading,
+  } = useApiQuery<AuthSessionResponse>(
+    ['auth', 'session'],
+    () => fetchJson('/api/auth/session'),
+    { ttl: 30_000 }
+  );
+
+  const session = sessionData?.authenticated ? sessionData.character ?? null : null;
+  const linkedCharacters = sessionData?.authenticated
+    ? sessionData.characters ?? (session ? [session] : [])
+    : [];
+  const loading = sessionLoading;
+
+  const { data: esiStatus = null } = useApiQuery<EsiStatusResponse>(
+    ['esi', 'status'],
+    () => fetchJson('/api/esi/status'),
+    { ttl: 15_000 }
+  );
+
   const [showCharacterDropdown, setShowCharacterDropdown] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
 
   // Active Tab View
@@ -408,41 +454,108 @@ export default function App() {
   // Product 360 Inspection Modal State
   const [selectedProduct360TypeId, setSelectedProduct360TypeId] = useState<number | null>(null);
 
-  // Ledger state
-  const [transactions, setTransactions] = useState<CharacterTransaction[]>([]);
-  const [journalEntries, setJournalEntries] = useState<CharacterWalletJournalEntry[]>([]);
-  const [summary, setSummary] = useState<LedgerSummary | null>(null);
-  const [syncStatus, setSyncStatus] = useState<SyncStatusResponse | null>(null);
+  // Sync state & queries
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
-  const [ledgerLoading, setLedgerLoading] = useState(false);
+
+  const { data: syncStatus = null } = useApiQuery<SyncStatusResponse>(
+    ['ledger', 'sync-status'],
+    () => fetchJson('/api/ledger/sync-status'),
+    { enabled: !!session, ttl: 15_000 }
+  );
+
+  const linkedCharIds = linkedCharacters.length > 1
+    ? linkedCharacters.map((c) => c.characterId)
+    : session ? [session.characterId] : [];
+  const charIdsQuery = linkedCharacters.length > 1
+    ? `?character_ids=${linkedCharacters.map((c) => c.characterId).join(',')}`
+    : '';
+
+  // Ledger state & filters
+  const [filterType, setFilterType] = useState<'ALL' | 'SELL' | 'BUY'>('ALL');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedLocation, setSelectedLocation] = useState<string>('');
+  const [page, setPage] = useState(1);
   const [selectedTx, setSelectedTx] = useState<CharacterTransaction | null>(null);
   const [selectedTxDetail, setSelectedTxDetail] = useState<{
     transaction: CharacterTransaction;
     relatedJournalEntries: CharacterWalletJournalEntry[];
   } | null>(null);
 
-  // Ledger Filters
-  const [filterType, setFilterType] = useState<'ALL' | 'SELL' | 'BUY'>('ALL');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedLocation, setSelectedLocation] = useState<string>('');
-  const [distinctLocations, setDistinctLocations] = useState<{ id: number; name: string; count: number }[]>([]);
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [totalCount, setTotalCount] = useState(0);
+  const { data: summary = null } = useApiQuery<LedgerSummary>(
+    ['ledger', 'summary', ...linkedCharIds],
+    (signal) => fetchJson(`/api/ledger/summary${charIdsQuery}`, { signal }),
+    { enabled: !!session, ttl: 30_000 }
+  );
 
-  // Orders State
-  const [orders, setOrders] = useState<CharacterOrderSnapshot[]>([]);
-  const [orderSummary, setOrderSummary] = useState<OrderSummaryMetrics | null>(null);
+  const { data: optionsData } = useApiQuery<{ locations?: { id: number; name: string; count: number }[] }>(
+    ['ledger', 'filter-options'],
+    (signal) => fetchJson('/api/ledger/filter-options', { signal }),
+    { enabled: !!session, ttl: 300_000 }
+  );
+  const distinctLocations = optionsData?.locations || [];
+
+  const {
+    data: txData,
+    isLoading: ledgerLoading,
+  } = useApiQuery<{ items: CharacterTransaction[]; total: number; totalPages: number }>(
+    ['ledger', 'transactions', page, preferences.tablePageSize || 25, filterType, searchQuery, selectedLocation],
+    async (signal) => {
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(preferences.tablePageSize || 25),
+        type: filterType,
+        ...(searchQuery ? { search: searchQuery } : {}),
+        ...(selectedLocation ? { locationId: selectedLocation } : {}),
+      });
+      return fetchJson(`/api/ledger/transactions?${params.toString()}`, { signal });
+    },
+    { enabled: !!session, ttl: 15_000 }
+  );
+  const transactions = txData?.items || [];
+  const totalPages = txData?.totalPages || 1;
+  const totalCount = txData?.total || 0;
+
+  const { data: journalData } = useApiQuery<{ items: CharacterWalletJournalEntry[]; total: number }>(
+    ['ledger', 'journal', 50],
+    (signal) => fetchJson('/api/ledger/journal?pageSize=50', { signal }),
+    { enabled: !!session, ttl: 30_000 }
+  );
+  const journalEntries = journalData?.items || [];
+
+  // Orders State & queries
   const [orderStateFilter, setOrderStateFilter] = useState<OrderLifecycleState | 'ALL'>('ALL');
   const [ordersPage, setOrdersPage] = useState(1);
-  const [ordersTotalPages, setOrdersTotalPages] = useState(1);
-  const [ordersTotalCount, setOrdersTotalCount] = useState(0);
   const [ordersSearch, setOrdersSearch] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<CharacterOrderSnapshot | null>(null);
 
-  // Restock State
-  const [restockItems, setRestockItems] = useState<RestockItem[]>([]);
+  const { data: orderSummary = null } = useApiQuery<OrderSummaryMetrics>(
+    ['orders', 'summary', ...linkedCharIds],
+    (signal) => fetchJson('/api/orders/summary', { signal }),
+    { enabled: !!session, ttl: 30_000 }
+  );
+
+  const { data: ordersData } = useApiQuery<{ items: CharacterOrderSnapshot[]; total: number; totalPages: number }>(
+    ['orders', 'list', ordersPage, preferences.tablePageSize || 25, orderStateFilter, ordersSearch, preferences.hideCompletedOrders],
+    async (signal) => {
+      const params = new URLSearchParams({
+        page: String(ordersPage),
+        pageSize: String(preferences.tablePageSize || 25),
+        ...(orderStateFilter !== 'ALL' ? { state: orderStateFilter } : {}),
+        ...(ordersSearch ? { search: ordersSearch } : {}),
+      });
+      return fetchJson(`/api/orders?${params.toString()}`, { signal });
+    },
+    { enabled: !!session, ttl: 15_000 }
+  );
+  const rawOrders = ordersData?.items || [];
+  const orders = preferences.hideCompletedOrders
+    ? rawOrders.filter((o) => o.state === 'ACTIVE' || o.state === 'PARTIALLY_FILLED' || o.state === 'DISAPPEARED_UNCONFIRMED')
+    : rawOrders;
+  const ordersTotalPages = ordersData?.totalPages || 1;
+  const ordersTotalCount = ordersData?.total || 0;
+
+  // Restock State & queries
   const [isGeneratingRestock, setIsGeneratingRestock] = useState(false);
   const [showAddRestockModal, setShowAddRestockModal] = useState(false);
   const [newRestockForm, setNewRestockForm] = useState({
@@ -458,12 +571,49 @@ export default function App() {
     notes: '',
   });
 
-  // Hubs & ROI TTC State
-  const [roiSummary, setRoiSummary] = useState<RoiFinancialSummary | null>(null);
-  const [allocations, setAllocations] = useState<ExplicitCostAllocation[]>([]);
-  const [unsoldInventory, setUnsoldInventory] = useState<UnsoldInventoryItem[]>([]);
-  const [hubsList, setHubsList] = useState<HubDefinition[]>([]);
-  const [hubsMappings, setHubsMappings] = useState<HubLocationMapping[]>([]);
+  const { data: restockData } = useApiQuery<{ items: RestockItem[] }>(
+    ['orders', 'restock'],
+    (signal) => fetchJson('/api/orders/restock', { signal }),
+    { enabled: !!session, ttl: 30_000 }
+  );
+  const restockItems = restockData?.items || [];
+
+  // Hubs & ROI TTC State & queries
+  const { data: roiSummaryData } = useApiQuery<{ summary: RoiFinancialSummary }>(
+    ['roi', 'summary', ...linkedCharIds],
+    (signal) => fetchJson(`/api/roi/summary${charIdsQuery}`, { signal }),
+    { enabled: !!session, ttl: 30_000 }
+  );
+  const roiSummary = roiSummaryData?.summary || null;
+
+  const { data: allocData } = useApiQuery<{ allocations: ExplicitCostAllocation[] }>(
+    ['roi', 'allocations', ...linkedCharIds],
+    (signal) => fetchJson(`/api/roi/allocations${charIdsQuery}`, { signal }),
+    { enabled: !!session, ttl: 30_000 }
+  );
+  const allocations = allocData?.allocations || [];
+
+  const { data: unsoldInvData } = useApiQuery<{ inventory: UnsoldInventoryItem[] }>(
+    ['roi', 'unsold-inventory', ...linkedCharIds],
+    (signal) => fetchJson(`/api/roi/unsold-inventory${charIdsQuery}`, { signal }),
+    { enabled: !!session, ttl: 30_000 }
+  );
+  const unsoldInventory = unsoldInvData?.inventory || [];
+
+  const { data: hubsData } = useApiQuery<{ hubs: HubDefinition[] }>(
+    ['hubs', 'list'],
+    (signal) => fetchJson('/api/hubs', { signal }),
+    { enabled: !!session, ttl: 300_000 }
+  );
+  const hubsList = hubsData?.hubs || [];
+
+  const { data: hubsMapData } = useApiQuery<{ mappings: HubLocationMapping[] }>(
+    ['hubs', 'mappings'],
+    (signal) => fetchJson('/api/hubs/mappings', { signal }),
+    { enabled: !!session, ttl: 300_000 }
+  );
+  const hubsMappings = hubsMapData?.mappings || [];
+
   const [showAddHubModal, setShowAddHubModal] = useState(false);
   const [showAddMappingModal, setShowAddMappingModal] = useState(false);
   const [showAddAllocationModal, setShowAddAllocationModal] = useState(false);
@@ -478,104 +628,7 @@ export default function App() {
   const [isReconciling, setIsReconciling] = useState(false);
   const [reconcileMessage, setReconcileMessage] = useState<string | null>(null);
 
-  const fetchLedgerData = useCallback(async () => {
-    if (!session) return;
-    setLedgerLoading(true);
-
-    try {
-      const params = new URLSearchParams({
-        page: String(page),
-        pageSize: String(preferences.tablePageSize || 25),
-        type: filterType,
-        ...(searchQuery ? { search: searchQuery } : {}),
-        ...(selectedLocation ? { locationId: selectedLocation } : {}),
-      });
-
-      const charIdsQuery = linkedCharacters.length > 1
-        ? `?character_ids=${linkedCharacters.map((c) => c.characterId).join(',')}`
-        : '';
-
-      const [txRes, summaryRes, syncRes, optionsRes, journalRes] = await Promise.all([
-        fetch(`/api/ledger/transactions?${params.toString()}`).then((r) => (r.ok ? r.json() : null)),
-        fetch(`/api/ledger/summary${charIdsQuery}`).then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/ledger/sync-status').then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/ledger/filter-options').then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/ledger/journal?pageSize=50').then((r) => (r.ok ? r.json() : null)),
-      ]);
-
-      if (txRes) {
-        setTransactions(txRes.items || []);
-        setTotalPages(txRes.totalPages || 1);
-        setTotalCount(txRes.total || 0);
-      }
-      if (summaryRes) setSummary(summaryRes);
-      if (syncRes) setSyncStatus(syncRes);
-      if (optionsRes?.locations) setDistinctLocations(optionsRes.locations);
-      if (journalRes) setJournalEntries(journalRes.items || []);
-    } catch (err) {
-      console.error('Failed to load ledger data:', err);
-    } finally {
-      setLedgerLoading(false);
-    }
-  }, [session, page, filterType, searchQuery, selectedLocation, preferences.tablePageSize, linkedCharacters]);
-
-  const fetchOrdersData = useCallback(async () => {
-    if (!session) return;
-    try {
-      const params = new URLSearchParams({
-        page: String(ordersPage),
-        pageSize: String(preferences.tablePageSize || 25),
-        ...(orderStateFilter !== 'ALL' ? { state: orderStateFilter } : {}),
-        ...(ordersSearch ? { search: ordersSearch } : {}),
-      });
-
-      const [ordersRes, summaryRes, restockRes] = await Promise.all([
-        fetch(`/api/orders?${params.toString()}`).then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/orders/summary').then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/orders/restock').then((r) => (r.ok ? r.json() : null)),
-      ]);
-
-      if (ordersRes) {
-        let items: CharacterOrderSnapshot[] = ordersRes.items || [];
-        if (preferences.hideCompletedOrders) {
-          items = items.filter((o) => o.state === 'ACTIVE' || o.state === 'PARTIALLY_FILLED' || o.state === 'DISAPPEARED_UNCONFIRMED');
-        }
-        setOrders(items);
-        setOrdersTotalPages(ordersRes.totalPages || 1);
-        setOrdersTotalCount(ordersRes.total || 0);
-      }
-      if (summaryRes) setOrderSummary(summaryRes);
-      if (restockRes?.items) setRestockItems(restockRes.items);
-    } catch (err) {
-      console.error('Failed to load orders data:', err);
-    }
-  }, [session, ordersPage, orderStateFilter, ordersSearch, preferences.tablePageSize, preferences.hideCompletedOrders]);
-
-  const fetchRoiAndHubsData = useCallback(async () => {
-    if (!session) return;
-    try {
-      const charIdsQuery = linkedCharacters.length > 1
-        ? `?character_ids=${linkedCharacters.map((c) => c.characterId).join(',')}`
-        : '';
-
-      const [summaryRes, allocRes, invRes, hubsRes, mapRes] = await Promise.all([
-        fetch(`/api/roi/summary${charIdsQuery}`).then((r) => (r.ok ? r.json() : null)),
-        fetch(`/api/roi/allocations${charIdsQuery}`).then((r) => (r.ok ? r.json() : null)),
-        fetch(`/api/roi/unsold-inventory${charIdsQuery}`).then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/hubs').then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/hubs/mappings').then((r) => (r.ok ? r.json() : null)),
-      ]);
-
-      if (summaryRes?.summary) setRoiSummary(summaryRes.summary);
-      if (allocRes?.allocations) setAllocations(allocRes.allocations);
-      if (invRes?.inventory) setUnsoldInventory(invRes.inventory);
-      if (hubsRes?.hubs) setHubsList(hubsRes.hubs);
-      if (mapRes?.mappings) setHubsMappings(mapRes.mappings);
-    } catch (err) {
-      console.error('Failed to load ROI and Hubs data:', err);
-    }
-  }, [session, linkedCharacters]);
-
+  // Sync handler with targeted query invalidations
   const handleSync = async () => {
     if (isSyncing || !session) return;
     setIsSyncing(true);
@@ -588,7 +641,12 @@ export default function App() {
         if (data.errors && data.errors.length > 0) {
           setSyncError(data.errors.join(' | '));
         }
-        await Promise.all([fetchLedgerData(), fetchOrdersData(), fetchRoiAndHubsData()]);
+        queryClient.invalidateQueries(['ledger']);
+        queryClient.invalidateQueries(['orders']);
+        queryClient.invalidateQueries(['roi']);
+        queryClient.invalidateQueries(['capital']);
+        queryClient.invalidateQueries(['analytics']);
+        queryClient.invalidateQueries(['esi']);
       } else {
         const errJson = await res.json().catch(() => null);
         setSyncError(errJson?.error || `Erreur de synchronisation (${res.status})`);
@@ -607,8 +665,7 @@ export default function App() {
     try {
       const res = await fetch('/api/orders/restock/generate', { method: 'POST' });
       if (res.ok) {
-        const data = await res.json();
-        setRestockItems(data.items || []);
+        queryClient.invalidateQueries(['orders', 'restock']);
       }
     } catch (err) {
       console.error('Failed to generate restock suggestions:', err);
@@ -625,9 +682,7 @@ export default function App() {
         body: JSON.stringify({ status: newStatus }),
       });
       if (res.ok) {
-        setRestockItems((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...i, status: newStatus } : i))
-        );
+        queryClient.invalidateQueries(['orders', 'restock']);
       }
     } catch (err) {
       console.error('Failed to update status:', err);
@@ -640,7 +695,7 @@ export default function App() {
         method: 'DELETE',
       });
       if (res.ok) {
-        setRestockItems((prev) => prev.filter((i) => i.id !== itemId));
+        queryClient.invalidateQueries(['orders', 'restock']);
       }
     } catch (err) {
       console.error('Failed to delete item:', err);
@@ -656,9 +711,8 @@ export default function App() {
         body: JSON.stringify(newRestockForm),
       });
       if (res.ok) {
-        const created = await res.json();
-        setRestockItems((prev) => [created, ...prev]);
         setShowAddRestockModal(false);
+        queryClient.invalidateQueries(['orders', 'restock']);
       }
     } catch (err) {
       console.error('Failed to create restock item:', err);
@@ -668,13 +722,11 @@ export default function App() {
   const handleInspectTransaction = async (tx: CharacterTransaction) => {
     setSelectedTx(tx);
     try {
-      const res = await fetch(`/api/ledger/transactions/${tx.transactionId}`);
-      if (res.ok) {
-        const detail = await res.json();
-        setSelectedTxDetail(detail);
-      } else {
-        setSelectedTxDetail({ transaction: tx, relatedJournalEntries: [] });
-      }
+      const detail = await fetchJson<{
+        transaction: CharacterTransaction;
+        relatedJournalEntries: CharacterWalletJournalEntry[];
+      }>(`/api/ledger/transactions/${tx.transactionId}`);
+      setSelectedTxDetail(detail);
     } catch {
       setSelectedTxDetail({ transaction: tx, relatedJournalEntries: [] });
     }
@@ -717,7 +769,8 @@ export default function App() {
       if (res.ok) {
         setShowAddHubModal(false);
         setNewHubForm({ name: '', system_name: '', notes: '' });
-        fetchRoiAndHubsData();
+        queryClient.invalidateQueries(['hubs']);
+        queryClient.invalidateQueries(['roi']);
       }
     } catch (err) {
       console.error('Failed to create hub:', err);
@@ -728,7 +781,8 @@ export default function App() {
     try {
       const res = await fetch(`/api/hubs/${encodeURIComponent(hubId)}`, { method: 'DELETE' });
       if (res.ok) {
-        fetchRoiAndHubsData();
+        queryClient.invalidateQueries(['hubs']);
+        queryClient.invalidateQueries(['roi']);
       }
     } catch (err) {
       console.error('Failed to delete hub:', err);
@@ -746,7 +800,8 @@ export default function App() {
       if (res.ok) {
         setShowAddMappingModal(false);
         setNewMappingForm({ location_id: 0, location_name: '', hub_id: 'hub-jita', notes: '' });
-        fetchRoiAndHubsData();
+        queryClient.invalidateQueries(['hubs']);
+        queryClient.invalidateQueries(['roi']);
       }
     } catch (err) {
       console.error('Failed to create mapping:', err);
@@ -757,7 +812,8 @@ export default function App() {
     try {
       const res = await fetch(`/api/hubs/mappings/${locationId}`, { method: 'DELETE' });
       if (res.ok) {
-        fetchRoiAndHubsData();
+        queryClient.invalidateQueries(['hubs']);
+        queryClient.invalidateQueries(['roi']);
       }
     } catch (err) {
       console.error('Failed to delete mapping:', err);
@@ -768,7 +824,8 @@ export default function App() {
     try {
       const res = await fetch('/api/hubs/auto-discover', { method: 'POST' });
       if (res.ok) {
-        await fetchRoiAndHubsData();
+        queryClient.invalidateQueries(['hubs']);
+        queryClient.invalidateQueries(['roi']);
       }
     } catch (err) {
       console.error('Failed to auto-discover hubs:', err);
@@ -792,7 +849,7 @@ export default function App() {
       if (res.ok) {
         setShowAddAllocationModal(false);
         setNewAllocForm({ sell_transaction_id: 0, buy_transaction_id: 0, quantity_to_allocate: 0, notes: '' });
-        fetchRoiAndHubsData();
+        queryClient.invalidateQueries(['roi']);
       }
     } catch (err) {
       console.error('Failed to create allocation:', err);
@@ -803,7 +860,7 @@ export default function App() {
     try {
       const res = await fetch(`/api/roi/allocations/${encodeURIComponent(id)}`, { method: 'DELETE' });
       if (res.ok) {
-        fetchRoiAndHubsData();
+        queryClient.invalidateQueries(['roi']);
       }
     } catch (err) {
       console.error('Failed to delete allocation:', err);
@@ -835,7 +892,7 @@ export default function App() {
         setReconcileMessage(
           `${data.result.allocations_created} allocations créées (${data.result.total_quantity_reconciled} unités rapprochées en FIFO pour ${scopeLabel})${assetMsg}`
         );
-        await fetchRoiAndHubsData();
+        queryClient.invalidateQueries(['roi']);
       }
     } catch (err) {
       console.error('Failed to run auto-reconciliation:', err);
@@ -859,56 +916,9 @@ export default function App() {
     }
     if (successParam || errorParam) {
       window.history.replaceState({}, document.title, window.location.pathname);
+      queryClient.invalidateQueries(['auth']);
     }
-
-    const safeJson = async (res: Response) => {
-      const contentType = res.headers?.get?.('content-type') ?? 'application/json';
-      if (res.ok && contentType.includes('application/json')) {
-        return res.json();
-      }
-      return null;
-    };
-
-    Promise.all([
-      fetch('/api/health').then(safeJson).catch(() => null),
-      fetch('/api/auth/status').then(safeJson).catch(() => null),
-      fetch('/api/auth/session').then(safeJson).catch(() => null),
-      fetch('/api/esi/status').then(safeJson).catch(() => null),
-    ]).then(([healthData, authStatusData, sessionData, esiData]) => {
-      if (healthData) setHealth(healthData);
-      if (authStatusData) setAuthConfigured((authStatusData as AuthStatusResponse).configured);
-      if (sessionData && (sessionData as AuthSessionResponse).authenticated) {
-        const authData = sessionData as AuthSessionResponse;
-        if (authData.character) {
-          setSession(authData.character);
-        }
-        if (authData.characters) {
-          setLinkedCharacters(authData.characters);
-        }
-      }
-      if (esiData) setEsiStatus(esiData as EsiStatusResponse);
-      setLoading(false);
-    });
-  }, []);
-
-  const checkSession = useCallback(async () => {
-    try {
-      const res = await fetch('/api/auth/session');
-      const contentType = res.headers?.get?.('content-type') ?? 'application/json';
-      if (res.ok && contentType.includes('application/json')) {
-        const data: AuthSessionResponse = await res.json();
-        if (data.authenticated && data.character) {
-          setSession(data.character);
-          if (data.characters) setLinkedCharacters(data.characters);
-        } else {
-          setSession(null);
-          setLinkedCharacters([]);
-        }
-      }
-    } catch (err) {
-      console.warn('Session check warning:', (err as Error).message);
-    }
-  }, []);
+  }, [queryClient]);
 
   const handleSwitchCharacter = async (characterId: number) => {
     try {
@@ -918,13 +928,13 @@ export default function App() {
         body: JSON.stringify({ characterId }),
       });
       if (res.ok) {
-        const data: AuthSessionResponse = await res.json();
-        if (data.authenticated && data.character) {
-          setSession(data.character);
-          if (data.characters) setLinkedCharacters(data.characters);
-          setShowCharacterDropdown(false);
-          await Promise.all([fetchLedgerData(), fetchOrdersData(), fetchRoiAndHubsData()]);
-        }
+        setShowCharacterDropdown(false);
+        queryClient.invalidateQueries(['auth']);
+        queryClient.invalidateQueries(['ledger']);
+        queryClient.invalidateQueries(['orders']);
+        queryClient.invalidateQueries(['roi']);
+        queryClient.invalidateQueries(['capital']);
+        queryClient.invalidateQueries(['analytics']);
       }
     } catch (err) {
       console.error('Failed to switch character:', err);
@@ -935,15 +945,12 @@ export default function App() {
     try {
       const res = await fetch(`/api/auth/character/${characterId}`, { method: 'DELETE' });
       if (res.ok) {
-        const data: AuthSessionResponse = await res.json();
-        if (data.authenticated && data.character) {
-          setSession(data.character);
-          if (data.characters) setLinkedCharacters(data.characters);
-        } else {
-          setSession(null);
-          setLinkedCharacters([]);
-        }
-        await Promise.all([fetchLedgerData(), fetchOrdersData(), fetchRoiAndHubsData()]);
+        queryClient.invalidateQueries(['auth']);
+        queryClient.invalidateQueries(['ledger']);
+        queryClient.invalidateQueries(['orders']);
+        queryClient.invalidateQueries(['roi']);
+        queryClient.invalidateQueries(['capital']);
+        queryClient.invalidateQueries(['analytics']);
       }
     } catch (err) {
       console.error('Failed to unlink character:', err);
@@ -952,7 +959,7 @@ export default function App() {
 
   useEffect(() => {
     const onFocus = () => {
-      checkSession();
+      queryClient.invalidateQueries(['auth', 'session']);
     };
     window.addEventListener('focus', onFocus);
     window.addEventListener('visibilitychange', onFocus);
@@ -960,32 +967,16 @@ export default function App() {
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('visibilitychange', onFocus);
     };
-  }, [checkSession]);
+  }, [queryClient]);
 
   const handleLogout = async () => {
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
-      setSession(null);
-      setTransactions([]);
-      setOrders([]);
-      setRestockItems([]);
-      setSummary(null);
-      setOrderSummary(null);
-      setRoiSummary(null);
-      setAllocations([]);
-      setUnsoldInventory([]);
+      queryClient.clear();
     } catch (err) {
       console.error('Logout failed:', err);
     }
   };
-
-  useEffect(() => {
-    if (session) {
-      fetchLedgerData();
-      fetchOrdersData();
-      fetchRoiAndHubsData();
-    }
-  }, [session, activeTab, fetchLedgerData, fetchOrdersData, fetchRoiAndHubsData]);
 
   const formatIsk = (val: number | null | undefined) => {
     if (val === null || val === undefined) return '—';

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import {
   TrendingUp,
   Search,
@@ -18,6 +18,7 @@ import type {
 import type { UserPreferences } from '../utils/preferences';
 import { formatIskValue } from '../utils/preferences';
 import { timeSeriesToCsv, triggerCsvDownload } from '../utils/csvExport';
+import { useApiQuery, fetchJson } from '../utils/apiClient';
 
 interface AnalyticsViewProps {
   preferences: UserPreferences;
@@ -32,69 +33,44 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
 }) => {
   const [timeframe, setTimeframe] = useState<TimeframeOption>('90d');
   const [groupBy, setGroupBy] = useState<GroupByOption>('day');
-  const [timeseries, setTimeseries] = useState<ActivityTimeSeriesResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Search catalog of items
   const [searchQuery, setSearchQuery] = useState('');
-  const [itemsCatalog, setItemsCatalog] = useState<Array<{ type_id: number; type_name: string }>>([]);
 
   // Accessible chart table toggles
   const [showActivityTable, setShowActivityTable] = useState(false);
   const [showProfitTable, setShowProfitTable] = useState(false);
   const [showAgeTable, setShowAgeTable] = useState(false);
 
-  const fetchGlobalTimeSeries = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
+  const {
+    data: timeseries,
+    isLoading: loading,
+    error: queryError,
+    refetch: fetchGlobalTimeSeries,
+  } = useApiQuery<ActivityTimeSeriesResponse>(
+    ['analytics', 'timeseries', timeframe, groupBy, ...(characterIds && characterIds.length > 0 ? characterIds : [])],
+    async (signal) => {
       const params = new URLSearchParams({
         timeframe,
         groupBy,
         ...(characterIds && characterIds.length > 0 ? { character_ids: characterIds.join(',') } : {}),
       });
+      return fetchJson<ActivityTimeSeriesResponse>(`/api/analytics/timeseries?${params.toString()}`, { signal });
+    },
+    { ttl: 30_000 }
+  );
 
-      const res = await fetch(`/api/analytics/timeseries?${params.toString()}`);
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => null);
-        throw new Error(errJson?.error || `Erreur serveur (${res.status})`);
-      }
-      const data: ActivityTimeSeriesResponse = await res.json();
-      setTimeseries(data);
-    } catch (err) {
-      console.error('Failed to fetch analytics timeseries:', err);
-      setError((err as Error).message || 'Erreur lors du chargement des séries temporelles');
-    } finally {
-      setLoading(false);
-    }
-  }, [timeframe, groupBy, characterIds]);
+  const error = queryError ? queryError.message : null;
 
-  // Load distinct traded items for search selector
-  const fetchCatalogItems = useCallback(async () => {
-    try {
-      const res = await fetch('/api/ledger/filter-options');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.types) {
-          setItemsCatalog(data.types.map((t: { id: number; name: string }) => ({
-            type_id: t.id,
-            type_name: t.name,
-          })));
-        }
-      }
-    } catch {
-      // Ignore
-    }
-  }, []);
+  // Load distinct traded items for search selector (cached for 5 minutes)
+  const { data: filterOptions } = useApiQuery<{ types?: Array<{ id: number; name: string }> }>(
+    ['ledger', 'filter-options'],
+    async (signal) => fetchJson('/api/ledger/filter-options', { signal }),
+    { ttl: 300_000 }
+  );
 
-  useEffect(() => {
-    fetchGlobalTimeSeries();
-  }, [fetchGlobalTimeSeries]);
-
-  useEffect(() => {
-    fetchCatalogItems();
-  }, [fetchCatalogItems]);
+  const itemsCatalog = (filterOptions?.types || []).map((t) => ({
+    type_id: t.id,
+    type_name: t.name,
+  }));
 
   const handleExportCsv = () => {
     if (!timeseries) return;

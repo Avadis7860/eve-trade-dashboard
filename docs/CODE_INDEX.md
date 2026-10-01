@@ -1,6 +1,6 @@
 # Index canonique du code
 
-**État :** Phase R02 (Complétude, pagination et vérité des états : Évaluation stricte de complétude `COMPLETE` vs `PARTIAL` avec détection formelle de saturation de plafond `hasMore: true` et `MAX_LIMIT_REACHED`, suppression définitive de la troncature silencieuse à 500 dans la réconciliation de stocks et lots d'inventaire historiques via `getHistoricalBuyLots` et `getAllTransactions`, persistance immédiate par page/lot et reprise transparente depuis checkpoints en base PostgreSQL/mémoire sur pannes réseau, migration SQL 4, et validation complète de 165 tests unitaires et intégration sans régression) terminée et validée.
+**État :** Phase R04 (Optimisation des calculs métier et accès aux données SQL : Requêtes SQL dynamiques et paginées du Grand Livre, élimination des scans exhaustifs en mémoire vive, indexation B-Tree composite enrichie (migration 005 : `idx_tx_char_type_date`, `idx_tx_char_loc_date`, `idx_tx_char_type_loc`, `idx_tx_isbuy_type`), agrégation SQL unifiée pour le résumé financier (`getSummaryAsync`), options de filtres directement groupées en base SQL (`getFilterOptionsAsync`), requêtes ciblées par article (`getTransactionsByTypeIdAsync`), calcul direct de l'inactivité des stocks dormants dans `CapitalService` via agrégation `MAX(date)` sans scan de l'historique (`getLastActivityDates`), requêtes ciblées Product 360 / TimeSeries dans `AnalyticsService`, invariance arithmétique rigoureuse démontrée et suite de 181 tests unitaires et d'intégration au vert) terminée et validée.
 
 ## Runtime & Environnement
 - **Runtime :** Node.js 22, TypeScript strict.
@@ -93,6 +93,7 @@
 - `src/components/JournalView.tsx` — Vue du journal de portefeuille avec détail des prélèvements de taxes et courtage — `src/App.test.tsx`
 - `src/components/PreferencesModal.tsx` — Modale de personnalisation : vue de démarrage par défaut, format d'affichage ISK (complet / condensé), filtres d'ordres — `src/App.test.tsx`
 - `src/components/SystemRoadmapView.tsx` — Panneau d'état technique : passerelle ESI, budgets d'erreurs, état serveur et feuille de route Masterplan — `src/App.test.tsx`
+- `src/utils/apiClient.tsx` — Gestionnaire unifié de requêtes client (`QueryClient`, `QueryClientProvider`, `useApiQuery`, `useApiMutation`, `fetchJson`) : déduplication automatique des requêtes en vol (*request coalescing*), cache en mémoire avec TTL paramétrable par domaine (statique 5m, session 30s, vues 15s), annulation systématique des requêtes obsolètes via `AbortController` prévenant les *race conditions* et invalidation sélective par clés — `src/utils/apiClient.test.tsx`
 - `src/utils/csvExport.ts` — Utilitaire d'exportation CSV conforme RFC 4180 avec échappement de guillemets, virgules et retours chariot pour transactions, ordres, listes de réapprovisionnement, allocations, positions de capital et séries temporelles Product 360 — `src/utils/csvExport.test.ts`
 - `src/utils/eveMultibuy.ts` — Utilitaire de formatage compatible avec la fenêtre Multibuy du client EVE Online (`<Nom>\t<Quantité>`) — `src/utils/eveMultibuy.test.ts`
 - `src/utils/preferences.ts` — Gestionnaire de préférences locales (`localStorage`), formattage des montants ISK condensés (K/M/B/T) et complets — `src/utils/preferences.test.ts`
@@ -104,6 +105,7 @@
 - `metadata.json` — Métadonnées Google AI Studio — Identification de l'application et permissions — N/A
 - `.env.example` — Modèle de configuration d'environnement sans secrets — Déclaration des variables — N/A
 - `scripts/baseline-bench.ts` — Harnais de benchmark automatisé et reproductible pour la baseline métrique (latence HTTP, I/O fichier bloquant, calculs métier FIFO/P360/Capital et cascades UI) — `npm run bench:baseline`
+- `docs/UX_REDESIGN_BLUEPRINT.md` — Blueprint canonique de refonte UX/UI, architecture de l'information en 6 espaces de décision et modèle de fenêtrage intégré (tiroirs latéraux, fenêtres d'analyse Focus à 4 onglets, accordéons de preuve) — N/A
 - `docs/MASTERPLAN-RELIABILITY-PERFORMANCE.md` — Masterplan canonique de remise à niveau, fiabilisation et optimisation des performances (Phases R00 à R08) — N/A
 - `docs/phases/PHASE-R00-baseline.md` à `PHASE-R08-observability-production.md` — Cahiers de cadrage détaillés des 9 phases de remise à niveau — N/A
 
@@ -115,6 +117,7 @@
 - `src/server/sync/resilience.test.ts` — Tests exhaustifs de résilience et de tolérance aux pannes : simulation de coupures réseau en cours de pagination (`from_id` et `x-pages`), reprise sur checkpoint sans doublon ni perte de données, conservation des données valides lors de pannes complètes, respect des budgets d'erreur ESI 420/429 avec cooldown `Retry-After`, retries bornés exponentiels avec jitter sur 5xx, gestion du cache 304, idempotence absolue des synchronisations répétées et combinaison d'allocations manuelles et FIFO sans dépassement ni double comptage.
 - `src/server/storage/backup.test.ts` — Tests du module de sauvegarde et de fiabilité du stockage : export complet avec empreinte SHA-256, rejet des fichiers altérés ou corrompus, validation de schéma versionné, restauration atomique avec garantie de rollback et audit exhaustif d'intégrité des données.
 - `src/server/security/security.test.ts` — Suite de tests de sécurité : validation des en-têtes CSP/HSTS/nosniff, blocage CSRF sur requêtes d'origine non autorisée, rejet d'accès multi-tenant inter-personnages non autorisés, minimisation des scopes ESI, purge des logs et suppression des sessions lors de la déconnexion.
+- `src/utils/apiClient.test.tsx` — Tests exhaustifs du gestionnaire de requêtes client : mise en cache et TTL, déduplication de requêtes en vol simultanées (*request coalescing*), annulation systématique des requêtes obsolètes via `AbortController` lors de séquences de frappe rapide, nettoyage et sécurité au démontage de composant sans fuite mémoire, mutations et invalidations ciblées par clés.
 - `src/utils/csvExport.test.ts` — Tests d'exportation CSV RFC 4180 pour les transactions, ordres, articles de réapprovisionnement, allocations et séries temporelles.
 - `src/utils/eveMultibuy.test.ts` — Tests de formatage au standard EVE Multibuy.
 - `src/utils/preferences.test.ts` — Tests de persistance des préférences utilisateur et de formattage ISK complet/condensé.

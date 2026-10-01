@@ -101,6 +101,36 @@ export class LedgerService {
   }
 
   /**
+   * Retrieves transactions for a specific item type without scanning the full ledger
+   */
+  public getTransactionsByTypeId(typeId: number, characterId?: number, characterIds?: number[]): CharacterTransaction[] {
+    if (this.repo.getTransactionsByTypeId) {
+      return this.repo.getTransactionsByTypeId(typeId, characterId, characterIds);
+    }
+    return this.repo.getAllTransactions(characterId, characterIds).filter((t) => t.typeId === typeId);
+  }
+
+  /**
+   * Retrieves last activity dates by character, type, and location
+   */
+  public getLastActivityDates(characterId?: number, characterIds?: number[]): Map<string, number> {
+    if (this.repo.getLastActivityDates) {
+      return this.repo.getLastActivityDates(characterId, characterIds);
+    }
+    const allTxs = this.repo.getAllTransactions(characterId, characterIds);
+    const map = new Map<string, number>();
+    for (const tx of allTxs) {
+      const key = `${tx.characterId}:${tx.typeId}:${tx.locationId}`;
+      const time = new Date(tx.date).getTime();
+      const existing = map.get(key) || 0;
+      if (time > existing) {
+        map.set(key, time);
+      }
+    }
+    return map;
+  }
+
+  /**
    * Retrieves filter options
    */
   public getFilterOptions(characterId: number): LedgerFilterOptions {

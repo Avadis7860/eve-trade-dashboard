@@ -118,8 +118,9 @@ export class AnalyticsService {
     }
 
     // 1. Fetch transactions for this item
-    const allTxs = this.ledgerRepo.getAllTransactions(characterId, characterIds);
-    const allItemTxs = allTxs.filter((tx) => tx.typeId === typeId);
+    const allItemTxs = this.ledgerRepo.getTransactionsByTypeId
+      ? this.ledgerRepo.getTransactionsByTypeId(typeId, characterId, characterIds)
+      : this.ledgerRepo.getAllTransactions(characterId, characterIds).filter((tx) => tx.typeId === typeId);
 
     // Determine earliest date for "all" timeframe
     let earliestTxDate: string | undefined;
@@ -490,8 +491,11 @@ export class AnalyticsService {
     const hubFilter = options.hubId;
 
     // Get transactions
-    const allTxs = this.ledgerRepo.getAllTransactions(characterId, characterIds);
-    const itemTxs = typeId !== undefined ? allTxs.filter((tx) => tx.typeId === typeId) : allTxs;
+    const itemTxs = typeId !== undefined
+      ? (this.ledgerRepo.getTransactionsByTypeId
+          ? this.ledgerRepo.getTransactionsByTypeId(typeId, characterId, characterIds)
+          : this.ledgerRepo.getAllTransactions(characterId, characterIds).filter((tx) => tx.typeId === typeId))
+      : this.ledgerRepo.getAllTransactions(characterId, characterIds);
 
     let earliestTxDate: string | undefined;
     for (const tx of itemTxs) {
@@ -735,7 +739,7 @@ export class AnalyticsService {
       const cogsAlloc = alloc.allocated_buy_cost + alloc.allocated_buy_fees;
       current.cogs += cogsAlloc;
       // Find sale tx for gross revenue
-      const saleTx = allTxs.find((t) => t.transactionId === alloc.sell_transaction_id);
+      const saleTx = itemTxs.find((t) => t.transactionId === alloc.sell_transaction_id);
       if (saleTx) {
         const ratio = saleTx.quantity > 0 ? alloc.quantity_allocated / saleTx.quantity : 1;
         const rev = saleTx.quantity * saleTx.unitPrice * ratio;

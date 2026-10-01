@@ -5,6 +5,7 @@
 | Plan et statut des phases | [MASTERPLAN](MASTERPLAN.md) |
 | Roadmap Fiabilité & Performance | [MASTERPLAN-RELIABILITY-PERFORMANCE](MASTERPLAN-RELIABILITY-PERFORMANCE.md) |
 | Audit produit existant & modèle cible | [PRODUCT_REDESIGN_AUDIT](PRODUCT_REDESIGN_AUDIT.md) |
+| Blueprint Refonte UX/UI & Navigation (Phase 12) | [UX_REDESIGN_BLUEPRINT](UX_REDESIGN_BLUEPRINT.md) |
 | Périmètre et exclusions | [PRODUCT_SCOPE](PRODUCT_SCOPE.md) |
 | Architecture technique | [ARCHITECTURE](ARCHITECTURE.md) |
 | Invariants et contrats métier | [DOMAIN_CONTRACTS](DOMAIN_CONTRACTS.md) |
@@ -43,8 +44,8 @@
 - [R00 Baseline, mesure et gel fonctionnel](phases/PHASE-R00-baseline.md) — *Terminé*
 - [R01 Persistance et stockage durable PostgreSQL](phases/PHASE-R01-persistence.md) — *Terminé*
 - [R02 Complétude, pagination et vérité des états](phases/PHASE-R02-completeness-pagination.md) — *Terminé*
-- [R03 Architecture des requêtes frontend](phases/PHASE-R03-frontend-query-architecture.md) — *Priorité MAJEURE*
-- [R04 Optimisation des calculs métier et accès SQL](phases/PHASE-R04-business-calculations-data-access.md) — *Priorité MAJEURE*
+- [R03 Architecture des requêtes frontend](phases/PHASE-R03-frontend-query-architecture.md) — *Terminé*
+- [R04 Optimisation des calculs métier et accès SQL](phases/PHASE-R04-business-calculations-data-access.md) — *Terminé*
 - [R05 Synchronisation ESI et concurrence contrôlée](phases/PHASE-R05-esi-sync-concurrency.md) — *Priorité MAJEURE*
 - [R06 Sécurité, isolation multi-perso et backup](phases/PHASE-R06-security-isolation-backup.md) — *Priorité MAJEURE*
 - [R07 Stratégie de tests complète (Domain, SQL, HTTP, UI, E2E)](phases/PHASE-R07-testing-strategy.md) — *Priorité MAJEURE*

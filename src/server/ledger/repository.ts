@@ -14,7 +14,9 @@ export interface ILedgerRepository {
   saveTransactions(transactions: CharacterTransaction[]): { inserted: number; updated: number };
   getTransactions(filters: LedgerQueryFilters): PaginatedLedgerResult<CharacterTransaction>;
   getAllTransactions(characterId?: number, characterIds?: number[]): CharacterTransaction[];
+  getTransactionsByTypeId?(typeId: number, characterId?: number, characterIds?: number[]): CharacterTransaction[];
   getHistoricalBuyLots(characterId?: number, characterIds?: number[], typeId?: number): CharacterTransaction[];
+  getLastActivityDates?(characterId?: number, characterIds?: number[]): Map<string, number>;
   getTransactionById(characterId: number, transactionId: number): CharacterTransaction | null;
   getJournalEntriesForTransaction(
     characterId: number,
@@ -283,13 +285,23 @@ export class PersistentLedgerRepository implements ILedgerRepository {
       pageSize = 50,
     } = filters;
 
+    const candidateSets: Set<string>[] = [];
+    if (characterId !== undefined && this.txByCharacter.has(characterId)) {
+      candidateSets.push(this.txByCharacter.get(characterId)!);
+    }
+    if (typeId !== undefined && this.txByType.has(typeId)) {
+      candidateSets.push(this.txByType.get(typeId)!);
+    }
+    if (locationId !== undefined && this.txByLocation.has(locationId)) {
+      candidateSets.push(this.txByLocation.get(locationId)!);
+    }
+
     let candidateKeys: Iterable<string>;
-    if (characterId !== undefined) {
-      candidateKeys = this.txByCharacter.get(characterId) || [];
-    } else if (typeId !== undefined) {
-      candidateKeys = this.txByType.get(typeId) || [];
-    } else if (locationId !== undefined) {
-      candidateKeys = this.txByLocation.get(locationId) || [];
+    if (candidateSets.length > 0) {
+      candidateSets.sort((a, b) => a.size - b.size);
+      candidateKeys = candidateSets[0];
+    } else if (characterId !== undefined || typeId !== undefined || locationId !== undefined) {
+      candidateKeys = [];
     } else {
       candidateKeys = this.transactions.keys();
     }
@@ -448,6 +460,53 @@ export class PersistentLedgerRepository implements ILedgerRepository {
         continue;
       }
       result.push(this.enrichTransaction(tx));
+    }
+
+    return result;
+  }
+
+  public getTransactionsByTypeId(typeId: number, characterId?: number, characterIds?: number[]): CharacterTransaction[] {
+    const keys = this.txByType.get(typeId);
+    if (!keys || keys.size === 0) return [];
+
+    const filterSet = characterIds && characterIds.length > 0 ? new Set(characterIds) : null;
+    const matched: CharacterTransaction[] = [];
+
+    for (const key of keys) {
+      const tx = this.transactions.get(key);
+      if (!tx) continue;
+      if (filterSet && !filterSet.has(tx.characterId)) continue;
+      if (characterId !== undefined && !filterSet && tx.characterId !== characterId) continue;
+      matched.push(this.enrichTransaction(tx));
+    }
+
+    matched.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return matched;
+  }
+
+  public getLastActivityDates(characterId?: number, characterIds?: number[]): Map<string, number> {
+    const filterSet = characterIds && characterIds.length > 0 ? new Set(characterIds) : null;
+    const result = new Map<string, number>();
+
+    let candidateKeys: Iterable<string>;
+    if (characterId !== undefined && !filterSet) {
+      candidateKeys = this.txByCharacter.get(characterId) || [];
+    } else {
+      candidateKeys = this.transactions.keys();
+    }
+
+    for (const key of candidateKeys) {
+      const tx = this.transactions.get(key);
+      if (!tx) continue;
+      if (filterSet && !filterSet.has(tx.characterId)) continue;
+      if (characterId !== undefined && !filterSet && tx.characterId !== characterId) continue;
+
+      const groupKey = `${tx.characterId}:${tx.typeId}:${tx.locationId}`;
+      const txTime = new Date(tx.date).getTime();
+      const existing = result.get(groupKey) || 0;
+      if (txTime > existing) {
+        result.set(groupKey, txTime);
+      }
     }
 
     return result;
@@ -976,6 +1035,62 @@ export class PostgresLedgerRepository implements ILedgerRepository {
 
   public getHistoricalBuyLots(characterId?: number, characterIds?: number[], typeId?: number): CharacterTransaction[] {
     return this.fallbackMemory.getHistoricalBuyLots(characterId, characterIds, typeId);
+  }
+
+  public getTransactionsByTypeId(typeId: number, characterId?: number, characterIds?: number[]): CharacterTransaction[] {
+    return this.fallbackMemory.getTransactionsByTypeId(typeId, characterId, characterIds);
+  }
+
+  public async getTransactionsByTypeIdAsync(typeId: number, characterId?: number, characterIds?: number[]): Promise<CharacterTransaction[]> {
+    const conditions = ['type_id = $1'];
+    const params: unknown[] = [typeId];
+    let paramIndex = 2;
+
+    if (characterIds && characterIds.length > 0) {
+      conditions.push(`character_id = ANY($${paramIndex++})`);
+      params.push(characterIds);
+    } else if (characterId !== undefined) {
+      conditions.push(`character_id = $${paramIndex++}`);
+      params.push(characterId);
+    }
+
+    const sql = `SELECT * FROM transactions WHERE ${conditions.join(' AND ')} ORDER BY date DESC`;
+    const res = await this.adapter.query(sql, params);
+    return res.rows.map((r) => this.mapRowToTx(r));
+  }
+
+  public getLastActivityDates(characterId?: number, characterIds?: number[]): Map<string, number> {
+    return this.fallbackMemory.getLastActivityDates(characterId, characterIds);
+  }
+
+  public async getLastActivityDatesAsync(characterId?: number, characterIds?: number[]): Promise<Map<string, number>> {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    let paramIndex = 1;
+
+    if (characterIds && characterIds.length > 0) {
+      conditions.push(`character_id = ANY($${paramIndex++})`);
+      params.push(characterIds);
+    } else if (characterId !== undefined) {
+      conditions.push(`character_id = $${paramIndex++}`);
+      params.push(characterId);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const sql = `
+      SELECT character_id, type_id, location_id, MAX(date) as last_date
+      FROM transactions
+      ${whereClause}
+      GROUP BY character_id, type_id, location_id
+    `;
+
+    const res = await this.adapter.query<{ character_id: string | number; type_id: string | number; location_id: string | number; last_date: string }>(sql, params);
+    const result = new Map<string, number>();
+    for (const r of res.rows) {
+      const key = `${r.character_id}:${r.type_id}:${r.location_id}`;
+      result.set(key, new Date(r.last_date).getTime());
+    }
+    return result;
   }
 
   public async getHistoricalBuyLotsAsync(characterId?: number, characterIds?: number[], typeId?: number): Promise<CharacterTransaction[]> {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import {
   X,
   TrendingUp,
@@ -20,6 +20,7 @@ import type {
 import type { UserPreferences } from '../utils/preferences';
 import { formatIskValue } from '../utils/preferences';
 import { timeSeriesToCsv, triggerCsvDownload, escapeCsvField } from '../utils/csvExport';
+import { useApiQuery, fetchJson } from '../utils/apiClient';
 
 interface Product360ModalProps {
   typeId: number | null;
@@ -34,10 +35,7 @@ export const Product360Modal: React.FC<Product360ModalProps> = ({
   preferences,
   characterIds,
 }) => {
-  const [data, setData] = useState<Product360Response | null>(null);
   const [timeframe, setTimeframe] = useState<TimeframeOption>('90d');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'charts' | 'stocks' | 'orders' | 'transactions'>('charts');
   
   // Accessible table toggles for visualizations
@@ -51,35 +49,23 @@ export const Product360Modal: React.FC<Product360ModalProps> = ({
     proof: Product360Response['transactions_history'][0]['proof'];
   } | null>(null);
 
-  const fetchProductData = useCallback(async () => {
-    if (!typeId) return;
-    setLoading(true);
-    setError(null);
-
-    try {
+  const {
+    data,
+    isLoading: loading,
+    error: queryError,
+  } = useApiQuery<Product360Response>(
+    ['analytics', 'product', typeId, timeframe, ...(characterIds && characterIds.length > 0 ? characterIds : [])],
+    async (signal) => {
       const params = new URLSearchParams({
         timeframe,
         ...(characterIds && characterIds.length > 0 ? { character_ids: characterIds.join(',') } : {}),
       });
+      return fetchJson<Product360Response>(`/api/analytics/product/${typeId}?${params.toString()}`, { signal });
+    },
+    { enabled: !!typeId, ttl: 30_000 }
+  );
 
-      const res = await fetch(`/api/analytics/product/${typeId}?${params.toString()}`);
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => null);
-        throw new Error(errJson?.error || `Erreur serveur (${res.status})`);
-      }
-      const json: Product360Response = await res.json();
-      setData(json);
-    } catch (err) {
-      console.error('Failed to fetch Product 360:', err);
-      setError((err as Error).message || 'Erreur lors du chargement des données Product 360');
-    } finally {
-      setLoading(false);
-    }
-  }, [typeId, timeframe, characterIds]);
-
-  useEffect(() => {
-    fetchProductData();
-  }, [fetchProductData]);
+  const error = queryError ? queryError.message : null;
 
   if (!typeId) return null;
 

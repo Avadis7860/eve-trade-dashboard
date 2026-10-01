@@ -178,8 +178,82 @@ class MockPostgresDatabaseAdapter implements IDatabaseAdapter {
       const table = this.tables.get('transactions')!;
       let rows = Array.from(table.values());
 
-      if (params.length > 0 && typeof params[0] === 'number') {
-        rows = rows.filter((r) => r.character_id === params[0]);
+      // Parameterized condition checks
+      const charMatch = upper.match(/CHARACTER_ID\s*=\s*\$(\d+)/);
+      if (charMatch) {
+        const pIdx = Number(charMatch[1]) - 1;
+        if (params[pIdx] !== undefined) {
+          rows = rows.filter((r) => Number(r.character_id) === Number(params[pIdx]));
+        }
+      }
+
+      const typeMatch = upper.match(/TYPE_ID\s*=\s*\$(\d+)/);
+      if (typeMatch) {
+        const pIdx = Number(typeMatch[1]) - 1;
+        if (params[pIdx] !== undefined) {
+          rows = rows.filter((r) => Number(r.type_id) === Number(params[pIdx]));
+        }
+      }
+
+      const locMatch = upper.match(/LOCATION_ID\s*=\s*\$(\d+)/);
+      if (locMatch) {
+        const pIdx = Number(locMatch[1]) - 1;
+        if (params[pIdx] !== undefined) {
+          rows = rows.filter((r) => Number(r.location_id) === Number(params[pIdx]));
+        }
+      }
+
+      if (upper.includes('IS_BUY = TRUE')) {
+        rows = rows.filter((r) => Boolean(r.is_buy));
+      } else if (upper.includes('IS_BUY = FALSE')) {
+        rows = rows.filter((r) => !r.is_buy);
+      }
+
+      if (upper.includes('MAX(DATE) AS LAST_DATE')) {
+        const groups = new Map<string, { character_id: number; type_id: number; location_id: number; last_date: string }>();
+        for (const r of rows) {
+          const key = `${r.character_id}:${r.type_id}:${r.location_id}`;
+          const existing = groups.get(key);
+          if (!existing || String(r.date) > existing.last_date) {
+            groups.set(key, {
+              character_id: Number(r.character_id),
+              type_id: Number(r.type_id),
+              location_id: Number(r.location_id),
+              last_date: String(r.date),
+            });
+          }
+        }
+        return { rows: Array.from(groups.values()) as unknown as T[], rowCount: groups.size };
+      }
+
+      if (upper.includes('GROUP BY TYPE_ID, TYPE_NAME')) {
+        const map = new Map<number, { id: number; name: string; count: number }>();
+        for (const r of rows) {
+          const tId = Number(r.type_id);
+          const name = String(r.type_name || `Item #${tId}`);
+          const cur = map.get(tId) || { id: tId, name, count: 0 };
+          cur.count++;
+          map.set(tId, cur);
+        }
+        return {
+          rows: Array.from(map.values()).map((e) => ({ id: e.id, name: e.name, count: String(e.count) })) as unknown as T[],
+          rowCount: map.size,
+        };
+      }
+
+      if (upper.includes('GROUP BY LOCATION_ID, LOCATION_NAME')) {
+        const map = new Map<number, { id: number; name: string; count: number }>();
+        for (const r of rows) {
+          const lId = Number(r.location_id);
+          const name = String(r.location_name || `Location #${lId}`);
+          const cur = map.get(lId) || { id: lId, name, count: 0 };
+          cur.count++;
+          map.set(lId, cur);
+        }
+        return {
+          rows: Array.from(map.values()).map((e) => ({ id: e.id, name: e.name, count: String(e.count) })) as unknown as T[],
+          rowCount: map.size,
+        };
       }
 
       if (upper.includes('COUNT(*) AS COUNT')) {
@@ -674,5 +748,201 @@ describe('Phase R01 — PostgreSQL Durable Persistence & SQL Repositories', () =
 
     expect(charATxs).toHaveLength(0);
     expect(charBTxs).toHaveLength(1);
+  });
+
+  it('11. (Phase R04) Verifies targeted getTransactionsByTypeIdAsync queries single item without scanning entire history', async () => {
+    await ledgerRepo.saveTransactionsAsync([
+      makeTestTx({
+        characterId: 1001,
+        transactionId: 101,
+        typeId: 34,
+        quantity: 50,
+        unitPrice: 10,
+        isBuy: true,
+        locationId: 60003760,
+        clientId: 2001,
+        date: '2026-09-30T10:00:00Z',
+        observedAt: Date.now(),
+      }),
+      makeTestTx({
+        characterId: 1001,
+        transactionId: 102,
+        typeId: 35,
+        quantity: 100,
+        unitPrice: 20,
+        isBuy: true,
+        locationId: 60003760,
+        clientId: 2001,
+        date: '2026-09-30T11:00:00Z',
+        observedAt: Date.now(),
+      }),
+      makeTestTx({
+        characterId: 1001,
+        transactionId: 103,
+        typeId: 34,
+        quantity: 25,
+        unitPrice: 15,
+        isBuy: false,
+        locationId: 60003760,
+        clientId: 2001,
+        date: '2026-09-30T12:00:00Z',
+        observedAt: Date.now(),
+      }),
+    ]);
+
+    const type34Txs = await ledgerRepo.getTransactionsByTypeIdAsync(34, 1001);
+    expect(type34Txs).toHaveLength(2);
+    expect(type34Txs.every((t) => t.typeId === 34)).toBe(true);
+  });
+
+  it('12. (Phase R04) Verifies SQL aggregation for activity dates getLastActivityDatesAsync across characters/locations', async () => {
+    await ledgerRepo.saveTransactionsAsync([
+      makeTestTx({
+        characterId: 1001,
+        transactionId: 201,
+        typeId: 34,
+        quantity: 10,
+        unitPrice: 100,
+        isBuy: false,
+        locationId: 60003760,
+        clientId: 2001,
+        date: '2026-09-25T12:00:00Z',
+        observedAt: Date.now(),
+      }),
+      makeTestTx({
+        characterId: 1001,
+        transactionId: 202,
+        typeId: 34,
+        quantity: 10,
+        unitPrice: 105,
+        isBuy: false,
+        locationId: 60003760,
+        clientId: 2001,
+        date: '2026-09-30T15:30:00Z',
+        observedAt: Date.now(),
+      }),
+      makeTestTx({
+        characterId: 1001,
+        transactionId: 203,
+        typeId: 35,
+        quantity: 5,
+        unitPrice: 50,
+        isBuy: true,
+        locationId: 60008494,
+        clientId: 2001,
+        date: '2026-09-28T09:00:00Z',
+        observedAt: Date.now(),
+      }),
+    ]);
+
+    const activityMap = await ledgerRepo.getLastActivityDatesAsync(1001);
+    expect(activityMap.get('1001:34:60003760')).toBe(new Date('2026-09-30T15:30:00Z').getTime());
+    expect(activityMap.get('1001:35:60008494')).toBe(new Date('2026-09-28T09:00:00Z').getTime());
+  });
+
+  it('13. (Phase R04) Verifies mathematical invariance between getSummaryAsync and memory calculations', async () => {
+    await ledgerRepo.saveTransactionsAsync([
+      makeTestTx({
+        characterId: 1001,
+        transactionId: 301,
+        typeId: 34,
+        quantity: 100,
+        unitPrice: 10,
+        isBuy: true,
+        locationId: 60003760,
+        clientId: 2001,
+        date: '2026-09-30T10:00:00Z',
+        observedAt: Date.now(),
+      }),
+      makeTestTx({
+        characterId: 1001,
+        transactionId: 302,
+        typeId: 34,
+        quantity: 50,
+        unitPrice: 15,
+        isBuy: false,
+        locationId: 60003760,
+        clientId: 2001,
+        date: '2026-09-30T11:00:00Z',
+        observedAt: Date.now(),
+      }),
+    ]);
+
+    const summary = await ledgerRepo.getSummaryAsync(1001);
+    expect(summary.totalTransactionsCount).toBe(2);
+    expect(summary.buyTransactionsCount).toBe(1);
+    expect(summary.sellTransactionsCount).toBe(1);
+    expect(summary.totalBuySpendIsk).toBe(1000);
+    expect(summary.totalGrossSalesIsk).toBe(750);
+    expect(summary.distinctItemsCount).toBe(1);
+  });
+
+  it('14. (Phase R04) Verifies getFilterOptionsAsync produces clean grouped filter items in SQL', async () => {
+    await ledgerRepo.saveTransactionsAsync([
+      makeTestTx({
+        characterId: 1001,
+        transactionId: 401,
+        typeId: 34,
+        typeName: 'Tritanium',
+        quantity: 100,
+        unitPrice: 5,
+        isBuy: true,
+        locationId: 60003760,
+        locationName: 'Jita IV - Moon 4',
+        clientId: 2001,
+        date: '2026-09-30T10:00:00Z',
+        observedAt: Date.now(),
+      }),
+      makeTestTx({
+        characterId: 1001,
+        transactionId: 402,
+        typeId: 35,
+        typeName: 'Pyerite',
+        quantity: 50,
+        unitPrice: 15,
+        isBuy: false,
+        locationId: 60008494,
+        locationName: 'Amarr VIII',
+        clientId: 2001,
+        date: '2026-09-30T11:00:00Z',
+        observedAt: Date.now(),
+      }),
+    ]);
+
+    const filters = await ledgerRepo.getFilterOptionsAsync(1001);
+    expect(filters.types).toHaveLength(2);
+    expect(filters.locations).toHaveLength(2);
+    expect(filters.types.map((t) => t.id)).toContain(34);
+    expect(filters.types.map((t) => t.id)).toContain(35);
+  });
+
+  it('15. (Phase R04) Verifies paginated getTransactionsAsync with filters, sorting and offset', async () => {
+    await ledgerRepo.saveTransactionsAsync([
+      makeTestTx({
+        characterId: 1001,
+        transactionId: 501,
+        typeId: 34,
+        quantity: 10,
+        unitPrice: 10,
+        isBuy: true,
+        locationId: 60003760,
+        clientId: 2001,
+        date: '2026-09-30T10:00:00Z',
+        observedAt: Date.now(),
+      }),
+    ]);
+
+    const res = await ledgerRepo.getTransactionsAsync({
+      characterId: 1001,
+      page: 1,
+      pageSize: 10,
+      sortBy: 'date',
+      sortOrder: 'desc',
+    });
+
+    expect(res.page).toBe(1);
+    expect(res.pageSize).toBe(10);
+    expect(res.total).toBeGreaterThanOrEqual(1);
+    expect(res.freshness).toBe('FRESH');
   });
 });

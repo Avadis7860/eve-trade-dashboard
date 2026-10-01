@@ -39,8 +39,25 @@ L'application organise les parcours utilisateur en 6 espaces de décision sans r
 | **ERROR** | Échec de requête ou de calcul. | Message d'erreur clair avec bouton de nouvelle tentative ; conservation des données locales. |
 | **UNKNOWN** | Preuve insuffisante (ex: vente sans achat antérieur). | Affichage `—` ou `Non alloué`, jamais converti en 0 ou profit fictif. |
 
-## 3. Ergonomie & Accessibilité
+## 3. Modèles de Fenêtrage & Navigation Contextuelle
+
+L'interface applique 4 modes de conteneurs de consultation strictement hiérarchisés (voir [UX_REDESIGN_BLUEPRINT.md](UX_REDESIGN_BLUEPRINT.md) pour les spécifications détaillées) :
+
+1. **Tiroir Latéral (*SideDrawer*) — Largeur 500px :**
+   - Mode par défaut pour toute inspection contextuelle sans rupture de flux (détail d'un ordre, preuve d'une transaction, stock par emplacement, motif d'une suggestion).
+   - Maintient intact le contexte sous-jacent (filtres, terme de recherche, tri, pagination, position de défilement).
+   - Fermeture par `Escape`, clic sur le fond (*backdrop*) ou bouton `✕`.
+2. **Fenêtre Focus Élargie (*Focus Modal*) — 90vw / Max 1200px :**
+   - Mode réservé aux analyses multidimensionnelles profondes (Fiche Product 360 à 4 onglets, séries temporelles interactives, matrices de paires de hubs).
+   - Structure interne compartimentée par sous-onglets pour éliminer le défilement vertical massif.
+3. **Sections Dépliables (*Accordéons*) :**
+   - Réservées aux informations explicatives secondaires (formules arithmétiques détaillées, preuves de réconciliation FIFO, métadonnées ESI).
+4. **Modales d'Action (*Action Dialogs*) — Max 480px :**
+   - Réservées aux confirmations irréversibles et formulaires courts (ajout de hub, saisie de stock d'ouverture, déliaison de personnage).
+
+## 4. Ergonomie & Accessibilité
 
 - **Densité adaptée** : Priorité à la lisibilité des tables avec tri multi-colonnes, recherche instantanée et filtres partagés.
 - **Barre ESI non intrusive** : Indicateur compact dans l'en-tête, détails techniques déportés dans un volet latéral dépliable.
-- **Accessibilité WCAG 2.1 AA** : Navigation clavier intégrale, contrastes élevés sur les montants financiers, textes alternatifs pour les visualisations, et bascule immédiate vers des tableaux accessibles.
+- **Accessibilité WCAG 2.1 AA** : Navigation clavier intégrale, focus trap sur tiroirs/modales, contrastes élevés sur les montants financiers, textes alternatifs pour les visualisations, et bascule immédiate vers des tableaux accessibles.
+

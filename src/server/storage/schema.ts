@@ -1,6 +1,6 @@
 import type { SchemaMigration } from './types.ts';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 5;
 
 export const INITIAL_MIGRATION_SQL = `
 -- Schema Migrations Table
@@ -55,6 +55,10 @@ CREATE TABLE IF NOT EXISTS transactions (
 CREATE INDEX IF NOT EXISTS idx_tx_char_date ON transactions (character_id, date);
 CREATE INDEX IF NOT EXISTS idx_tx_type ON transactions (type_id);
 CREATE INDEX IF NOT EXISTS idx_tx_loc ON transactions (location_id);
+CREATE INDEX IF NOT EXISTS idx_tx_char_type_date ON transactions (character_id, type_id, date DESC);
+CREATE INDEX IF NOT EXISTS idx_tx_char_loc_date ON transactions (character_id, location_id, date DESC);
+CREATE INDEX IF NOT EXISTS idx_tx_char_type_loc ON transactions (character_id, type_id, location_id);
+CREATE INDEX IF NOT EXISTS idx_tx_isbuy_type ON transactions (is_buy, type_id);
 
 -- Wallet Journal Entries Table
 CREATE TABLE IF NOT EXISTS journal_entries (
@@ -283,6 +287,16 @@ export const MIGRATIONS: SchemaMigration[] = [
       ALTER TABLE sync_states ADD COLUMN IF NOT EXISTS coverage_status TEXT;
       ALTER TABLE sync_states ADD COLUMN IF NOT EXISTS has_more BOOLEAN DEFAULT FALSE;
       ALTER TABLE sync_states ADD COLUMN IF NOT EXISTS items_count INTEGER DEFAULT 0;
+    `,
+  },
+  {
+    version: 5,
+    name: '005_business_calc_optimizations',
+    upSql: `
+      CREATE INDEX IF NOT EXISTS idx_tx_char_type_date ON transactions (character_id, type_id, date DESC);
+      CREATE INDEX IF NOT EXISTS idx_tx_char_loc_date ON transactions (character_id, location_id, date DESC);
+      CREATE INDEX IF NOT EXISTS idx_tx_char_type_loc ON transactions (character_id, type_id, location_id);
+      CREATE INDEX IF NOT EXISTS idx_tx_isbuy_type ON transactions (is_buy, type_id);
     `,
   },
 ];

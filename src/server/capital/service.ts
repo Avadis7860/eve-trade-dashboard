@@ -86,17 +86,22 @@ export class CapitalService {
       }
     }
 
-    // Load transactions to determine inactivity and dormancy
-    const allTxs = this.ledgerRepo.getAllTransactions(characterId, characterIds);
-    const lastActivityByCharTypeLoc = new Map<string, number>();
-    for (const tx of allTxs) {
-      const key = `${tx.characterId}:${tx.typeId}:${tx.locationId}`;
-      const txTime = new Date(tx.date).getTime();
-      const existing = lastActivityByCharTypeLoc.get(key) || 0;
-      if (txTime > existing) {
-        lastActivityByCharTypeLoc.set(key, txTime);
-      }
-    }
+    // Load transaction activity dates directly via aggregation/index to determine inactivity and dormancy
+    const lastActivityByCharTypeLoc = this.ledgerRepo.getLastActivityDates
+      ? this.ledgerRepo.getLastActivityDates(characterId, characterIds)
+      : (() => {
+          const allTxs = this.ledgerRepo.getAllTransactions(characterId, characterIds);
+          const map = new Map<string, number>();
+          for (const tx of allTxs) {
+            const key = `${tx.characterId}:${tx.typeId}:${tx.locationId}`;
+            const txTime = new Date(tx.date).getTime();
+            const existing = map.get(key) || 0;
+            if (txTime > existing) {
+              map.set(key, txTime);
+            }
+          }
+          return map;
+        })();
 
     // Group raw assets by characterId + typeId + locationId + inTransit
     const assetGroups = new Map<string, {

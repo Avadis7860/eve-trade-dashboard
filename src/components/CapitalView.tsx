@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import {
   Wallet,
   ShieldCheck,
@@ -19,6 +19,7 @@ import type {
   PhysicalStockClassification,
 } from '../server/capital/types';
 import { positionsToCsv, triggerCsvDownload } from '../utils/csvExport';
+import { useApiQuery, fetchJson } from '../utils/apiClient';
 
 interface CapitalViewProps {
   formatIsk: (val: number | null | undefined) => string;
@@ -33,8 +34,6 @@ export const CapitalView: React.FC<CapitalViewProps> = ({
   activeCharacterId,
   onOpenProduct360,
 }) => {
-  const [data, setData] = useState<CapitalBreakdownResponse | null>(null);
-  const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [classificationFilter, setClassificationFilter] = useState<PhysicalStockClassification | 'ALL'>('ALL');
   const [dormantOnly, setDormantOnly] = useState(false);
@@ -43,9 +42,20 @@ export const CapitalView: React.FC<CapitalViewProps> = ({
   const [sortBy, setSortBy] = useState<'typeName' | 'totalPhysicalQuantity' | 'totalCostBasisIsk' | 'committedSellOrderQuantity' | 'daysInactive'>('typeName');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
-  const fetchCapitalData = useCallback(async () => {
-    setLoading(true);
-    try {
+  const { data, isLoading: loading } = useApiQuery<CapitalBreakdownResponse>(
+    [
+      'capital',
+      'breakdown',
+      page,
+      pageSize,
+      sortBy,
+      sortOrder,
+      search,
+      classificationFilter,
+      dormantOnly,
+      ...(characterIds && characterIds.length > 1 ? characterIds : activeCharacterId ? [activeCharacterId] : []),
+    ],
+    async (signal) => {
       const params = new URLSearchParams({
         page: String(page),
         pageSize: String(pageSize),
@@ -62,21 +72,10 @@ export const CapitalView: React.FC<CapitalViewProps> = ({
         params.append('character_id', String(activeCharacterId));
       }
 
-      const res = await fetch(`/api/capital/breakdown?${params.toString()}`);
-      if (res.ok) {
-        const json: CapitalBreakdownResponse = await res.json();
-        setData(json);
-      }
-    } catch (err) {
-      console.error('Failed to load capital breakdown:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [page, pageSize, sortBy, sortOrder, search, classificationFilter, dormantOnly, characterIds, activeCharacterId]);
-
-  useEffect(() => {
-    fetchCapitalData();
-  }, [fetchCapitalData]);
+      return fetchJson<CapitalBreakdownResponse>(`/api/capital/breakdown?${params.toString()}`, { signal });
+    },
+    { ttl: 15_000 }
+  );
 
   const handleExportCsv = () => {
     if (!data?.positions || data.positions.length === 0) return;

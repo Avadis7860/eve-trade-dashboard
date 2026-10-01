@@ -307,12 +307,12 @@ export async function runFullBaseline() {
 
     // 2. Product 360 inspection timing (typeId 34)
     const startP360 = performance.now();
-    await analyticsService.getProduct360(34, characterId);
+    await analyticsService.getProduct360(34, { characterId });
     const durationP360 = performance.now() - startP360;
 
     // 3. Capital summary calculation timing
     const startCapital = performance.now();
-    await capitalService.getCapitalSummary([characterId]);
+    capitalService.getCapitalSummary(characterId);
     const durationCapital = performance.now() - startCapital;
 
     const heapMo = process.memoryUsage().heapUsed / 1024 / 1024;

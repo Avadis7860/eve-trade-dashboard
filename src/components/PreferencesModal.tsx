@@ -48,6 +48,12 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
     };
   }, []);
 
+  const updateFormAndSave = (patch: Partial<UserPreferences>) => {
+    const updated = { ...form, ...patch };
+    setForm(updated);
+    onSave(updated);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSave(form);
@@ -60,7 +66,7 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
     const updated = isExcluded
       ? current.filter((id) => id !== charId)
       : [...current, charId];
-    setForm({ ...form, excludedCharacterWalletIds: updated });
+    updateFormAndSave({ excludedCharacterWalletIds: updated });
   };
 
   const handleToggleCorpDivision = (key: string) => {
@@ -80,7 +86,7 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
         : [...current, key];
     }
 
-    setForm({ ...form, includedCorporationWallets: updated });
+    updateFormAndSave({ includedCorporationWallets: updated });
   };
 
   // Group wallets by character & corp
@@ -192,7 +198,7 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
                     name="walletSyncMode"
                     value="BOTH"
                     checked={form.walletSyncMode === 'BOTH'}
-                    onChange={() => setForm({ ...form, walletSyncMode: 'BOTH' })}
+                    onChange={() => updateFormAndSave({ walletSyncMode: 'BOTH' })}
                     className="text-emerald-500 focus:ring-0"
                   />
                   <span className="font-semibold text-[11px]">Tous Portefeuilles</span>
@@ -213,7 +219,7 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
                     name="walletSyncMode"
                     value="CHARACTERS_ONLY"
                     checked={form.walletSyncMode === 'CHARACTERS_ONLY'}
-                    onChange={() => setForm({ ...form, walletSyncMode: 'CHARACTERS_ONLY' })}
+                    onChange={() => updateFormAndSave({ walletSyncMode: 'CHARACTERS_ONLY' })}
                     className="text-emerald-500 focus:ring-0"
                   />
                   <span className="font-semibold text-[11px]">Personnages Seuls</span>
@@ -234,7 +240,7 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
                     name="walletSyncMode"
                     value="CORPORATION_ONLY"
                     checked={form.walletSyncMode === 'CORPORATION_ONLY'}
-                    onChange={() => setForm({ ...form, walletSyncMode: 'CORPORATION_ONLY' })}
+                    onChange={() => updateFormAndSave({ walletSyncMode: 'CORPORATION_ONLY' })}
                     className="text-emerald-500 focus:ring-0"
                   />
                   <span className="font-semibold text-[11px]">Corporation Seule</span>

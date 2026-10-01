@@ -606,4 +606,61 @@ describe('Level 3: HTTP API & Middleware Endpoints Exhaustive Test Suite', () =>
       expect(res.body.checks.dataIntegrity).toBeDefined();
     });
   });
+
+  describe('11. Operations: Restock & Prioritized Logistics Transfers (/api/operations/*)', () => {
+    it('returns operations plan on GET /api/operations/plan', async () => {
+      const res = await request(app)
+        .get(`/api/operations/plan?characterId=${testCharId}&horizonDays=14&velocityWindowDays=90`)
+        .set('Cookie', [`eve_session_id=${sessionToken}`]);
+
+      expect(res.status).toBe(200);
+      expect(res.body.summary).toBeDefined();
+      expect(res.body.summary.horizonDays).toBe(14);
+      expect(res.body.summary.velocityWindowDays).toBe(90);
+      expect(Array.isArray(res.body.transfers)).toBe(true);
+      expect(Array.isArray(res.body.purchases)).toBe(true);
+      expect(Array.isArray(res.body.summary.transferVesselBenchmarks)).toBe(true);
+    });
+
+    it('returns transfer suggestions on GET /api/operations/transfers', async () => {
+      const res = await request(app)
+        .get(`/api/operations/transfers?characterId=${testCharId}`)
+        .set('Cookie', [`eve_session_id=${sessionToken}`]);
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.transfers)).toBe(true);
+      expect(res.body.summary).toBeDefined();
+    });
+
+    it('returns restock purchase suggestions on GET /api/operations/restock', async () => {
+      const res = await request(app)
+        .get(`/api/operations/restock?characterId=${testCharId}`)
+        .set('Cookie', [`eve_session_id=${sessionToken}`]);
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.purchases)).toBe(true);
+      expect(res.body.summary).toBeDefined();
+    });
+
+    it('updates transfer status on POST /api/operations/transfers/:id/status', async () => {
+      const res = await request(app)
+        .post('/api/operations/transfers/test-transfer-id/status')
+        .set('Cookie', [`eve_session_id=${sessionToken}`])
+        .set('X-Requested-With', 'XMLHttpRequest')
+        .send({ status: 'IN_TRANSIT', notes: 'Fret en cours' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.status).toBe('IN_TRANSIT');
+    });
+
+    it('enforces multi-character isolation with HTTP 403 on /api/operations/plan', async () => {
+      const res = await request(app)
+        .get('/api/operations/plan?characterId=999999')
+        .set('Cookie', [`eve_session_id=${sessionToken}`]);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain('Accès refusé');
+    });
+  });
 });

@@ -23,8 +23,8 @@ Un seul chantier actif, une phase, une branche, un PR. Jamais sur main. Petits l
 | 09 | Positions de capital et inventaire mutuellement exclusif | 07, 08 | Terminé |
 | 10 | Product 360 et visualisations temporelles | 07–09 | Terminé |
 | 10.bis | Soldes réels des wallets (personnages & divisions corpo), filtrage de liquidité et scopes ESI complets | 01–03, 09, 10 | Terminé |
-| 11 | Opérations, réapprovisionnement et transferts prioritaires | 08–10.bis | Planifiée |
-| 12 | Refonte du cockpit, navigation et intégration UX | 08–11 | Planifiée |
+| 11 | Opérations, réapprovisionnement et transferts prioritaires | 08–10.bis | Terminé |
+| 12 | Refonte du cockpit, navigation et intégration UX | 08–11 | Terminé |
 | H03 | Hardening UX, performance et release finale | 00–12, H01–H02 | Planifiée |
 
 Chaque phase possède un fichier dédié dans `docs/phases`. Fin de phase : critères propres satisfaits, tests ajoutés et verts, index du code à jour, PR vérifiable, aucun secret. Le statut « terminé » requiert merge et revalidation de main.

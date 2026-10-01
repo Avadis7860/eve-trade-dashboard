@@ -129,6 +129,133 @@ export function restockToCsv(items: RestockItem[]): string {
   return [headers.join(','), ...rows].join('\r\n');
 }
 
+export function transfersToCsv(transfers: Array<{
+  id: string;
+  typeId: number;
+  typeName: string;
+  quantity: number;
+  unitVolumeM3: number;
+  totalVolumeM3: number;
+  sourceLocationName: string;
+  sourceHubName?: string;
+  targetLocationName: string;
+  targetHubName?: string;
+  estimatedUnitValueIsk: number;
+  estimatedTotalValueIsk: number;
+  status: string;
+  reason: string;
+  notes?: string;
+}>): string {
+  const headers = [
+    'TransferID',
+    'TypeID',
+    'TypeName',
+    'Quantity',
+    'UnitVolumeM3',
+    'TotalVolumeM3',
+    'SourceLocation',
+    'SourceHub',
+    'TargetLocation',
+    'TargetHub',
+    'EstimatedUnitValueISK',
+    'EstimatedTotalValueISK',
+    'Status',
+    'Reason',
+    'Notes'
+  ];
+
+  const rows = transfers.map((t) => [
+    escapeCsvField(t.id),
+    escapeCsvField(t.typeId),
+    escapeCsvField(t.typeName),
+    escapeCsvField(t.quantity),
+    escapeCsvField(t.unitVolumeM3),
+    escapeCsvField(t.totalVolumeM3),
+    escapeCsvField(t.sourceLocationName),
+    escapeCsvField(t.sourceHubName || ''),
+    escapeCsvField(t.targetLocationName),
+    escapeCsvField(t.targetHubName || ''),
+    escapeCsvField(t.estimatedUnitValueIsk),
+    escapeCsvField(t.estimatedTotalValueIsk),
+    escapeCsvField(t.status),
+    escapeCsvField(t.reason),
+    escapeCsvField(t.notes || '')
+  ].join(','));
+
+  return [headers.join(','), ...rows].join('\r\n');
+}
+
+export function restockPurchasesToCsv(purchases: Array<{
+  id: string;
+  typeId: number;
+  typeName: string;
+  targetBuyHubName: string;
+  sellLocationName: string;
+  sellHubName?: string;
+  dailyVelocity: number;
+  horizonDays: number;
+  targetQuantity: number;
+  existingQuantity: number;
+  netNeedQuantity: number;
+  transferredQuantity: number;
+  purchaseQuantity: number;
+  unitVolumeM3: number;
+  totalVolumeM3: number;
+  estimatedBuyUnitPrice: number;
+  estimatedTotalCostIsk: number;
+  status: string;
+  justification: string;
+  notes?: string;
+}>): string {
+  const headers = [
+    'PurchaseID',
+    'TypeID',
+    'TypeName',
+    'TargetBuyHub',
+    'SellLocation',
+    'SellHub',
+    'DailyVelocity',
+    'HorizonDays',
+    'TargetQuantity',
+    'ExistingQuantity',
+    'NetNeedQuantity',
+    'TransferredQuantity',
+    'PurchaseQuantity',
+    'UnitVolumeM3',
+    'TotalVolumeM3',
+    'EstimatedUnitPriceISK',
+    'EstimatedTotalCostISK',
+    'Status',
+    'Justification',
+    'Notes'
+  ];
+
+  const rows = purchases.map((p) => [
+    escapeCsvField(p.id),
+    escapeCsvField(p.typeId),
+    escapeCsvField(p.typeName),
+    escapeCsvField(p.targetBuyHubName),
+    escapeCsvField(p.sellLocationName),
+    escapeCsvField(p.sellHubName || ''),
+    escapeCsvField(p.dailyVelocity),
+    escapeCsvField(p.horizonDays),
+    escapeCsvField(p.targetQuantity),
+    escapeCsvField(p.existingQuantity),
+    escapeCsvField(p.netNeedQuantity),
+    escapeCsvField(p.transferredQuantity),
+    escapeCsvField(p.purchaseQuantity),
+    escapeCsvField(p.unitVolumeM3),
+    escapeCsvField(p.totalVolumeM3),
+    escapeCsvField(p.estimatedBuyUnitPrice),
+    escapeCsvField(p.estimatedTotalCostIsk),
+    escapeCsvField(p.status),
+    escapeCsvField(p.justification),
+    escapeCsvField(p.notes || '')
+  ].join(','));
+
+  return [headers.join(','), ...rows].join('\r\n');
+}
+
 export function allocationsToCsv(allocations: ExplicitCostAllocation[]): string {
   const headers = [
     'AllocationID',

@@ -1,6 +1,6 @@
 # PHASE-12 — Cockpit, navigation unifiée et refonte ergonomique
 
-**Type :** refonte UX/UI & intégration globale · **Dépendances :** 08, 09, 10, 10.bis, 11, R00–R08 · **État :** Planifiée · **Document de référence :** [UX_REDESIGN_BLUEPRINT.md](../UX_REDESIGN_BLUEPRINT.md)
+**Type :** refonte UX/UI & intégration globale · **Dépendances :** 08, 09, 10, 10.bis, 11, R00–R08 · **État :** Terminée · **Document de référence :** [UX_REDESIGN_BLUEPRINT.md](../UX_REDESIGN_BLUEPRINT.md)
 
 ---
 
@@ -94,16 +94,16 @@
 
 ## 6. Critères d'Acceptation Mesurables
 
-- [ ] La barre d'état ESI n'occupe plus d'espace vertical dans le flux principal de la page et est déportée dans l'en-tête avec un tiroir de diagnostic à la demande.
-- [ ] La barre de navigation principale comporte exactement 6 espaces de travail thématiques sans redondance.
-- [ ] Le Cockpit permet d'avoir en un seul coup d'œil la situation patrimoniale exacte et les alertes d'action sans défilement vertical sur écran standard (1080p).
-- [ ] Aucune carte KPI n'est dupliquée entre le Cockpit, le Grand Livre, les Ordres et les Hubs.
-- [ ] L'inspection d'une transaction, d'un ordre ou d'un lot de stock s'effectue via un tiroir latéral sans perte du contexte de recherche, de tri ou de pagination de la vue d'origine.
-- [ ] La fiche Product 360 est accessible en fenêtre Focus à 4 onglets depuis n'importe quel écran où apparaît un article.
-- [ ] Les listes d'achats de réapprovisionnement sont présentées sous forme de tableau dense avec bouton de copie EVE Multibuy immédiat.
-- [ ] Les alternatives tabulaires sont disponibles pour toutes les représentations graphiques.
-- [ ] Conformité d'accessibilité WCAG 2.1 AA (contrastes $\ge 4.5:1$, navigation clavier complète, fermeture `Escape`, focus trap).
-- [ ] L'ensemble de la suite de tests unitaires, d'intégration et de composants est validé au vert (`vitest run`).
+- [x] La barre d'état ESI n'occupe plus d'espace vertical dans le flux principal de la page et est déportée dans l'en-tête avec un tiroir de diagnostic à la demande.
+- [x] La barre de navigation principale comporte exactement 6 espaces de travail thématiques sans redondance.
+- [x] Le Cockpit permet d'avoir en un seul coup d'œil la situation patrimoniale exacte et les alertes d'action sans défilement vertical sur écran standard (1080p).
+- [x] Aucune carte KPI n'est dupliquée entre le Cockpit, le Grand Livre, les Ordres et les Hubs.
+- [x] L'inspection d'une transaction, d'un ordre ou d'un lot de stock s'effectue via un tiroir latéral sans perte du contexte de recherche, de tri ou de pagination de la vue d'origine.
+- [x] La fiche Product 360 est accessible en fenêtre Focus à 4 onglets depuis n'importe quel écran où apparaît un article.
+- [x] Les listes d'achats de réapprovisionnement sont présentées sous forme de tableau dense avec bouton de copie EVE Multibuy immédiat.
+- [x] Les alternatives tabulaires sont disponibles pour toutes les représentations graphiques.
+- [x] Conformité d'accessibilité WCAG 2.1 AA (contrastes $\ge 4.5:1$, navigation clavier complète, fermeture `Escape`, focus trap).
+- [x] L'ensemble de la suite de tests unitaires, d'intégration et de composants est validé au vert (`vitest run`).
 
 ---
 

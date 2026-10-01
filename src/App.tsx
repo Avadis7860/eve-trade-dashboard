@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Coins,
-  RefreshCw,
   LogOut,
   UserPlus,
   ChevronDown,
@@ -21,16 +19,21 @@ import {
 } from 'lucide-react';
 
 import { DashboardOverview } from './components/DashboardOverview';
+import { PreferencesModal } from './components/PreferencesModal';
+import { Product360Modal } from './components/Product360Modal';
+import { AnalyticsView } from './components/AnalyticsView';
+import { PositionsView } from './components/PositionsView';
+import { OperationsView } from './components/OperationsView';
+import { TransactionsView } from './components/TransactionsView';
+import { ConfigurationView } from './components/ConfigurationView';
+import { SystemRoadmapView } from './components/SystemRoadmapView';
 import { LedgerView } from './components/LedgerView';
 import { OrdersView } from './components/OrdersView';
 import { RestockView } from './components/RestockView';
 import { HubsRoiView } from './components/HubsRoiView';
 import { CapitalView } from './components/CapitalView';
 import { JournalView } from './components/JournalView';
-import { SystemRoadmapView } from './components/SystemRoadmapView';
-import { PreferencesModal } from './components/PreferencesModal';
-import { Product360Modal } from './components/Product360Modal';
-import { AnalyticsView } from './components/AnalyticsView';
+import { EsiDiagnosticDrawer } from './components/drawers/EsiDiagnosticDrawer';
 
 import {
   loadPreferences,
@@ -185,6 +188,8 @@ export interface RestockItem {
   sellHubName: string;
   suggestedQuantity: number;
   targetQuantity: number;
+  estimatedBuyUnitPrice?: number;
+  totalCostEstimate?: number;
   status: RestockItemStatus;
   justification: string;
   linkedOrderId?: number;
@@ -446,10 +451,15 @@ function AppDashboard() {
   const [showCharacterDropdown, setShowCharacterDropdown] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  // Active Tab View
-  const [activeTab, setActiveTab] = useState<'overview' | 'analytics' | 'ledger' | 'orders' | 'restock' | 'hubs-roi' | 'capital' | 'journal' | 'roadmap'>(
+  // Active Tab View & 6 Decision Workspaces
+  const [activeTab, setActiveTab] = useState<string>(
     preferences.defaultLandingTab || 'overview'
   );
+  const [positionsSubTab, setPositionsSubTab] = useState<'orders' | 'inventory'>('orders');
+  const [operationsSubTab, setOperationsSubTab] = useState<'transfers' | 'purchases'>('purchases');
+  const [transactionsSubTab, setTransactionsSubTab] = useState<'ledger' | 'journal' | 'reconciliation'>('ledger');
+  const [configSubTab, setConfigSubTab] = useState<'characters' | 'hubs' | 'backups' | 'diagnostics' | 'roadmap'>('characters');
+  const [showEsiDrawer, setShowEsiDrawer] = useState(false);
 
   // Product 360 Inspection Modal State
   const [selectedProduct360TypeId, setSelectedProduct360TypeId] = useState<number | null>(null);
@@ -524,10 +534,10 @@ function AppDashboard() {
   const journalEntries = journalData?.items || [];
 
   // Orders State & queries
+  const [selectedOrder, setSelectedOrder] = useState<CharacterOrderSnapshot | null>(null);
   const [orderStateFilter, setOrderStateFilter] = useState<OrderLifecycleState | 'ALL'>('ALL');
   const [ordersPage, setOrdersPage] = useState(1);
   const [ordersSearch, setOrdersSearch] = useState('');
-  const [selectedOrder, setSelectedOrder] = useState<CharacterOrderSnapshot | null>(null);
 
   const { data: orderSummary = null } = useApiQuery<OrderSummaryMetrics>(
     ['orders', 'summary', ...linkedCharIds],
@@ -536,15 +546,9 @@ function AppDashboard() {
   );
 
   const { data: ordersData } = useApiQuery<{ items: CharacterOrderSnapshot[]; total: number; totalPages: number }>(
-    ['orders', 'list', ordersPage, preferences.tablePageSize || 25, orderStateFilter, ordersSearch, preferences.hideCompletedOrders],
+    ['orders', 'list', preferences.hideCompletedOrders],
     async (signal) => {
-      const params = new URLSearchParams({
-        page: String(ordersPage),
-        pageSize: String(preferences.tablePageSize || 25),
-        ...(orderStateFilter !== 'ALL' ? { state: orderStateFilter } : {}),
-        ...(ordersSearch ? { search: ordersSearch } : {}),
-      });
-      return fetchJson(`/api/orders?${params.toString()}`, { signal });
+      return fetchJson(`/api/orders?pageSize=500`, { signal });
     },
     { enabled: !!session, ttl: 15_000 }
   );
@@ -552,8 +556,6 @@ function AppDashboard() {
   const orders = preferences.hideCompletedOrders
     ? rawOrders.filter((o) => o.state === 'ACTIVE' || o.state === 'PARTIALLY_FILLED' || o.state === 'DISAPPEARED_UNCONFIRMED')
     : rawOrders;
-  const ordersTotalPages = ordersData?.totalPages || 1;
-  const ordersTotalCount = ordersData?.total || 0;
 
   // Restock State & queries
   const [isGeneratingRestock, setIsGeneratingRestock] = useState(false);
@@ -628,6 +630,65 @@ function AppDashboard() {
   const [isReconciling, setIsReconciling] = useState(false);
   const [reconcileMessage, setReconcileMessage] = useState<string | null>(null);
 
+  const handleGenerateRestock = async () => {
+    if (isGeneratingRestock || !session) return;
+    setIsGeneratingRestock(true);
+    try {
+      const res = await fetch('/api/orders/restock/generate', { method: 'POST' });
+      if (res.ok) {
+        queryClient.invalidateQueries(['orders', 'restock']);
+        queryClient.invalidateQueries(['operations']);
+      }
+    } catch (err) {
+      console.error('Failed to generate restock:', err);
+    } finally {
+      setIsGeneratingRestock(false);
+    }
+  };
+
+  const handleDeleteRestockItem = async (id: string) => {
+    try {
+      const res = await fetch(`/api/orders/restock/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (res.ok) {
+        queryClient.invalidateQueries(['orders', 'restock']);
+        queryClient.invalidateQueries(['operations']);
+      }
+    } catch (err) {
+      console.error('Failed to delete item:', err);
+    }
+  };
+
+  const handleDeleteAllocation = async (id: string) => {
+    try {
+      const res = await fetch(`/api/roi/allocations/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (res.ok) {
+        queryClient.invalidateQueries(['roi']);
+      }
+    } catch (err) {
+      console.error('Failed to delete allocation:', err);
+    }
+  };
+
+  const handleInspectOrder = (order: CharacterOrderSnapshot) => {
+    setSelectedOrder(order);
+  };
+
+  const handleQuickAddRestock = (order: CharacterOrderSnapshot) => {
+    setNewRestockForm({
+      typeId: order.typeId,
+      typeName: order.typeName || `Type #${order.typeId}`,
+      targetBuyHubId: 60003760,
+      targetBuyHubName: 'Jita IV - Moon 4 - Caldari Navy Assembly Plant',
+      sellHubId: order.locationId,
+      sellHubName: order.locationName || `Emplacement #${order.locationId}`,
+      suggestedQuantity: order.volumeTotal,
+      targetQuantity: order.volumeTotal,
+      justification: `Réapprovisionnement suite à l'ordre #${order.orderId}`,
+      notes: '',
+    });
+    setShowAddRestockModal(true);
+  };
+
   // Sync handler with targeted query invalidations
   const handleSync = async () => {
     if (isSyncing || !session) return;
@@ -659,46 +720,16 @@ function AppDashboard() {
     }
   };
 
-  const handleGenerateRestock = async () => {
-    if (isGeneratingRestock || !session) return;
-    setIsGeneratingRestock(true);
+  const handleInspectTransaction = async (tx: CharacterTransaction) => {
+    setSelectedTx(tx);
     try {
-      const res = await fetch('/api/orders/restock/generate', { method: 'POST' });
-      if (res.ok) {
-        queryClient.invalidateQueries(['orders', 'restock']);
-      }
-    } catch (err) {
-      console.error('Failed to generate restock suggestions:', err);
-    } finally {
-      setIsGeneratingRestock(false);
-    }
-  };
-
-  const handleUpdateRestockStatus = async (item: RestockItem, newStatus: RestockItemStatus) => {
-    try {
-      const res = await fetch(`/api/orders/restock/${encodeURIComponent(item.id)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
-      });
-      if (res.ok) {
-        queryClient.invalidateQueries(['orders', 'restock']);
-      }
-    } catch (err) {
-      console.error('Failed to update status:', err);
-    }
-  };
-
-  const handleDeleteRestockItem = async (itemId: string) => {
-    try {
-      const res = await fetch(`/api/orders/restock/${encodeURIComponent(itemId)}`, {
-        method: 'DELETE',
-      });
-      if (res.ok) {
-        queryClient.invalidateQueries(['orders', 'restock']);
-      }
-    } catch (err) {
-      console.error('Failed to delete item:', err);
+      const detail = await fetchJson<{
+        transaction: CharacterTransaction;
+        relatedJournalEntries: CharacterWalletJournalEntry[];
+      }>(`/api/ledger/transactions/${tx.transactionId}`);
+      setSelectedTxDetail(detail);
+    } catch {
+      setSelectedTxDetail({ transaction: tx, relatedJournalEntries: [] });
     }
   };
 
@@ -719,19 +750,6 @@ function AppDashboard() {
     }
   };
 
-  const handleInspectTransaction = async (tx: CharacterTransaction) => {
-    setSelectedTx(tx);
-    try {
-      const detail = await fetchJson<{
-        transaction: CharacterTransaction;
-        relatedJournalEntries: CharacterWalletJournalEntry[];
-      }>(`/api/ledger/transactions/${tx.transactionId}`);
-      setSelectedTxDetail(detail);
-    } catch {
-      setSelectedTxDetail({ transaction: tx, relatedJournalEntries: [] });
-    }
-  };
-
   const handleQuickAllocate = (tx: CharacterTransaction) => {
     setNewAllocForm({
       sell_transaction_id: tx.transactionId,
@@ -740,22 +758,6 @@ function AppDashboard() {
       notes: `Rapprochement direct pour vente #${tx.transactionId} (${tx.typeName})`,
     });
     setShowAddAllocationModal(true);
-  };
-
-  const handleQuickAddRestock = (order: CharacterOrderSnapshot) => {
-    setNewRestockForm({
-      typeId: order.typeId,
-      typeName: order.typeName || `Type #${order.typeId}`,
-      targetBuyHubId: 60003760,
-      targetBuyHubName: 'Jita IV - Moon 4 - Caldari Navy Assembly Plant',
-      sellHubId: order.locationId,
-      sellHubName: order.locationName || `Station #${order.locationId}`,
-      suggestedQuantity: order.volumeTotal,
-      targetQuantity: order.volumeTotal,
-      justification: `Réapprovisionnement suite à l'ordre #${order.orderId}`,
-      notes: '',
-    });
-    setShowAddRestockModal(true);
   };
 
   const handleCreateHub = async (e: React.FormEvent) => {
@@ -856,17 +858,6 @@ function AppDashboard() {
     }
   };
 
-  const handleDeleteAllocation = async (id: string) => {
-    try {
-      const res = await fetch(`/api/roi/allocations/${encodeURIComponent(id)}`, { method: 'DELETE' });
-      if (res.ok) {
-        queryClient.invalidateQueries(['roi']);
-      }
-    } catch (err) {
-      console.error('Failed to delete allocation:', err);
-    }
-  };
-
   const handleAutoReconcile = async () => {
     if (isReconciling || !session) return;
     setIsReconciling(true);
@@ -904,6 +895,9 @@ function AppDashboard() {
   const handleSavePreferences = (updated: Partial<UserPreferences>) => {
     const saved = savePreferences(updated);
     setPreferences(saved);
+    queryClient.invalidateQueries(['capital']);
+    queryClient.invalidateQueries(['orders']);
+    queryClient.invalidateQueries(['ledger']);
   };
 
   useEffect(() => {
@@ -978,6 +972,34 @@ function AppDashboard() {
     }
   };
 
+  const handleNavigateTab = (tab: string, subTab?: string) => {
+    if (tab === 'positions' || tab === 'orders' || tab === 'capital') {
+      setActiveTab(tab === 'orders' || tab === 'capital' ? tab : 'positions');
+      if (subTab === 'inventory' || tab === 'capital') setPositionsSubTab('inventory');
+      else setPositionsSubTab('orders');
+    } else if (tab === 'operations' || tab === 'restock') {
+      setActiveTab(tab === 'restock' ? 'restock' : 'operations');
+      if (subTab === 'transfers') setOperationsSubTab('transfers');
+      else setOperationsSubTab('purchases');
+    } else if (tab === 'transactions' || tab === 'ledger' || tab === 'journal') {
+      setActiveTab(tab === 'ledger' || tab === 'journal' ? tab : 'transactions');
+      if (subTab === 'journal' || tab === 'journal') setTransactionsSubTab('journal');
+      else if (subTab === 'reconciliation') setTransactionsSubTab('reconciliation');
+      else setTransactionsSubTab('ledger');
+    } else if (tab === 'configuration' || tab === 'roadmap' || tab === 'hubs-config') {
+      setActiveTab(tab === 'roadmap' ? 'roadmap' : 'configuration');
+      if (subTab === 'roadmap' || tab === 'roadmap') setConfigSubTab('roadmap');
+      else if (subTab === 'hubs' || tab === 'hubs-config') setConfigSubTab('hubs');
+      else if (subTab === 'backups' || subTab === 'backup') setConfigSubTab('backups');
+      else if (subTab === 'diagnostics' || subTab === 'system') setConfigSubTab('diagnostics');
+      else setConfigSubTab('characters');
+    } else if (tab === 'analytics' || tab === 'hubs-roi') {
+      setActiveTab(tab === 'hubs-roi' ? 'hubs-roi' : 'analytics');
+    } else {
+      setActiveTab('overview');
+    }
+  };
+
   const formatIsk = (val: number | null | undefined) => {
     if (val === null || val === undefined) return '—';
     return formatIskValue(val, preferences.iskDisplayMode);
@@ -985,7 +1007,7 @@ function AppDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-amber-500/30 selection:text-amber-200">
-      {/* Top Bar Contract: Zone 1 (Brand), Zone 2 (Clean Nav Links), Zone 3 (Actions & User) */}
+      {/* Top Bar Contract: Zone 1 (Brand), Zone 2 (6 Canonical Workspaces), Zone 3 (ESI Status & Actions) */}
       <header className="border-b border-slate-800/80 bg-slate-900/70 backdrop-blur sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           {/* Zone 1: Wordmark */}
@@ -998,104 +1020,126 @@ function AppDashboard() {
             </a>
           </div>
 
-          {/* Zone 2: Navigation Links */}
+          {/* Zone 2: 6 Decision Workspaces Navigation Links */}
           {session && (
             <nav className="hidden lg:flex items-center space-x-1">
               <button
-                onClick={() => setActiveTab('overview')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                onClick={() => handleNavigateTab('overview')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
                   activeTab === 'overview'
                     ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
                 }`}
+                title="Cockpit décisionnel & synthèse patrimoniale"
               >
-                Vue d&apos;Ensemble
+                1. Cockpit
+                <span className="sr-only">Vue d'Ensemble</span>
               </button>
               <button
-                onClick={() => setActiveTab('analytics')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  activeTab === 'analytics'
+                onClick={() => handleNavigateTab('positions')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                  activeTab === 'positions' || activeTab === 'orders' || activeTab === 'capital'
                     ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
                 }`}
+                title="Marché & inventaire physique"
               >
-                Product 360 &amp; Séries
+                2. Positions
+                <span className="sr-only" onClick={(e) => { e.stopPropagation(); handleNavigateTab('orders'); }}>
+                  Ordres &amp; Marché
+                </span>
+                <span className="sr-only" onClick={(e) => { e.stopPropagation(); handleNavigateTab('capital'); }}>
+                  Capital &amp; Stocks
+                </span>
               </button>
               <button
-                onClick={() => setActiveTab('ledger')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  activeTab === 'ledger'
+                onClick={() => handleNavigateTab('analytics')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                  activeTab === 'analytics' || activeTab === 'hubs-roi'
                     ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
                 }`}
+                title="Product 360 & hubs"
               >
-                Grand Livre
+                3. Analyses
+                <span className="sr-only" onClick={(e) => { e.stopPropagation(); handleNavigateTab('analytics'); }}>
+                  Product 360 &amp; Séries
+                </span>
+                <span className="sr-only" onClick={(e) => { e.stopPropagation(); handleNavigateTab('hubs-roi'); }}>
+                  Hubs &amp; ROI TTC
+                </span>
               </button>
               <button
-                onClick={() => setActiveTab('orders')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  activeTab === 'orders'
+                onClick={() => handleNavigateTab('operations')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                  activeTab === 'operations' || activeTab === 'restock'
                     ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
                 }`}
+                title="Transferts & réapprovisionnement"
               >
-                Ordres &amp; Marché
+                4. Opérations
+                <span className="sr-only" onClick={(e) => { e.stopPropagation(); handleNavigateTab('restock'); }}>
+                  Réapprovisionnement
+                </span>
               </button>
               <button
-                onClick={() => setActiveTab('restock')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  activeTab === 'restock'
+                onClick={() => handleNavigateTab('transactions')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                  activeTab === 'transactions' || activeTab === 'ledger' || activeTab === 'journal'
                     ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
                 }`}
+                title="Grand Livre & journal"
               >
-                Réapprovisionnement
+                5. Transactions
+                <span className="sr-only" onClick={(e) => { e.stopPropagation(); handleNavigateTab('ledger'); }}>
+                  Grand Livre
+                </span>
               </button>
               <button
-                onClick={() => setActiveTab('hubs-roi')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  activeTab === 'hubs-roi'
+                onClick={() => handleNavigateTab('configuration')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                  activeTab === 'configuration' || activeTab === 'roadmap'
                     ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
                 }`}
+                title="Comptes, hubs & diagnostics"
               >
-                Hubs &amp; ROI TTC
-              </button>
-              <button
-                onClick={() => setActiveTab('capital')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  activeTab === 'capital'
-                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                }`}
-              >
-                Capital &amp; Stocks
-              </button>
-              <button
-                onClick={() => setActiveTab('journal')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  activeTab === 'journal'
-                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                }`}
-              >
-                Journal &amp; Frais
-              </button>
-              <button
-                onClick={() => setActiveTab('roadmap')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  activeTab === 'roadmap'
-                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                }`}
-              >
-                Système
+                6. Configuration
+                <span className="sr-only" onClick={(e) => { e.stopPropagation(); handleNavigateTab('roadmap'); }}>
+                  Roadmap &amp; Statuts
+                </span>
               </button>
             </nav>
           )}
 
-          {/* Zone 3: Actions, Preferences & Profile */}
+          {/* Zone 3: Compact ESI Badge, Actions, Preferences & Profile */}
           <div className="flex items-center space-x-2">
+            {session && (
+              <button
+                onClick={() => setShowEsiDrawer(true)}
+                className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-amber-500/40 text-xs font-mono transition-colors cursor-pointer"
+                title="Ouvrir le panneau de diagnostic ESI & Serveur"
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    syncStatus?.freshness === 'FRESH'
+                      ? 'bg-emerald-400'
+                      : syncStatus?.freshness === 'STALE'
+                      ? 'bg-amber-400'
+                      : 'bg-slate-500'
+                  } ${isSyncing ? 'animate-ping' : ''}`}
+                />
+                <span className="text-slate-300 font-semibold">
+                  {isSyncing ? 'SYNCHRO...' : syncStatus?.freshness === 'FRESH' ? 'ESI FRESH' : 'ESI STALE'}
+                </span>
+                <span className="text-slate-500 text-[10px]">
+                  ({esiStatus?.rateLimit?.errorLimitRemain ?? 100}/100)
+                </span>
+              </button>
+            )}
+
             <button
               onClick={() => setShowPreferencesModal(true)}
               className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-amber-300 border border-slate-800 transition-colors cursor-pointer"
@@ -1248,7 +1292,7 @@ function AppDashboard() {
         {/* If Not Authenticated -> Show Connection Hero & Roadmap */}
         {!session ? (
           <div className="space-y-6">
-            <section className="relative overflow-hidden rounded-xl border border-slate-800 bg-gradient-to-b from-slate-900/90 to-slate-950 p-6 md:p-8 space-y-6">
+            <section className="relative overflow-hidden rounded-xl border border-slate-800 bg-linear-to-b from-slate-900/90 to-slate-950 p-6 md:p-8 space-y-6">
               <div className="relative z-10 max-w-3xl space-y-4">
                 <div className="inline-flex items-center space-x-2 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-medium">
                   <Shield className="w-3.5 h-3.5" />
@@ -1303,58 +1347,8 @@ function AppDashboard() {
             />
           </div>
         ) : (
-          /* Authenticated Dashboard View */
+          /* Authenticated 6 Canonical Workspaces */
           <div className="space-y-6">
-            {/* Sync & Freshness Status Bar */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 rounded-xl border border-slate-800 bg-slate-900/60 backdrop-blur">
-              <div className="flex items-center space-x-3">
-                <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400">
-                  <Coins className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-sm font-bold text-white">Passerelle &amp; Synchronisation ESI</h2>
-                    {syncStatus && (
-                      <span
-                        className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
-                          syncStatus.freshness === 'FRESH'
-                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                            : syncStatus.freshness === 'STALE'
-                            ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                            : 'bg-slate-800 text-slate-400 border-slate-700'
-                        }`}
-                      >
-                        {syncStatus.freshness === 'FRESH'
-                          ? 'DONNÉES FRAÎCHES'
-                          : syncStatus.freshness === 'STALE'
-                          ? 'PÉRIMÉ'
-                          : 'NON SYNCHRONISÉ'}
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-xs text-slate-400 flex items-center gap-2">
-                    <span>
-                      Dernière synchro :{' '}
-                      {syncStatus?.transactions?.lastSyncCompletedAt
-                        ? new Date(syncStatus.transactions.lastSyncCompletedAt).toLocaleString('fr-FR')
-                        : 'Jamais'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-3 w-full sm:w-auto">
-                <button
-                  onClick={handleSync}
-                  disabled={isSyncing}
-                  className="w-full sm:w-auto px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:bg-slate-800 disabled:text-slate-600 text-slate-950 font-semibold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-                  {isSyncing ? 'Synchronisation ESI...' : 'Synchroniser avec ESI'}
-                </button>
-              </div>
-            </div>
-
             {syncError && (
               <div className="p-3.5 rounded-xl border border-red-500/30 bg-red-950/20 text-red-300 text-xs flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
@@ -1370,7 +1364,7 @@ function AppDashboard() {
               </div>
             )}
 
-            {/* TAB 0: OVERVIEW (CENTRAL DASHBOARD) */}
+            {/* ESPACE 1: COCKPIT */}
             {activeTab === 'overview' && (
               <DashboardOverview
                 summary={summary}
@@ -1378,9 +1372,14 @@ function AppDashboard() {
                 orderSummary={orderSummary}
                 orders={orders}
                 restockItems={restockItems}
+                preferences={preferences}
                 iskDisplayMode={preferences.iskDisplayMode}
-                onNavigateTab={(t) => setActiveTab(t)}
+                activeCharacterId={session?.characterId}
+                characterIds={linkedCharacters.length > 1 ? linkedCharacters.map((c) => c.characterId) : undefined}
+                onNavigateTab={handleNavigateTab}
                 onOpenProduct360={(typeId) => setSelectedProduct360TypeId(typeId)}
+                onOpenPreferences={() => setShowPreferencesModal(true)}
+                onUpdatePreferences={handleSavePreferences}
                 onSync={handleSync}
                 isSyncing={isSyncing}
                 onAutoReconcile={handleAutoReconcile}
@@ -1388,7 +1387,54 @@ function AppDashboard() {
               />
             )}
 
-            {/* TAB 0.5: PRODUCT 360 & ANALYTICS */}
+            {/* ESPACE 2: POSITIONS (Marché & Inventaire) */}
+            {activeTab === 'positions' && (
+              <PositionsView
+                orders={orders}
+                orderSummary={orderSummary}
+                formatIsk={formatIsk}
+                onOpenProduct360={(typeId) => setSelectedProduct360TypeId(typeId)}
+                activeCharacterId={session?.characterId}
+                characterIds={linkedCharacters.length > 1 ? linkedCharacters.map((c) => c.characterId) : undefined}
+                preferences={preferences}
+                onOpenPreferences={() => setShowPreferencesModal(true)}
+                initialSubTab={positionsSubTab}
+              />
+            )}
+
+            {/* VUE DIRECTE: ORDRES */}
+            {activeTab === 'orders' && (
+              <OrdersView
+                orders={orders}
+                orderSummary={orderSummary}
+                orderStateFilter={orderStateFilter}
+                ordersSearch={ordersSearch}
+                ordersPage={ordersPage}
+                ordersTotalPages={1}
+                ordersTotalCount={orders.length}
+                iskDisplayMode={preferences.iskDisplayMode}
+                onOrderStateFilterChange={setOrderStateFilter}
+                onOrdersSearchChange={setOrdersSearch}
+                onOrdersPageChange={setOrdersPage}
+                onSelectOrder={handleInspectOrder}
+                onQuickAddRestock={handleQuickAddRestock}
+                onOpenProduct360={(typeId) => setSelectedProduct360TypeId(typeId)}
+              />
+            )}
+
+            {/* VUE DIRECTE: CAPITAL */}
+            {activeTab === 'capital' && (
+              <CapitalView
+                formatIsk={formatIsk}
+                onOpenProduct360={(typeId) => setSelectedProduct360TypeId(typeId)}
+                activeCharacterId={session?.characterId}
+                characterIds={linkedCharacters.length > 1 ? linkedCharacters.map((c) => c.characterId) : undefined}
+                preferences={preferences}
+                onOpenPreferences={() => setShowPreferencesModal(true)}
+              />
+            )}
+
+            {/* ESPACE 3: ANALYSES (Product 360 & Hubs) */}
             {activeTab === 'analytics' && (
               <AnalyticsView
                 preferences={preferences}
@@ -1397,64 +1443,7 @@ function AppDashboard() {
               />
             )}
 
-            {/* TAB 1: SALES LEDGER */}
-            {activeTab === 'ledger' && (
-              <LedgerView
-                transactions={transactions}
-                summary={summary}
-                loading={ledgerLoading}
-                page={page}
-                totalPages={totalPages}
-                totalCount={totalCount}
-                filterType={filterType}
-                searchQuery={searchQuery}
-                selectedLocation={selectedLocation}
-                distinctLocations={distinctLocations}
-                iskDisplayMode={preferences.iskDisplayMode}
-                onFilterTypeChange={(type) => { setFilterType(type); setPage(1); }}
-                onSearchChange={(search) => { setSearchQuery(search); setPage(1); }}
-                onLocationChange={(loc) => { setSelectedLocation(loc); setPage(1); }}
-                onPageChange={setPage}
-                onInspectTransaction={handleInspectTransaction}
-                onQuickAllocate={handleQuickAllocate}
-                onOpenProduct360={(typeId) => setSelectedProduct360TypeId(typeId)}
-              />
-            )}
-
-            {/* TAB 2: MARKET ORDERS & LIFECYCLE */}
-            {activeTab === 'orders' && (
-              <OrdersView
-                orders={orders}
-                orderSummary={orderSummary}
-                orderStateFilter={orderStateFilter}
-                ordersSearch={ordersSearch}
-                ordersPage={ordersPage}
-                ordersTotalPages={ordersTotalPages}
-                ordersTotalCount={ordersTotalCount}
-                iskDisplayMode={preferences.iskDisplayMode}
-                onOrderStateFilterChange={(state: OrderLifecycleState | 'ALL') => { setOrderStateFilter(state); setOrdersPage(1); }}
-                onOrdersSearchChange={(search: string) => { setOrdersSearch(search); setOrdersPage(1); }}
-                onOrdersPageChange={setOrdersPage}
-                onSelectOrder={setSelectedOrder}
-                onQuickAddRestock={handleQuickAddRestock}
-                onOpenProduct360={(typeId: number) => setSelectedProduct360TypeId(typeId)}
-              />
-            )}
-
-            {/* TAB 3: RESTOCK LISTS */}
-            {activeTab === 'restock' && (
-              <RestockView
-                restockItems={restockItems}
-                isGenerating={isGeneratingRestock}
-                onGenerateRestock={handleGenerateRestock}
-                onOpenAddModal={() => setShowAddRestockModal(true)}
-                onUpdateStatus={handleUpdateRestockStatus}
-                onDeleteItem={handleDeleteRestockItem}
-                onOpenProduct360={(typeId) => setSelectedProduct360TypeId(typeId)}
-              />
-            )}
-
-            {/* TAB 4: HUBS & ROI TTC */}
+            {/* VUE DIRECTE: HUBS & ROI TTC */}
             {activeTab === 'hubs-roi' && (
               <HubsRoiView
                 roiSummary={roiSummary}
@@ -1477,19 +1466,93 @@ function AppDashboard() {
               />
             )}
 
-            {/* TAB 5: CAPITAL POSITIONS & INVENTORY */}
-            {activeTab === 'capital' && (
-              <CapitalView
+            {/* ESPACE 4: OPÉRATIONS (Transferts & Réassort) */}
+            {activeTab === 'operations' && (
+              <OperationsView
+                restockItems={restockItems}
                 formatIsk={formatIsk}
-                characterIds={linkedCharacters.length > 1 ? linkedCharacters.map((c) => c.characterId) : undefined}
-                activeCharacterId={session?.characterId}
                 onOpenProduct360={(typeId) => setSelectedProduct360TypeId(typeId)}
-                preferences={preferences}
-                onOpenPreferences={() => setShowPreferencesModal(true)}
+                activeCharacterId={session?.characterId}
+                characterIds={linkedCharacters.length > 1 ? linkedCharacters.map((c) => c.characterId) : undefined}
+                initialSubTab={operationsSubTab}
               />
             )}
 
-            {/* TAB 6: JOURNAL & FEES */}
+            {/* VUE DIRECTE: RÉAPPROVISIONNEMENT */}
+            {activeTab === 'restock' && (
+              <RestockView
+                restockItems={restockItems}
+                isGenerating={isGeneratingRestock}
+                onGenerateRestock={handleGenerateRestock}
+                onOpenAddModal={() => setShowAddRestockModal(true)}
+                onDeleteItem={handleDeleteRestockItem}
+                onOpenProduct360={(typeId) => setSelectedProduct360TypeId(typeId)}
+                iskDisplayMode={preferences.iskDisplayMode}
+                characterIds={linkedCharacters.length > 1 ? linkedCharacters.map((c) => c.characterId) : undefined}
+              />
+            )}
+
+            {/* ESPACE 5: TRANSACTIONS (Grand Livre, Journal & Rapprochement) */}
+            {activeTab === 'transactions' && (
+              <TransactionsView
+                transactions={transactions}
+                ledgerSummary={summary}
+                loadingLedger={ledgerLoading}
+                ledgerPage={page}
+                ledgerTotalPages={totalPages}
+                ledgerTotalCount={totalCount}
+                filterType={filterType}
+                searchQuery={searchQuery}
+                selectedLocation={selectedLocation}
+                distinctLocations={distinctLocations}
+                iskDisplayMode={preferences.iskDisplayMode}
+                onFilterTypeChange={(type) => { setFilterType(type); setPage(1); }}
+                onSearchChange={(search) => { setSearchQuery(search); setPage(1); }}
+                onLocationChange={(loc) => { setSelectedLocation(loc); setPage(1); }}
+                onPageChange={setPage}
+                onQuickAllocate={handleQuickAllocate}
+                onOpenProduct360={(typeId) => setSelectedProduct360TypeId(typeId)}
+                journalEntries={journalEntries}
+                loadingJournal={false}
+                journalPage={1}
+                journalTotalPages={1}
+                journalTotalCount={journalEntries.length}
+                journalRefTypeFilter="ALL"
+                distinctJournalRefTypes={[]}
+                onJournalRefTypeChange={() => {}}
+                onJournalPageChange={() => {}}
+                onAutoReconcile={handleAutoReconcile}
+                isReconciling={isReconciling}
+                formatIsk={formatIsk}
+                initialSubTab={transactionsSubTab}
+              />
+            )}
+
+            {/* VUE DIRECTE: GRAND LIVRE */}
+            {activeTab === 'ledger' && (
+              <LedgerView
+                transactions={transactions}
+                summary={summary}
+                loading={ledgerLoading}
+                page={page}
+                totalPages={totalPages}
+                totalCount={totalCount}
+                filterType={filterType}
+                searchQuery={searchQuery}
+                selectedLocation={selectedLocation}
+                distinctLocations={distinctLocations}
+                iskDisplayMode={preferences.iskDisplayMode}
+                onFilterTypeChange={(type) => { setFilterType(type); setPage(1); }}
+                onSearchChange={(query) => { setSearchQuery(query); setPage(1); }}
+                onLocationChange={(loc) => { setSelectedLocation(loc); setPage(1); }}
+                onPageChange={setPage}
+                onInspectTransaction={handleInspectTransaction}
+                onQuickAllocate={handleQuickAllocate}
+                onOpenProduct360={(typeId) => setSelectedProduct360TypeId(typeId)}
+              />
+            )}
+
+            {/* VUE DIRECTE: JOURNAL WALLET */}
             {activeTab === 'journal' && (
               <JournalView
                 journalEntries={journalEntries}
@@ -1497,18 +1560,52 @@ function AppDashboard() {
               />
             )}
 
-            {/* TAB 6: ROADMAP & SYSTEM */}
+            {/* ESPACE 6: CONFIGURATION (Comptes, Hubs & Diagnostics) */}
+            {activeTab === 'configuration' && (
+              <ConfigurationView
+                session={session}
+                linkedCharacters={linkedCharacters}
+                activeCharacterId={session?.characterId}
+                onSwitchCharacter={handleSwitchCharacter}
+                onLogout={handleLogout}
+                hubsList={hubsList}
+                hubsMappings={hubsMappings}
+                onOpenAddHubModal={() => setShowAddHubModal(true)}
+                onDeleteHub={handleDeleteHub}
+                onOpenAddMappingModal={() => setShowAddMappingModal(true)}
+                onDeleteMapping={handleDeleteMapping}
+                onAutoDiscoverHubs={handleAutoDiscoverHubs}
+                healthStatus={health}
+                esiStatus={esiStatus}
+                onSync={handleSync}
+                isSyncing={isSyncing}
+                initialSubTab={configSubTab}
+              />
+            )}
+
+            {/* VUE DIRECTE: ROADMAP */}
             {activeTab === 'roadmap' && (
               <SystemRoadmapView
                 health={health}
                 esiStatus={esiStatus}
-                loading={loading}
-                sessionExists={true}
+                loading={isSyncing}
+                sessionExists={!!session}
               />
             )}
           </div>
         )}
       </main>
+
+      {/* ESI Diagnostics Side Drawer */}
+      <EsiDiagnosticDrawer
+        isOpen={showEsiDrawer}
+        onClose={() => setShowEsiDrawer(false)}
+        esiStatus={esiStatus}
+        healthStatus={health}
+        isSyncing={isSyncing}
+        onSync={handleSync}
+        lastSyncTime={syncStatus?.transactions?.lastSyncCompletedAt}
+      />
 
       {/* Transaction Detail Modal */}
       {selectedTx && (

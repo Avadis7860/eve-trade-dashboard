@@ -36,8 +36,8 @@
 - [09 Positions de capital et inventaire](phases/PHASE-09-capital-and-inventory.md) — *Terminé*
 - [10 Product 360 et analyses temporelles](phases/PHASE-10-product-360-analytics.md) — *Terminé*
 - [10.bis Soldes réels des wallets, filtrage de liquidité et scopes ESI complets](phases/PHASE-10bis-wallets-and-scopes.md) — *Terminé*
-- [11 Opérations, réapprovisionnement et transferts](phases/PHASE-11-restock-and-transfers.md) — *Suspendue (Gel fonctionnel)*
-- [12 Refonte du cockpit, navigation et intégration UX](phases/PHASE-12-cockpit-and-ux-redesign.md) — *Suspendue (Gel fonctionnel)*
+- [11 Opérations, réapprovisionnement et transferts](phases/PHASE-11-restock-and-transfers.md) — *Terminé*
+- [12 Refonte du cockpit, navigation et intégration UX](phases/PHASE-12-cockpit-and-ux-redesign.md) — *Planifiée*
 - [H03 Hardening UX, performance et release](phases/PHASE-H03-quality-release.md) — *Suspendue (Gel fonctionnel)*
 
 ## Roadmap Prioritaire — Fiabilité & Performance (Gel Fonctionnel)

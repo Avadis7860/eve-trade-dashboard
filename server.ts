@@ -12,6 +12,7 @@ import { createRoiRouter } from './src/server/roi/router.ts';
 import { createAssetsRouter } from './src/server/assets/router.ts';
 import { createCapitalRouter } from './src/server/capital/router.ts';
 import { createAnalyticsRouter } from './src/server/analytics/router.ts';
+import { createOperationsRouter } from './src/server/operations/router.ts';
 import { createBackupRouter } from './src/server/storage/router.ts';
 import { createSystemRouter } from './src/server/system/router.ts';
 import { requestContextMiddleware } from './src/server/middleware/context.ts';
@@ -61,7 +62,7 @@ export async function createApp() {
     res.json({
       name: 'EVE Trade Dashboard',
       description: 'EVE Online trade dashboard',
-      phase: 'PHASE-R08-observability-production',
+      phase: 'PHASE-11-restock-and-transfers',
       status: 'operational',
     });
   });
@@ -80,6 +81,9 @@ export async function createApp() {
 
   // Orders Lifecycle & Restock Router
   app.use('/api/orders', createOrdersRouter());
+
+  // Operations: Logistics Transfers & Replenishment Router
+  app.use('/api/operations', createOperationsRouter());
 
   // Hubs Router
   app.use('/api/hubs', createHubsRouter());

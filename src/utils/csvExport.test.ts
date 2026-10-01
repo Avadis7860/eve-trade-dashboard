@@ -4,6 +4,8 @@ import {
   transactionsToCsv,
   ordersToCsv,
   restockToCsv,
+  transfersToCsv,
+  restockPurchasesToCsv,
   allocationsToCsv,
   triggerCsvDownload,
 } from './csvExport';
@@ -117,6 +119,73 @@ describe('CSV Export Utilities', () => {
     expect(lines[1]).toContain('Tritanium');
     expect(lines[1]).toContain('SUGGESTED');
     expect(lines[1]).toContain('Amarr VIII');
+  });
+
+  it('generates valid logistics transfers CSV', () => {
+    const mockTransfers = [
+      {
+        id: 'transfer-1',
+        typeId: 34,
+        typeName: 'Tritanium',
+        quantity: 5000,
+        unitVolumeM3: 0.01,
+        totalVolumeM3: 50.0,
+        sourceLocationName: 'Dodixie IX',
+        sourceHubName: 'Dodixie',
+        targetLocationName: 'Amarr VIII',
+        targetHubName: 'Amarr',
+        estimatedUnitValueIsk: 6.5,
+        estimatedTotalValueIsk: 32500,
+        status: 'PLANNED',
+        reason: 'Stock libre identifié à Dodixie',
+        notes: 'Hauler trip',
+      },
+    ];
+
+    const csv = transfersToCsv(mockTransfers);
+    const lines = csv.split('\r\n');
+    expect(lines[0]).toContain('TransferID,TypeID,TypeName,Quantity,UnitVolumeM3,TotalVolumeM3');
+    expect(lines[1]).toContain('transfer-1');
+    expect(lines[1]).toContain('Tritanium');
+    expect(lines[1]).toContain('Dodixie IX');
+    expect(lines[1]).toContain('Amarr VIII');
+    expect(lines[1]).toContain('PLANNED');
+  });
+
+  it('generates valid market purchases CSV', () => {
+    const mockPurchases = [
+      {
+        id: 'purchase-1',
+        typeId: 587,
+        typeName: 'Rifter',
+        targetBuyHubName: 'Jita IV - Moon 4',
+        sellLocationName: 'Amarr VIII',
+        sellHubName: 'Amarr',
+        dailyVelocity: 1.5,
+        horizonDays: 14,
+        targetQuantity: 21,
+        existingQuantity: 5,
+        netNeedQuantity: 16,
+        transferredQuantity: 6,
+        purchaseQuantity: 10,
+        unitVolumeM3: 2500,
+        totalVolumeM3: 25000,
+        estimatedBuyUnitPrice: 1200000,
+        estimatedTotalCostIsk: 12000000,
+        status: 'SUGGESTED',
+        justification: 'Besoin net: 16 - Transféré: 6 => Achat: 10',
+        notes: 'Achat Jita',
+      },
+    ];
+
+    const csv = restockPurchasesToCsv(mockPurchases);
+    const lines = csv.split('\r\n');
+    expect(lines[0]).toContain('PurchaseID,TypeID,TypeName,TargetBuyHub,SellLocation');
+    expect(lines[1]).toContain('purchase-1');
+    expect(lines[1]).toContain('Rifter');
+    expect(lines[1]).toContain('Jita IV - Moon 4');
+    expect(lines[1]).toContain('10');
+    expect(lines[1]).toContain('25000');
   });
 
   it('generates valid allocations CSV', () => {

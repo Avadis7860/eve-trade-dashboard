@@ -6,6 +6,9 @@ import { HubsRoiView } from './HubsRoiView.tsx';
 import { CapitalView } from './CapitalView.tsx';
 import { PreferencesModal } from './PreferencesModal.tsx';
 import { Product360Modal } from './Product360Modal.tsx';
+import { RestockView } from './RestockView.tsx';
+import { DashboardOverview } from './DashboardOverview.tsx';
+import { QueryClient, QueryClientProvider } from '../utils/apiClient.tsx';
 import type { CharacterTransaction } from '../App.tsx';
 
 describe('Level 4: Frontend Component States (docs/UX_STATES.md Compliance)', () => {
@@ -514,6 +517,291 @@ describe('Level 4: Frontend Component States (docs/UX_STATES.md Compliance)', ()
       const closeBtn = screen.getByTitle(/Fermer la fiche Product 360/i);
       fireEvent.click(closeBtn);
       expect(closeSpy).toHaveBeenCalled();
+    });
+  });
+
+  describe('6. RestockView UX States (Phase 11 Operations)', () => {
+    it('renders EMPTY state for transfers and purchases when no restock is required', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          summary: {
+            asOf: new Date().toISOString(),
+            horizonDays: 14,
+            velocityWindowDays: 90,
+            totalTransfersCount: 0,
+            totalTransferQuantity: 0,
+            totalTransferVolumeM3: 0,
+            totalTransferValueIsk: 0,
+            totalPurchasesCount: 0,
+            totalPurchaseQuantity: 0,
+            totalPurchaseVolumeM3: 0,
+            totalPurchaseCostIsk: 0,
+            itemsCoveredByTransfer: 0,
+            itemsRequiringPurchase: 0,
+            transferVesselBenchmarks: [],
+            purchaseVesselBenchmarks: [],
+          },
+          transfers: [],
+          purchases: [],
+        }),
+      } as Response);
+
+      const qc = new QueryClient();
+
+      render(
+        <QueryClientProvider client={qc}>
+          <RestockView
+            restockItems={[]}
+            isGenerating={false}
+            onGenerateRestock={vi.fn()}
+            onOpenAddModal={vi.fn()}
+            onUpdateStatus={vi.fn()}
+            onDeleteItem={vi.fn()}
+          />
+        </QueryClientProvider>
+      );
+
+      expect(screen.getByText(/Listes de Réapprovisionnement Locales/i)).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByText(/Aucun transfert logistique requis/i)).toBeInTheDocument();
+      });
+    });
+
+    it('renders transfers and switches to purchases tab with SUCCESS data state', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          summary: {
+            asOf: new Date().toISOString(),
+            horizonDays: 14,
+            velocityWindowDays: 90,
+            totalTransfersCount: 1,
+            totalTransferQuantity: 50,
+            totalTransferVolumeM3: 0.5,
+            totalTransferValueIsk: 300,
+            totalPurchasesCount: 1,
+            totalPurchaseQuantity: 10,
+            totalPurchaseVolumeM3: 25000,
+            totalPurchaseCostIsk: 12000000,
+            itemsCoveredByTransfer: 1,
+            itemsRequiringPurchase: 1,
+            transferVesselBenchmarks: [
+              { vesselClass: 'Hauler', name: 'Standard Industrial', capacityM3: 30000, tripsNeeded: 1 },
+            ],
+            purchaseVesselBenchmarks: [],
+          },
+          transfers: [
+            {
+              id: '1001:34:60011866:60008494',
+              characterId: 1001,
+              typeId: 34,
+              typeName: 'Tritanium',
+              quantity: 50,
+              unitVolumeM3: 0.01,
+              totalVolumeM3: 0.5,
+              sourceLocationId: 60011866,
+              sourceLocationName: 'Dodixie IX',
+              targetLocationId: 60008494,
+              targetLocationName: 'Amarr VIII',
+              estimatedUnitValueIsk: 6.0,
+              estimatedTotalValueIsk: 300,
+              status: 'SUGGESTED',
+              reason: 'Stock libre identifié à Dodixie',
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            },
+          ],
+          purchases: [
+            {
+              id: '1001:587:60008494',
+              characterId: 1001,
+              typeId: 587,
+              typeName: 'Rifter',
+              targetBuyHubId: 60003760,
+              targetBuyHubName: 'Jita IV - Moon 4',
+              sellLocationId: 60008494,
+              sellLocationName: 'Amarr VIII',
+              dailyVelocity: 1.0,
+              velocityWindowDays: 90,
+              horizonDays: 14,
+              safetyStock: 0,
+              targetQuantity: 14,
+              existingHubStock: 4,
+              existingSellOrders: 0,
+              existingBuyEscrow: 0,
+              existingQuantity: 4,
+              netNeedQuantity: 10,
+              transferredQuantity: 0,
+              purchaseQuantity: 10,
+              unitVolumeM3: 2500,
+              totalVolumeM3: 25000,
+              estimatedBuyUnitPrice: 1200000,
+              estimatedTotalCostIsk: 12000000,
+              status: 'SUGGESTED',
+              justification: 'Besoin net: 10 => Achat: 10',
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            },
+          ],
+        }),
+      } as Response);
+
+      const qc = new QueryClient();
+
+      render(
+        <QueryClientProvider client={qc}>
+          <RestockView
+            restockItems={[]}
+            isGenerating={false}
+            onGenerateRestock={vi.fn()}
+            onOpenAddModal={vi.fn()}
+            onUpdateStatus={vi.fn()}
+            onDeleteItem={vi.fn()}
+          />
+        </QueryClientProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Tritanium')).toBeInTheDocument();
+        expect(screen.getByText('Dodixie IX')).toBeInTheDocument();
+      });
+
+      // Switch to purchases tab
+      const purchasesTabBtn = screen.getByText(/2. Achats de Marché Raisonnés/i);
+      fireEvent.click(purchasesTabBtn);
+
+      await waitFor(() => {
+        expect(screen.getByText('Rifter')).toBeInTheDocument();
+        expect(screen.getByText('Jita IV - Moon 4')).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('8. DashboardOverview Liquidity Selection & Patrimonial Synthesis Refresh', () => {
+    it('queries /api/capital/breakdown with active liquidity parameters and renders quick switcher', async () => {
+      let requestedUrl = '';
+      global.fetch = vi.fn((url: string | URL | Request) => {
+        requestedUrl = url.toString();
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            positions: [],
+            totalCount: 0,
+            summary: {
+              asOf: Date.now(),
+              characterCount: 1,
+              characterIds: [1001],
+              monetary: {
+                liquidWalletBalanceIsk: 75000000,
+                marketBuyEscrowIsk: 12000000,
+                inventoryCostValueIsk: 25000000,
+                netRealCapitalIsk: 112000000,
+                notionalMarketAskValueIsk: 30000000,
+                unreconciledStockUnitsCount: 0,
+                unreconciledStockEstimatedValueStatus: 'KNOWN',
+              },
+              physicalSummary: {
+                totalUnits: 1000,
+                committedSellOrderUnits: 200,
+                freeHubStockUnits: 800,
+                remoteDormantStockUnits: 0,
+                inTransitStockUnits: 0,
+                unreconciledCostUnits: 0,
+              },
+              dormantSummary: {
+                dormantItemsCount: 0,
+                dormantTotalUnits: 0,
+                dormantCostValueIsk: 0,
+                dormantLocationsCount: 0,
+              },
+            },
+          }),
+        } as Response);
+      });
+
+      const updatePreferencesSpy = vi.fn();
+      const openPreferencesSpy = vi.fn();
+      const qc = new QueryClient();
+
+      render(
+        <QueryClientProvider client={qc}>
+          <DashboardOverview
+            summary={null}
+            roiSummary={null}
+            orderSummary={null}
+            orders={[]}
+            restockItems={[]}
+            iskDisplayMode="full"
+            preferences={{
+              defaultLandingTab: 'overview',
+              iskDisplayMode: 'full',
+              hideCompletedOrders: false,
+              tablePageSize: 25,
+              walletSyncMode: 'CHARACTERS_ONLY',
+              excludedCharacterWalletIds: [9999],
+              includedCorporationWallets: ['100:1'],
+            }}
+            onNavigateTab={vi.fn()}
+            onOpenPreferences={openPreferencesSpy}
+            onUpdatePreferences={updatePreferencesSpy}
+            onSync={vi.fn()}
+            isSyncing={false}
+            onAutoReconcile={vi.fn()}
+            isReconciling={false}
+          />
+        </QueryClientProvider>
+      );
+
+      // Verify that the query URL received the liquidity params
+      await waitFor(() => {
+        expect(requestedUrl).toContain('wallet_sync_mode=CHARACTERS_ONLY');
+        expect(requestedUrl).toContain('excluded_character_wallet_ids=9999');
+        expect(requestedUrl).toContain('included_corporation_wallets=100%3A1');
+      });
+
+      // Verify header and badge in Synthèse Patrimoniale Consolidée
+      expect(screen.getByText(/Synthèse Patrimoniale Consolidée/i)).toBeInTheDocument();
+      expect(screen.getAllByText('Persos').length).toBeGreaterThanOrEqual(1);
+
+      // Test quick switcher buttons
+      const corpoBtn = screen.getByRole('button', { name: 'Corpo' });
+      fireEvent.click(corpoBtn);
+      expect(updatePreferencesSpy).toHaveBeenCalledWith({ walletSyncMode: 'CORPORATION_ONLY' });
+
+      const tousBtn = screen.getByRole('button', { name: 'Tous' });
+      fireEvent.click(tousBtn);
+      expect(updatePreferencesSpy).toHaveBeenCalledWith({ walletSyncMode: 'BOTH' });
+    });
+
+    it('immediately saves updated liquidity preferences on radio change in PreferencesModal', () => {
+      const saveSpy = vi.fn();
+      const closeSpy = vi.fn();
+
+      render(
+        <PreferencesModal
+          preferences={{
+            defaultLandingTab: 'overview',
+            iskDisplayMode: 'compact',
+            hideCompletedOrders: false,
+            tablePageSize: 25,
+            walletSyncMode: 'BOTH',
+          }}
+          onSave={saveSpy}
+          onClose={closeSpy}
+        />
+      );
+
+      // Click "Personnages Seuls" radio
+      const persosRadio = screen.getByDisplayValue('CHARACTERS_ONLY');
+      fireEvent.click(persosRadio);
+
+      // Expect saveSpy to be called immediately for real-time reactivity
+      expect(saveSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          walletSyncMode: 'CHARACTERS_ONLY',
+        })
+      );
     });
   });
 });

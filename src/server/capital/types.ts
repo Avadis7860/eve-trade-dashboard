@@ -86,7 +86,8 @@ export interface PhysicalStockPosition {
   // Valuation
   unitCostIsk: number | null; // null if UNKNOWN
   costBasisStatus: CostBasisStatus;
-  totalCostBasisIsk: number | null; // unitCost * totalPhysicalQuantity or tied capital
+  totalCostBasisIsk: number | null; // exact sum of costs of covered FIFO lots, or null if UNKNOWN
+  coveredQuantity?: number; // physical quantity covered by discrete FIFO lots
   
   // Sell order notional value
   activeSellOrdersCount: number;

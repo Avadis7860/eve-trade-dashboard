@@ -62,7 +62,7 @@ export async function createApp() {
     res.json({
       name: 'EVE Trade Dashboard',
       description: 'EVE Online trade dashboard',
-      phase: 'PHASE-11-restock-and-transfers',
+      phase: 'PHASE-F03-financial-inventory-invariants',
       status: 'operational',
     });
   });

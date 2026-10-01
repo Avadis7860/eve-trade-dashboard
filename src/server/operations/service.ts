@@ -196,13 +196,15 @@ export class OperationsService {
     // Also typeId -> unitsSold across all locations for fallback
     const salesInWindow = new Map<string, number>();
     const salesByCharTypeInWindow = new Map<string, number>();
-    const lastBuyUnitPriceMap = new Map<number, number>();
+    const latestBuyMap = new Map<number, { unitPrice: number; dateMs: number }>();
 
     for (const tx of allTransactions) {
       const txDate = new Date(tx.date);
-      if (tx.isBuy) {
-        if (!lastBuyUnitPriceMap.has(tx.typeId) || txDate.getTime() > 0) {
-          lastBuyUnitPriceMap.set(tx.typeId, tx.unitPrice);
+      const txDateMs = txDate.getTime();
+      if (tx.isBuy && !isNaN(txDateMs)) {
+        const currentLatest = latestBuyMap.get(tx.typeId);
+        if (!currentLatest || txDateMs > currentLatest.dateMs) {
+          latestBuyMap.set(tx.typeId, { unitPrice: tx.unitPrice, dateMs: txDateMs });
         }
       } else if (txDate >= windowStartDate && txDate <= now) {
         const locKey = `${tx.characterId}:${tx.typeId}:${tx.locationId}`;
@@ -286,7 +288,7 @@ export class OperationsService {
       // Prioritized Transfer vs Purchase Arbitrage
       let transferredQuantity = 0;
       const unitVolumeM3 = this.volumeRegistry.getItemVolumeM3(typeId, typeName);
-      const estimatedUnitPrice = lastBuyUnitPriceMap.get(typeId) || 10_000;
+      const estimatedUnitPrice = latestBuyMap.get(typeId)?.unitPrice || 10_000;
 
       // Scan other locations for free stock
       let remainingNeed = netNeedQuantity;

@@ -5,6 +5,7 @@ import { ledgerRepository } from '../ledger/repository';
 import { hubsRepository } from '../hubs/repository';
 import type { CharacterTransaction, CharacterWalletJournalEntry } from '../ledger/types';
 import type { ExplicitCostAllocation } from './types';
+import { RoiCalculator, roundIsk, roundPercent } from './calculator';
 
 describe('ROI TTC & Financial Metrics Module', () => {
   const CHAR_ID = 95432101;
@@ -944,6 +945,198 @@ describe('ROI TTC & Financial Metrics Module', () => {
       expect(remainingLots.length).toBe(1000); // 2500 - 1500 = 1000 lots remaining
       const totalRemainingQty = remainingLots.reduce((acc, l) => acc + l.remaining_quantity, 0);
       expect(totalRemainingQty).toBe(10000);
+    });
+  });
+
+  describe('Phase F03 — Invariants Financiers, Détection Chronologique & Valorisation FIFO', () => {
+    it('verifies that in multi-character mode, a sale of Character A does not absorb Character B lots when Character A has its own lots (S2-4 fix)', () => {
+      const CHAR_A = 96001;
+      const CHAR_B = 96002;
+      const TYPE_TEST = 12005;
+
+      // 1. Character B bought 100 units on March 01 @ 10.0 ISK (earlier date)
+      const buyB = makeTx({
+        transactionId: 1001,
+        characterId: CHAR_B,
+        date: '2026-03-01T08:00:00Z',
+        isBuy: true,
+        typeId: TYPE_TEST,
+        typeName: 'Isotope A',
+        quantity: 100,
+        unitPrice: 10.0,
+        locationId: 60003760,
+      });
+
+      // 2. Character A bought 100 units on March 02 @ 20.0 ISK (later date)
+      const buyA = makeTx({
+        transactionId: 1002,
+        characterId: CHAR_A,
+        date: '2026-03-02T08:00:00Z',
+        isBuy: true,
+        typeId: TYPE_TEST,
+        typeName: 'Isotope A',
+        quantity: 100,
+        unitPrice: 20.0,
+        locationId: 60003760,
+      });
+
+      // 3. Character A sells 100 units on March 05 @ 30.0 ISK
+      const sellA = makeTx({
+        transactionId: 2001,
+        characterId: CHAR_A,
+        date: '2026-03-05T12:00:00Z',
+        isBuy: false,
+        typeId: TYPE_TEST,
+        typeName: 'Isotope A',
+        quantity: 100,
+        unitPrice: 30.0,
+        locationId: 60003760,
+      });
+
+      ledgerRepository.saveTransactions([buyB, buyA, sellA]);
+
+      // Reconcile across both characters with default selling character priority (prioritizeSellingCharacter: true)
+      const result = roiService.autoReconcileFifo({
+        characterIds: [CHAR_A, CHAR_B],
+        prioritizeSellingCharacter: true,
+      });
+
+      expect(result.sales_fully_matched).toBe(1);
+      expect(result.allocations_created).toBe(1);
+
+      const allocs = roiRepository.listAllocations(undefined, [CHAR_A, CHAR_B]);
+      expect(allocs).toHaveLength(1);
+
+      // The allocation must belong to Character A's own buy lot, NOT Character B's older lot!
+      const alloc = allocs[0];
+      expect(alloc.sell_character_id).toBe(CHAR_A);
+      expect(alloc.buy_character_id).toBe(CHAR_A);
+      expect(alloc.buy_transaction_id).toBe(1002); // buyA transaction id
+      expect(alloc.unit_buy_price).toBe(20.0);
+
+      // Character B's lots must be completely unconsumed (100 units remaining)
+      const lotsB = roiRepository.getInventoryLots(CHAR_B);
+      expect(lotsB).toHaveLength(1);
+      expect(lotsB[0].remaining_quantity).toBe(100);
+      expect(lotsB[0].allocated_quantity).toBe(0);
+
+      // Character A's lots must be fully consumed
+      const lotsA = roiRepository.getInventoryLots(CHAR_A);
+      expect(lotsA).toHaveLength(1);
+      expect(lotsA[0].remaining_quantity).toBe(0);
+      expect(lotsA[0].allocated_quantity).toBe(100);
+    });
+
+    it('verifies strict character isolation mode prevents cross-character lot absorption completely', () => {
+      const CHAR_A = 97001;
+      const CHAR_B = 97002;
+      const TYPE_TEST = 12006;
+
+      // Character B owns 100 units
+      const buyB = makeTx({
+        transactionId: 3001,
+        characterId: CHAR_B,
+        date: '2026-03-01T08:00:00Z',
+        isBuy: true,
+        typeId: TYPE_TEST,
+        typeName: 'Isotope B',
+        quantity: 100,
+        unitPrice: 15.0,
+        locationId: 60003760,
+      });
+
+      // Character A sells 50 units but has ZERO lots of its own
+      const sellA = makeTx({
+        transactionId: 4001,
+        characterId: CHAR_A,
+        date: '2026-03-05T12:00:00Z',
+        isBuy: false,
+        typeId: TYPE_TEST,
+        typeName: 'Isotope B',
+        quantity: 50,
+        unitPrice: 25.0,
+        locationId: 60003760,
+      });
+
+      ledgerRepository.saveTransactions([buyB, sellA]);
+
+      // Reconcile with strict character isolation enabled
+      const result = roiService.autoReconcileFifo({
+        characterIds: [CHAR_A, CHAR_B],
+        strictCharacterIsolation: true,
+      });
+
+      // Character A has no lots of its own, so sale cannot match Character B's lot
+      expect(result.sales_fully_matched).toBe(0);
+      expect(result.sales_unmatched).toBe(1);
+      expect(result.allocations_created).toBe(0);
+
+      // Character B's inventory lot remains 100% available
+      const lotsB = roiRepository.getInventoryLots(CHAR_B);
+      expect(lotsB[0].remaining_quantity).toBe(100);
+    });
+
+    it('verifies arithmetic non-conversion: NaN / non-finite values return null and zero investment produces UNKNOWN not 0% (S2-3 fix)', () => {
+      // 1. Test roundIsk and roundPercent non-coercion
+      expect(roundIsk(NaN)).toBeNull();
+      expect(roundIsk(Infinity)).toBeNull();
+      expect(roundIsk(-Infinity)).toBeNull();
+      expect(roundIsk(null as unknown as number)).toBeNull();
+      expect(roundIsk(undefined as unknown as number)).toBeNull();
+
+      expect(roundPercent(NaN)).toBeNull();
+      expect(roundPercent(Infinity)).toBeNull();
+      expect(roundPercent(-Infinity)).toBeNull();
+      expect(roundPercent(null as unknown as number)).toBeNull();
+
+      // Normal valid numbers continue to round accurately
+      expect(roundIsk(123.456)).toBe(123.46);
+      expect(roundPercent(45.678)).toBe(45.68);
+
+      // 2. Test RoiCalculator.buildProof with 0 investment
+      const zeroProof = RoiCalculator.buildProof({
+        asOf: '2026-10-01T00:00:00Z',
+        grossRevenue: 1000,
+        allocatedBuyCost: 0,
+        allocatedBuyFees: 0,
+        allocatedSellFees: 50,
+        allocatedVolume: 10,
+        totalVolume: 10,
+      });
+
+      // Investment = 0 => ROI and realized profit must be null, NOT 0%
+      expect(zeroProof.total_investment_ttc_isk).toBe(0);
+      expect(zeroProof.roi_percent_ttc).toBeNull();
+      expect(zeroProof.realized_profit_ttc_isk).toBeNull();
+      expect(zeroProof.denominator_isk).toBeNull();
+      expect(zeroProof.formula_expression).toContain('Investissement nul');
+
+      // 3. Test computeSummary with unproven sales
+      const unprovenSummary = RoiCalculator.computeSummary(
+        [
+          makeTx({
+            transactionId: 9001,
+            characterId: CHAR_ID,
+            date: '2026-03-01T10:00:00Z',
+            isBuy: false,
+            typeId: 34,
+            typeName: 'Tritanium',
+            quantity: 500,
+            unitPrice: 5.0,
+            locationId: 60003760,
+          }),
+        ],
+        [], // no allocations
+        [],
+        CHAR_ID
+      );
+
+      expect(unprovenSummary.total_allocated_investment_ttc).toBe(0);
+      expect(unprovenSummary.roi_percent_ttc).toBeNull();
+      expect(unprovenSummary.realized_profit_ttc_isk).toBeNull();
+      expect(unprovenSummary.coverage_status).toBe('UNKNOWN');
+      // Must not be 0
+      expect(unprovenSummary.roi_percent_ttc).not.toBe(0);
     });
   });
 });

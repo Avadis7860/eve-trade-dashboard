@@ -201,6 +201,14 @@ export interface RoiFilterParams {
   sell_hub_id?: string;
 }
 
+export interface AutoReconciliationParams {
+  characterId?: number;
+  characterIds?: number[];
+  typeId?: number;
+  prioritizeSellingCharacter?: boolean;
+  strictCharacterIsolation?: boolean;
+}
+
 export interface AutoReconciliationResult {
   allocations_created: number;
   total_quantity_reconciled: number;

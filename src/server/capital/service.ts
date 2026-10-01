@@ -147,12 +147,37 @@ export class CapitalService {
 
     // Load inventory lots for cost resolution
     const inventoryLots = this.roiRepo.getInventoryLots(characterId, characterIds);
-    const costMapByType = new Map<number, { remainingQty: number; remainingCost: number }>();
+    // Sort inventory lots chronologically (earliest acquisition first)
+    inventoryLots.sort((a, b) => new Date(a.acquisition_date).getTime() - new Date(b.acquisition_date).getTime());
+
+    interface AvailableInventoryLot {
+      lotId: string;
+      characterId: number;
+      typeId: number;
+      remainingQty: number;
+      unitCostIsk: number;
+      unitFeesIsk: number;
+      acquisitionDate: string;
+    }
+
+    const availableLotsByTypeId = new Map<number, AvailableInventoryLot[]>();
     for (const lot of inventoryLots) {
-      const current = costMapByType.get(lot.type_id) || { remainingQty: 0, remainingCost: 0 };
-      current.remainingQty += lot.remaining_quantity;
-      current.remainingCost += lot.remaining_cost_isk + lot.remaining_buy_fees_isk;
-      costMapByType.set(lot.type_id, current);
+      if (lot.remaining_quantity <= 0) continue;
+      if (!availableLotsByTypeId.has(lot.type_id)) {
+        availableLotsByTypeId.set(lot.type_id, []);
+      }
+      const unitFees = lot.remaining_quantity > 0
+        ? lot.remaining_buy_fees_isk / lot.remaining_quantity
+        : 0;
+      availableLotsByTypeId.get(lot.type_id)!.push({
+        lotId: lot.lot_id,
+        characterId: lot.character_id,
+        typeId: lot.type_id,
+        remainingQty: lot.remaining_quantity,
+        unitCostIsk: lot.unit_cost_isk,
+        unitFeesIsk: unitFees,
+        acquisitionDate: lot.acquisition_date,
+      });
     }
 
     const positions: PhysicalStockPosition[] = [];
@@ -210,16 +235,42 @@ export class CapitalService {
         : 999;
       const isDormant = (!isConfiguredHub && remoteDormantStockQuantity > 0) || daysInactive >= 30;
 
-      // Valuation basis
-      const costData = costMapByType.get(typeId);
-      let unitCostIsk: number | null = null;
+      // Valuation basis: allocate exact discrete FIFO lots without synthetic averaging
+      const typeLots = availableLotsByTypeId.get(typeId) || [];
+      const candidateLots = [
+        ...typeLots.filter((l) => l.characterId === charId),
+        ...typeLots.filter((l) => l.characterId !== charId),
+      ];
+
+      let coveredQty = 0;
+      let runningCostIsk = 0;
+
+      for (const lot of candidateLots) {
+        if (coveredQty >= totalQuantity) break;
+        if (lot.remainingQty <= 0) continue;
+
+        const toTake = Math.min(totalQuantity - coveredQty, lot.remainingQty);
+        lot.remainingQty -= toTake;
+        coveredQty += toTake;
+        runningCostIsk += toTake * (lot.unitCostIsk + lot.unitFeesIsk);
+      }
+
       let costBasisStatus: CostBasisStatus = 'UNKNOWN';
+      let unitCostIsk: number | null = null;
       let totalCostBasisIsk: number | null = null;
 
-      if (costData && costData.remainingQty > 0) {
-        unitCostIsk = roundIsk(costData.remainingCost / costData.remainingQty);
+      if (coveredQty === totalQuantity && totalQuantity > 0) {
         costBasisStatus = 'KNOWN';
-        totalCostBasisIsk = roundIsk(unitCostIsk * totalQuantity);
+        totalCostBasisIsk = roundIsk(runningCostIsk);
+        unitCostIsk = roundIsk(runningCostIsk / coveredQty);
+      } else if (coveredQty > 0) {
+        costBasisStatus = 'PARTIAL';
+        totalCostBasisIsk = roundIsk(runningCostIsk);
+        unitCostIsk = roundIsk(runningCostIsk / coveredQty);
+      } else {
+        costBasisStatus = 'UNKNOWN';
+        totalCostBasisIsk = null;
+        unitCostIsk = null;
       }
 
       // Determine primary classification
@@ -267,6 +318,7 @@ export class CapitalService {
         unitCostIsk,
         costBasisStatus,
         totalCostBasisIsk,
+        coveredQuantity: coveredQty,
         activeSellOrdersCount,
         sellOrderNotionalValueIsk,
         decompositionProof: {
@@ -423,6 +475,9 @@ export class CapitalService {
     for (const pos of positions) {
       if (pos.costBasisStatus === 'UNKNOWN') {
         unreconciledStockUnitsCount += pos.totalPhysicalQuantity;
+      } else if (pos.costBasisStatus === 'PARTIAL') {
+        const uncovered = pos.totalPhysicalQuantity - (pos.coveredQuantity ?? 0);
+        unreconciledStockUnitsCount += Math.max(0, uncovered);
       }
     }
 

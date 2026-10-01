@@ -418,4 +418,103 @@ describe('Operations Service (Phase 11 — Prioritized Transfers & Restock)', ()
     expect(plan.transfers[0].status).toBe('IN_TRANSIT');
     expect(plan.transfers[0].notes).toBe('DST en route');
   });
+
+  it('reliably extracts the latest buy price chronologically regardless of anti-chronological or shuffled transaction order (S1-1 fix)', async () => {
+    // Completed order requiring restock
+    ordersRepo.saveOrderSnapshots([{
+      id: `${CHAR_ID}:ord_shuffled`,
+      characterId: CHAR_ID,
+      orderId: 777,
+      typeId: TYPE_RIFTER,
+      typeName: 'Rifter',
+      regionId: 10000043,
+      locationId: AMARR_STATION_ID,
+      locationName: 'Amarr VIII',
+      isBuyOrder: false,
+      price: 1_200_000,
+      volumeTotal: 10,
+      volumeRemain: 0,
+      volumeFilled: 10,
+      issued: '2026-09-01T10:00:00Z',
+      duration: 90,
+      expiresAt: '2026-12-01T10:00:00Z',
+      state: 'COMPLETED_CONFIRMED',
+      stateJustification: 'Exécuté',
+      firstObservedAt: Date.now() - 5000,
+      lastObservedAt: Date.now(),
+      lastSnapshotVolumeRemain: 0,
+      isActiveInCurrentSnapshot: false,
+      source: 'test',
+    }]);
+
+    // Provide 3 buy transactions in ANTI-CHRONOLOGICAL order:
+    // Most recent is TxB (2026-05-15 at 850,000 ISK)
+    // Older are TxC (2026-03-10 at 700,000 ISK) and TxA (2026-01-01 at 500,000 ISK)
+    // In buggy code, TxA (at end of loop) or intermediate would overwrite and be chosen.
+    ledgerRepo.saveTransactions([
+      {
+        id: `${CHAR_ID}:tx_latest`,
+        characterId: CHAR_ID,
+        transactionId: 2,
+        date: '2026-05-15T12:00:00Z', // LATEST DATE
+        typeId: TYPE_RIFTER,
+        typeName: 'Rifter',
+        quantity: 5,
+        unitPrice: 850_000,
+        totalValue: 4_250_000,
+        isBuy: true,
+        isPersonal: true,
+        journalRefId: 0,
+        locationId: AMARR_STATION_ID,
+        locationName: 'Amarr VIII',
+        clientId: 99,
+        source: 'test',
+        observedAt: Date.now(),
+      },
+      {
+        id: `${CHAR_ID}:tx_mid`,
+        characterId: CHAR_ID,
+        transactionId: 3,
+        date: '2026-03-10T12:00:00Z',
+        typeId: TYPE_RIFTER,
+        typeName: 'Rifter',
+        quantity: 5,
+        unitPrice: 700_000,
+        totalValue: 3_500_000,
+        isBuy: true,
+        isPersonal: true,
+        journalRefId: 0,
+        locationId: AMARR_STATION_ID,
+        locationName: 'Amarr VIII',
+        clientId: 99,
+        source: 'test',
+        observedAt: Date.now(),
+      },
+      {
+        id: `${CHAR_ID}:tx_oldest`,
+        characterId: CHAR_ID,
+        transactionId: 1,
+        date: '2026-01-01T12:00:00Z', // OLDEST DATE
+        typeId: TYPE_RIFTER,
+        typeName: 'Rifter',
+        quantity: 5,
+        unitPrice: 500_000,
+        totalValue: 2_500_000,
+        isBuy: true,
+        isPersonal: true,
+        journalRefId: 0,
+        locationId: AMARR_STATION_ID,
+        locationName: 'Amarr VIII',
+        clientId: 99,
+        source: 'test',
+        observedAt: Date.now(),
+      },
+    ]);
+
+    const plan = await operationsService.getOperationsPlan({ characterId: CHAR_ID });
+    const rifterPurchase = plan.purchases.find((p) => p.typeId === TYPE_RIFTER);
+    expect(rifterPurchase).toBeDefined();
+    // Must strictly be the latest chronological unit price: 850,000 ISK
+    expect(rifterPurchase?.estimatedBuyUnitPrice).toBe(850_000);
+  });
 });

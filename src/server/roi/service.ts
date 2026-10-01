@@ -7,6 +7,7 @@ import {
   SaleReconciliationDetail,
   UnsoldInventoryItem,
   AutoReconciliationResult,
+  AutoReconciliationParams,
 } from './types';
 import { defaultLedgerRepository, type ILedgerRepository } from '../ledger/repository';
 import { hubsService } from '../hubs/service';
@@ -359,11 +360,7 @@ export class RoiService {
    * Matches sell transactions with unallocated earlier purchase transactions and opening balance lots,
    * preserving locked manual allocations.
    */
-  autoReconcileFifo(params: {
-    characterId?: number;
-    characterIds?: number[];
-    typeId?: number;
-  } = {}): AutoReconciliationResult {
+  autoReconcileFifo(params: AutoReconciliationParams = {}): AutoReconciliationResult {
     // 1. Fetch candidate transactions across single character or ecosystem
     const effectiveCharId = params.characterIds && params.characterIds.length > 0 ? undefined : params.characterId;
     let allTransactions = this.ledgerRepo.getAllTransactions(effectiveCharId, params.characterIds);
@@ -498,7 +495,23 @@ export class RoiService {
       }
 
       const saleTime = new Date(sale.date).getTime();
-      const lots = lotsByTypeId.get(sale.typeId) || [];
+      const allLotsForType = lotsByTypeId.get(sale.typeId) || [];
+
+      // Determine candidate lot ordering based on character priority and isolation settings
+      let lots: CandidateLot[];
+      if (params.strictCharacterIsolation) {
+        // Mode cloisonné strict : seul le personnage vendeur peut consommer ses propres lots
+        lots = allLotsForType.filter((l) => l.characterId === sale.characterId);
+      } else if (params.prioritizeSellingCharacter ?? true) {
+        // Mode prioritaire vendeur (défaut) : lots du vendeur d'abord, puis autres personnages en appoint
+        const ownLots = allLotsForType.filter((l) => l.characterId === sale.characterId);
+        const otherLots = allLotsForType.filter((l) => l.characterId !== sale.characterId);
+        lots = [...ownLots, ...otherLots];
+      } else {
+        // Mode pot commun pur (FIFO chronologique global sans préférence d'entité)
+        lots = allLotsForType;
+      }
+
       let saleMatchedQty = 0;
 
       for (const lot of lots) {
@@ -555,6 +568,8 @@ export class RoiService {
           updated_at: new Date().toISOString(),
           notes: lot.sourceType === 'OPENING_BALANCE'
             ? `FIFO sur stock d'ouverture (Perso #${lot.characterId})`
+            : lot.characterId === sale.characterId
+            ? `FIFO unitaire (Achat #${lot.sourceId} -> Vente #${sale.transactionId})`
             : `FIFO multi-personnages (Achat #${lot.sourceId} Perso #${lot.characterId} -> Vente #${sale.transactionId} Perso #${sale.characterId})`,
           version: 1,
         };

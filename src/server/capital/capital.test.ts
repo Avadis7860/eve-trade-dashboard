@@ -238,6 +238,67 @@ describe('Capital & Mutually Exclusive Inventory Engine (Phase 09)', () => {
       expect(pos.totalCostBasisIsk).toBeNull();
       expect(pos.decompositionProof.isSumExact).toBe(true);
     });
+
+    it('values only the 20 covered units and sets PARTIAL status when 100 physical units exist but only 20 in FIFO lots (S1-2 fix)', () => {
+      // 1. 100 physical units of item in station hangar
+      const partialAsset: CharacterAsset = {
+        id: `${CHAR_1}:105`,
+        characterId: CHAR_1,
+        itemId: 105,
+        typeId: 34,
+        typeName: 'Tritanium',
+        quantity: 100,
+        locationId: JITA_STATION_ID,
+        locationName: 'Jita IV - Moon 4',
+        locationType: 'station',
+        locationFlag: 'Hangar',
+        isSingleton: false,
+        isCorpAsset: false,
+        source: 'esi',
+        observedAt: Date.now(),
+      };
+      assetsRepo.saveAssets([partialAsset]);
+
+      // 2. Only 20 units purchased in ledger at 10.0 ISK each = 200 ISK
+      const buyTx: CharacterTransaction = {
+        id: `${CHAR_1}:9920`,
+        characterId: CHAR_1,
+        transactionId: 9920,
+        date: new Date().toISOString(),
+        typeId: 34,
+        typeName: 'Tritanium',
+        quantity: 20,
+        unitPrice: 10.0,
+        totalValue: 200,
+        isBuy: true,
+        isPersonal: true,
+        journalRefId: 0,
+        locationId: JITA_STATION_ID,
+        locationName: 'Jita IV - Moon 4',
+        clientId: 777,
+        source: 'esi',
+        observedAt: Date.now(),
+      };
+      ledgerRepo.saveTransactions([buyTx]);
+
+      const positions = capitalService.getPositions(CHAR_1);
+      expect(positions).toHaveLength(1);
+
+      const pos = positions[0];
+      expect(pos.totalPhysicalQuantity).toBe(100);
+      expect(pos.coveredQuantity).toBe(20);
+      // Status must strictly be PARTIAL (not KNOWN)
+      expect(pos.costBasisStatus).toBe('PARTIAL');
+      // Valuation must ONLY apply to the 20 covered units (20 * 10 = 200 ISK, NOT 1,000 ISK)
+      expect(pos.totalCostBasisIsk).toBe(200);
+      expect(pos.unitCostIsk).toBe(10.0);
+      expect(pos.decompositionProof.isSumExact).toBe(true);
+
+      // Verify monetary summary reports the 80 uncovered units as unreconciled
+      const monetary = capitalService.getMonetaryCapital(CHAR_1);
+      expect(monetary.unreconciledStockUnitsCount).toBe(80);
+      expect(monetary.unreconciledStockEstimatedValueStatus).toBe('PARTIAL');
+    });
   });
 
   describe('2. Monetary Capital & Net Real Capital Aggregation', () => {

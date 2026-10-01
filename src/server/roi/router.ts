@@ -37,6 +37,8 @@ export function createRoiRouter(
       const rawCharId = req.body.character_id ?? req.body.characterId;
       const rawCharIds = req.body.character_ids ?? req.body.characterIds;
       const { type_id } = req.body;
+      const rawPrioritize = req.body.prioritize_selling_character ?? req.body.prioritizeSellingCharacter;
+      const rawIsolation = req.body.strict_character_isolation ?? req.body.strictCharacterIsolation;
 
       let targetCharIds: number[] | undefined;
       let targetCharId: number | undefined;
@@ -62,6 +64,8 @@ export function createRoiRouter(
         characterId: targetCharIds && targetCharIds.length > 0 ? undefined : targetCharId,
         characterIds: targetCharIds,
         typeId: type_id ? Number(type_id) : undefined,
+        prioritizeSellingCharacter: rawPrioritize !== undefined ? Boolean(rawPrioritize) : true,
+        strictCharacterIsolation: rawIsolation !== undefined ? Boolean(rawIsolation) : false,
       });
 
       return res.json({ result });

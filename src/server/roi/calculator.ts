@@ -11,18 +11,30 @@ import type { CharacterTransaction } from '../ledger/types';
 import { hubsService } from '../hubs/service';
 
 /**
- * Utility for exact financial arithmetic rounding to 2 decimal places (cents of ISK)
+ * Utility for exact financial arithmetic rounding to 2 decimal places (cents of ISK).
+ * In accordance with Phase F03 and docs/METRICS.md:
+ * Non-finite numbers, NaN, null, and undefined are NOT silently coerced to 0,
+ * but return null to allow caller propagation of UNKNOWN status.
  */
-export function roundIsk(value: number): number {
-  if (isNaN(value) || !isFinite(value)) return 0;
+export function roundIsk(value: number): number;
+export function roundIsk(value: number | null | undefined): number | null;
+export function roundIsk(value: number | null | undefined): number | null {
+  if (value === null || value === undefined || isNaN(value) || !isFinite(value)) {
+    return null;
+  }
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
 /**
- * Utility for rounding percentages to 2 decimal places
+ * Utility for rounding percentages to 2 decimal places.
+ * Non-finite numbers, NaN, null, and undefined return null.
  */
-export function roundPercent(value: number): number {
-  if (isNaN(value) || !isFinite(value)) return 0;
+export function roundPercent(value: number): number;
+export function roundPercent(value: number | null | undefined): number | null;
+export function roundPercent(value: number | null | undefined): number | null {
+  if (value === null || value === undefined || isNaN(value) || !isFinite(value)) {
+    return null;
+  }
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
@@ -40,7 +52,7 @@ export class RoiCalculator {
     totalVolume: number;
   }): FormulaProof {
     const { asOf, grossRevenue, allocatedBuyCost, allocatedBuyFees, allocatedSellFees, allocatedVolume } = params;
-    const totalInvestment = roundIsk(allocatedBuyCost + allocatedBuyFees);
+    const totalInvestment = roundIsk(allocatedBuyCost + allocatedBuyFees) ?? 0;
 
     let realizedProfit: number | null = null;
     let roiPercent: number | null = null;
@@ -48,8 +60,18 @@ export class RoiCalculator {
 
     if (allocatedVolume > 0 && totalInvestment > 0) {
       realizedProfit = roundIsk(grossRevenue - allocatedBuyCost - allocatedBuyFees - allocatedSellFees);
-      roiPercent = roundPercent((realizedProfit / totalInvestment) * 100);
-      formula = `${grossRevenue.toLocaleString('fr-FR')} − ${allocatedBuyCost.toLocaleString('fr-FR')} − ${allocatedBuyFees.toLocaleString('fr-FR')} − ${allocatedSellFees.toLocaleString('fr-FR')} = ${realizedProfit.toLocaleString('fr-FR')} ISK (ROI: (${realizedProfit.toLocaleString('fr-FR')} / ${totalInvestment.toLocaleString('fr-FR')}) × 100 = ${roiPercent.toFixed(2)}%)`;
+      if (realizedProfit !== null) {
+        roiPercent = roundPercent((realizedProfit / totalInvestment) * 100);
+      }
+      if (realizedProfit !== null && roiPercent !== null) {
+        formula = `${grossRevenue.toLocaleString('fr-FR')} − ${allocatedBuyCost.toLocaleString('fr-FR')} − ${allocatedBuyFees.toLocaleString('fr-FR')} − ${allocatedSellFees.toLocaleString('fr-FR')} = ${realizedProfit.toLocaleString('fr-FR')} ISK (ROI: (${realizedProfit.toLocaleString('fr-FR')} / ${totalInvestment.toLocaleString('fr-FR')}) × 100 = ${roiPercent.toFixed(2)}%)`;
+      }
+    } else {
+      realizedProfit = null;
+      roiPercent = null;
+      formula = totalInvestment <= 0
+        ? 'Investissement nul ou indéterminé : ROI = null (UNKNOWN)'
+        : 'Volume alloué nul : profit indéterminé';
     }
 
     return {
@@ -98,7 +120,7 @@ export class RoiCalculator {
     const grossRevenueAllocated = roundIsk(saleTx.unitPrice * allocatedQty);
 
     const coveragePercent = totalSoldQty > 0
-      ? roundPercent((allocatedQty / totalSoldQty) * 100)
+      ? (roundPercent((allocatedQty / totalSoldQty) * 100) ?? 0)
       : (allocatedQty > 0 ? 100 : 0);
 
     let coverageStatus: MetricCoverageStatus = 'UNKNOWN';
@@ -287,7 +309,7 @@ export class RoiCalculator {
     const unallocatedSalesVolume = Math.max(0, totalSalesVolume - allocatedSalesVolume);
 
     // 3. Investment TTC & Realized Profit TTC
-    const totalAllocatedInvestmentTtc = roundIsk(allocatedBuyCostIsk + allocatedBuyFeesIsk);
+    const totalAllocatedInvestmentTtc = roundIsk(allocatedBuyCostIsk + allocatedBuyFeesIsk) ?? 0;
 
     let realizedProfitTtcIsk: number | null = null;
     let roiPercentTtc: number | null = null;
@@ -295,7 +317,7 @@ export class RoiCalculator {
     let coveragePercent = 0;
 
     if (totalSalesVolume > 0) {
-      coveragePercent = roundPercent((allocatedSalesVolume / totalSalesVolume) * 100);
+      coveragePercent = roundPercent((allocatedSalesVolume / totalSalesVolume) * 100) ?? 0;
     } else if (allocatedSalesVolume > 0) {
       coveragePercent = 100;
     }
@@ -307,7 +329,9 @@ export class RoiCalculator {
       );
 
       // ROI % = (Realized Profit / Total Allocated Investment TTC) * 100
-      roiPercentTtc = roundPercent((realizedProfitTtcIsk / totalAllocatedInvestmentTtc) * 100);
+      roiPercentTtc = realizedProfitTtcIsk !== null
+        ? roundPercent((realizedProfitTtcIsk / totalAllocatedInvestmentTtc) * 100)
+        : null;
 
       if (coveragePercent >= 99.99) {
         coverageStatus = 'COMPLETE';
@@ -342,7 +366,7 @@ export class RoiCalculator {
 
     // 5. Build Hub pairs performance list
     const hubPairs: HubPairPerformance[] = Array.from(hubPairsMap.values()).map((p) => {
-      const pairInvestment = roundIsk(p.allocated_buy_cost + p.allocated_buy_fees);
+      const pairInvestment = roundIsk(p.allocated_buy_cost + p.allocated_buy_fees) ?? 0;
       let pairProfit: number | null = null;
       let pairRoi: number | null = null;
       let pairCoverageStatus: MetricCoverageStatus = 'UNKNOWN';
@@ -351,7 +375,7 @@ export class RoiCalculator {
         pairProfit = roundIsk(
           p.gross_revenue - p.allocated_buy_cost - p.allocated_buy_fees - p.attributable_sell_fees
         );
-        pairRoi = roundPercent((pairProfit / pairInvestment) * 100);
+        pairRoi = pairProfit !== null ? roundPercent((pairProfit / pairInvestment) * 100) : null;
         pairCoverageStatus = 'COMPLETE'; // On this specific paired flow, allocation is proven
       }
 

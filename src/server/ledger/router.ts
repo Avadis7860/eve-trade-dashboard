@@ -223,30 +223,30 @@ export function createLedgerRouter(
         ? allCharacters
         : [{ characterId: session.characterId, accessToken: session.accessToken }];
 
-      let lastResult;
+      const charactersPayload = charIdsToSync.map((char) => ({
+        characterId: char.characterId,
+        accessToken: char.accessToken,
+        refreshTokenFn: async () => authService.refreshCharacterTokens(session.sessionId, char.characterId),
+      }));
+
+      // 1. Parallel multi-character synchronization through the bounded Task Coordinator
+      const syncResults = await syncService.syncCharacters(charactersPayload);
+
       const syncErrors: string[] = [];
-      for (const char of charIdsToSync) {
-        try {
-          lastResult = await syncService.syncAll(
-            char.characterId,
-            char.accessToken,
-            async () => {
-              const token = await authService.refreshCharacterTokens(session.sessionId, char.characterId);
-              return token;
-            }
-          );
-        } catch (charErr) {
-          const msg = (charErr as Error).message || 'Échec de synchronisation';
-          syncErrors.push(`Personnage #${char.characterId}: ${msg}`);
-          console.warn(`[Sync] Error syncing character ${char.characterId}:`, msg);
+      let lastResult = null;
+      for (const resItem of syncResults) {
+        if (resItem.error) {
+          syncErrors.push(resItem.error);
+        }
+        if (resItem.result) {
+          lastResult = resItem.result;
         }
       }
 
-      // Auto-discover hubs and locations from all observed transactions
+      // 2. Ordered Post-Processing: auto-discover hubs and run FIFO reconciliation across all characters
       const allTx = ledgerRepository.getAllTransactions();
       hubsService.autoDiscoverHubsFromTransactions(allTx);
 
-      // Automatically reconcile across all linked characters in the ecosystem
       const allCharIds = charIdsToSync.map((c) => c.characterId);
       roiService.autoReconcileFifo({ characterIds: allCharIds });
 

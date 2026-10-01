@@ -44,6 +44,8 @@ export interface EsiRequestOptions {
   accessToken?: string;
   params?: Record<string, string | number | boolean | undefined>;
   skipCache?: boolean;
+  /** When true, bypasses in-memory fresh cache and executes conditional validation (If-None-Match) with CCP ESI */
+  forceRevalidate?: boolean;
   timeoutMs?: number;
   retryCount?: number;
   /** Function to obtain a fresh token if 401 occurs */

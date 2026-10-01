@@ -36,8 +36,8 @@ export class EsiClient {
     const characterId = options.accessToken ? this.extractCharacterIdFromToken(options.accessToken) : undefined;
     const cacheKey = this.cache.generateKey(path, options.params, characterId);
 
-    // 1. Check local fresh cache if skipCache is not set
-    if (!options.skipCache) {
+    // 1. Check local fresh cache if neither skipCache nor forceRevalidate is set
+    if (!options.skipCache && !options.forceRevalidate) {
       const freshCached = this.cache.getFresh<T>(cacheKey);
       if (freshCached) {
         return {

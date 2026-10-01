@@ -11,6 +11,7 @@ import type { IAssetsRepository } from '../assets/repository.ts';
 import { defaultAssetsRepository } from '../assets/repository.ts';
 import type { UniverseService } from '../universe/service.ts';
 import { defaultUniverseService } from '../universe/service.ts';
+import { SyncCoordinator, defaultSyncCoordinator } from './coordinator.ts';
 import type { CharacterTransaction, CharacterWalletJournalEntry } from '../ledger/types.ts';
 import type { RawEsiOrder, CharacterOrderSnapshot } from '../orders/types.ts';
 import type { RawEsiAsset, CharacterAsset } from '../assets/types.ts';
@@ -53,6 +54,7 @@ export class SyncService {
   private assetsRepo: IAssetsRepository;
   private syncRepo: ISyncRepository;
   private universeService: UniverseService;
+  private coordinator: SyncCoordinator;
   private inaccessibleCorpCharacters: Set<number> = new Set();
 
   constructor(
@@ -61,7 +63,8 @@ export class SyncService {
     ordersRepo: IOrdersRepository = defaultOrdersRepository,
     syncRepo: ISyncRepository = defaultSyncRepository,
     universeService: UniverseService = defaultUniverseService,
-    assetsRepo: IAssetsRepository = defaultAssetsRepository
+    assetsRepo: IAssetsRepository = defaultAssetsRepository,
+    coordinator: SyncCoordinator = defaultSyncCoordinator
   ) {
     this.esiClient = esiClient;
     this.ledgerRepo = ledgerRepo;
@@ -69,16 +72,33 @@ export class SyncService {
     this.syncRepo = syncRepo;
     this.universeService = universeService;
     this.assetsRepo = assetsRepo;
+    this.coordinator = coordinator;
+  }
+
+  public getCoordinator(): SyncCoordinator {
+    return this.coordinator;
   }
 
   /**
-   * Synchronizes character wallet transactions using from_id cursor pagination
+   * Synchronizes character wallet transactions using from_id cursor pagination with in-flight coalescing
    */
   public async syncWalletTransactions(
     characterId: number,
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>,
-    options?: { resume?: boolean; maxItems?: number }
+    options?: { resume?: boolean; maxItems?: number; forceRevalidate?: boolean }
+  ): Promise<SyncResult> {
+    const key = `sync:${characterId}:wallet_transactions`;
+    return this.coordinator.enqueue(key, () =>
+      this.executeSyncWalletTransactions(characterId, accessToken, refreshTokenFn, options)
+    );
+  }
+
+  private async executeSyncWalletTransactions(
+    characterId: number,
+    accessToken: string,
+    refreshTokenFn?: () => Promise<string | null>,
+    options?: { resume?: boolean; maxItems?: number; forceRevalidate?: boolean }
   ): Promise<SyncResult> {
     const resource: SyncResourceType = 'wallet_transactions';
     const startTime = Date.now();
@@ -109,6 +129,7 @@ export class SyncService {
           maxItems: options?.maxItems || 5000,
           pageSize: 2500,
           initialFromId,
+          forceRevalidate: options?.forceRevalidate,
           onBatchSuccess: async (lowestId, batchItems) => {
             if (batchItems.length > 0) {
               const typeIds = batchItems.map((tx) => tx.type_id);
@@ -218,13 +239,25 @@ export class SyncService {
   }
 
   /**
-   * Synchronizes character wallet journal entries
+   * Synchronizes character wallet journal entries with in-flight coalescing
    */
   public async syncWalletJournal(
     characterId: number,
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>,
-    options?: { resume?: boolean; maxPages?: number }
+    options?: { resume?: boolean; maxPages?: number; forceRevalidate?: boolean }
+  ): Promise<SyncResult> {
+    const key = `sync:${characterId}:wallet_journal`;
+    return this.coordinator.enqueue(key, () =>
+      this.executeSyncWalletJournal(characterId, accessToken, refreshTokenFn, options)
+    );
+  }
+
+  private async executeSyncWalletJournal(
+    characterId: number,
+    accessToken: string,
+    refreshTokenFn?: () => Promise<string | null>,
+    options?: { resume?: boolean; maxPages?: number; forceRevalidate?: boolean }
   ): Promise<SyncResult> {
     const resource: SyncResourceType = 'wallet_journal';
     const startTime = Date.now();
@@ -256,6 +289,7 @@ export class SyncService {
           refreshTokenFn,
           startPage,
           maxPages,
+          forceRevalidate: options?.forceRevalidate,
           onPageSuccess: async (page, rawItems) => {
             if (page > highestPageFetched) {
               highestPageFetched = page;
@@ -356,12 +390,25 @@ export class SyncService {
   }
 
   /**
-   * Synchronizes character active orders and historical orders
+   * Synchronizes character active orders and historical orders with in-flight coalescing
    */
   public async syncCharacterOrders(
     characterId: number,
     accessToken: string,
-    refreshTokenFn?: () => Promise<string | null>
+    refreshTokenFn?: () => Promise<string | null>,
+    options?: { forceRevalidate?: boolean }
+  ): Promise<SyncResult> {
+    const key = `sync:${characterId}:character_orders`;
+    return this.coordinator.enqueue(key, () =>
+      this.executeSyncCharacterOrders(characterId, accessToken, refreshTokenFn, options)
+    );
+  }
+
+  private async executeSyncCharacterOrders(
+    characterId: number,
+    accessToken: string,
+    refreshTokenFn?: () => Promise<string | null>,
+    options?: { forceRevalidate?: boolean }
   ): Promise<SyncResult> {
     const resource: SyncResourceType = 'character_orders';
     const startTime = Date.now();
@@ -376,7 +423,7 @@ export class SyncService {
       // 1. Fetch active orders
       const activeRes = await this.esiClient.get<RawEsiOrder[]>(
         `/characters/${characterId}/orders/`,
-        { accessToken, refreshTokenFn }
+        { accessToken, refreshTokenFn, forceRevalidate: options?.forceRevalidate }
       );
 
       const rawActive = Array.isArray(activeRes.data) ? activeRes.data : [];
@@ -387,7 +434,7 @@ export class SyncService {
         const historyRes = await fetchXPages<RawEsiOrder>(
           this.esiClient,
           `/characters/${characterId}/orders/history/`,
-          { accessToken, refreshTokenFn, maxPages: 3 }
+          { accessToken, refreshTokenFn, maxPages: 3, forceRevalidate: options?.forceRevalidate }
         );
         rawHistory = historyRes.data || [];
       } catch (histErr) {
@@ -540,6 +587,17 @@ export class SyncService {
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>
   ): Promise<void> {
+    const key = `sync:${characterId}:corporation_wallets`;
+    return this.coordinator.enqueue(key, () =>
+      this.executeSyncCorporationWallets(characterId, accessToken, refreshTokenFn)
+    );
+  }
+
+  private async executeSyncCorporationWallets(
+    characterId: number,
+    accessToken: string,
+    refreshTokenFn?: () => Promise<string | null>
+  ): Promise<void> {
     if (this.inaccessibleCorpCharacters.has(characterId)) return;
 
     try {
@@ -619,13 +677,25 @@ export class SyncService {
   }
 
   /**
-   * Synchronizes character assets from ESI using X-Pages pagination
+   * Synchronizes character assets from ESI using X-Pages pagination with in-flight coalescing
    */
   public async syncCharacterAssets(
     characterId: number,
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>,
-    options?: { resume?: boolean; maxPages?: number }
+    options?: { resume?: boolean; maxPages?: number; forceRevalidate?: boolean }
+  ): Promise<SyncResult> {
+    const key = `sync:${characterId}:character_assets`;
+    return this.coordinator.enqueue(key, () =>
+      this.executeSyncCharacterAssets(characterId, accessToken, refreshTokenFn, options)
+    );
+  }
+
+  private async executeSyncCharacterAssets(
+    characterId: number,
+    accessToken: string,
+    refreshTokenFn?: () => Promise<string | null>,
+    options?: { resume?: boolean; maxPages?: number; forceRevalidate?: boolean }
   ): Promise<SyncResult> {
     const resource: SyncResourceType = 'character_assets';
     const startTime = Date.now();
@@ -658,6 +728,7 @@ export class SyncService {
           refreshTokenFn,
           startPage,
           maxPages,
+          forceRevalidate: options?.forceRevalidate,
           onPageSuccess: async (page, rawItems) => {
             if (page > highestPageFetched) {
               highestPageFetched = page;
@@ -775,6 +846,17 @@ export class SyncService {
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>
   ): Promise<void> {
+    const key = `sync:${characterId}:corporation_assets`;
+    return this.coordinator.enqueue(key, () =>
+      this.executeSyncCorporationAssets(characterId, accessToken, refreshTokenFn)
+    );
+  }
+
+  private async executeSyncCorporationAssets(
+    characterId: number,
+    accessToken: string,
+    refreshTokenFn?: () => Promise<string | null>
+  ): Promise<void> {
     if (this.inaccessibleCorpCharacters.has(characterId)) return;
 
     try {
@@ -844,21 +926,76 @@ export class SyncService {
 
   /**
    * Synchronizes all character data (wallet transactions, journal, market orders, corporation wallet, character & corporation assets)
+   * Executes independent resource synchronizations in parallel via the Bounded Task Coordinator with in-flight merging.
+   * Uses coalesce() to avoid parent-child worker pool starvation and deadlocks.
    */
   public async syncAll(
     characterId: number,
     accessToken: string,
-    refreshTokenFn?: () => Promise<string | null>
+    refreshTokenFn?: () => Promise<string | null>,
+    options?: { forceRevalidate?: boolean }
   ): Promise<{ transactions: SyncResult; journal: SyncResult; orders: SyncResult; assets: SyncResult }> {
-    const transactions = await this.syncWalletTransactions(characterId, accessToken, refreshTokenFn);
-    const journal = await this.syncWalletJournal(characterId, accessToken, refreshTokenFn);
-    const orders = await this.syncCharacterOrders(characterId, accessToken, refreshTokenFn);
-    const assets = await this.syncCharacterAssets(characterId, accessToken, refreshTokenFn);
-    await this.syncCorporationWallets(characterId, accessToken, refreshTokenFn);
-    await this.syncCorporationAssets(characterId, accessToken, refreshTokenFn);
+    const key = `syncAll:${characterId}`;
+    return this.coordinator.coalesce(key, async () => {
+      const forceRevalidate = options?.forceRevalidate ?? true;
+      // 1. Launch independent resources in parallel through the bounded worker pool
+      const [transactions, journal, orders, assets] = await Promise.all([
+        this.syncWalletTransactions(characterId, accessToken, refreshTokenFn, { forceRevalidate }),
+        this.syncWalletJournal(characterId, accessToken, refreshTokenFn, { forceRevalidate }),
+        this.syncCharacterOrders(characterId, accessToken, refreshTokenFn, { forceRevalidate }),
+        this.syncCharacterAssets(characterId, accessToken, refreshTokenFn, { forceRevalidate }),
+      ]);
 
-    return { transactions, journal, orders, assets };
+      // 2. Launch secondary / corp resources in parallel (non-blocking for core result)
+      await Promise.allSettled([
+        this.syncCorporationWallets(characterId, accessToken, refreshTokenFn),
+        this.syncCorporationAssets(characterId, accessToken, refreshTokenFn),
+      ]);
+
+      return { transactions, journal, orders, assets };
+    });
+  }
+
+  /**
+   * Synchronizes multiple characters concurrently under the controlled coordinator pool
+   */
+  public async syncCharacters(
+    characters: Array<{
+      characterId: number;
+      accessToken: string;
+      refreshTokenFn?: () => Promise<string | null>;
+      forceRevalidate?: boolean;
+    }>
+  ): Promise<
+    Array<{
+      characterId: number;
+      result: { transactions: SyncResult; journal: SyncResult; orders: SyncResult; assets: SyncResult } | null;
+      error: string | null;
+    }>
+  > {
+    const promises = characters.map(async (char) => {
+      try {
+        const result = await this.syncAll(char.characterId, char.accessToken, char.refreshTokenFn, {
+          forceRevalidate: char.forceRevalidate ?? true,
+        });
+        return {
+          characterId: char.characterId,
+          result,
+          error: null,
+        };
+      } catch (err) {
+        const msg = (err as Error).message || 'Sync failed';
+        return {
+          characterId: char.characterId,
+          result: null,
+          error: `Personnage #${char.characterId}: ${msg}`,
+        };
+      }
+    });
+
+    return Promise.all(promises);
   }
 }
 
 export const defaultSyncService = new SyncService();
+

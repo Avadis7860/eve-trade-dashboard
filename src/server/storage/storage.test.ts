@@ -495,4 +495,61 @@ describe('Phase 07 — Persistent Storage, PostgreSQL Durability & History Relia
 
     if (fs.existsSync(isolatedPath)) fs.unlinkSync(isolatedPath);
   });
+
+  it('7. Preserves corrupted storage file as backup archive without destructive overwrite (S0-1 fix)', () => {
+    const corruptPath = './.data/corrupt_test_store.json';
+    if (fs.existsSync(corruptPath)) fs.unlinkSync(corruptPath);
+
+    // Clean up any previous backup files
+    const dir = './.data';
+    if (fs.existsSync(dir)) {
+      for (const file of fs.readdirSync(dir)) {
+        if (file.startsWith('corrupt_test_store.json.corrupt.')) {
+          fs.unlinkSync(`${dir}/${file}`);
+        }
+      }
+    }
+
+    // Write truncated/corrupted JSON
+    fs.writeFileSync(corruptPath, '{"version": 2, "appliedMigrations": [1], "data": {"ledger": {"transactions": [ truncated...', 'utf8');
+
+    const adapter = new DurableFileDatabaseAdapter(corruptPath);
+    adapter.init();
+
+    // 1. The original path now contains fresh clean state
+    expect(fs.existsSync(corruptPath)).toBe(true);
+    const cleanContent = JSON.parse(fs.readFileSync(corruptPath, 'utf8'));
+    expect(cleanContent.data.ledger.transactions).toEqual([]);
+
+    // 2. A backup file exists containing the corrupted content intact
+    const backupFiles = fs.readdirSync(dir).filter((f) => f.startsWith('corrupt_test_store.json.corrupt.'));
+    expect(backupFiles.length).toBeGreaterThan(0);
+    const backupContent = fs.readFileSync(`${dir}/${backupFiles[0]}`, 'utf8');
+    expect(backupContent).toContain('truncated...');
+
+    // Cleanup
+    if (fs.existsSync(corruptPath)) fs.unlinkSync(corruptPath);
+    for (const file of backupFiles) {
+      fs.unlinkSync(`${dir}/${file}`);
+    }
+  });
+
+  it('8. Propagates IO error when persist() fails due to disk write or permission error (S0-1 fix)', () => {
+    const errorPath = './.data/io_error_store.json';
+    const adapter = new DurableFileDatabaseAdapter(errorPath);
+    adapter.init();
+
+    // Mock writeFileSync to throw an IO error (e.g. ENOSPC or EACCES)
+    const originalWriteFileSync = fs.writeFileSync;
+    try {
+      fs.writeFileSync = () => {
+        throw new Error('ENOSPC: no space left on device');
+      };
+
+      expect(() => adapter.persist()).toThrow('ENOSPC: no space left on device');
+    } finally {
+      fs.writeFileSync = originalWriteFileSync;
+      if (fs.existsSync(errorPath)) fs.unlinkSync(errorPath);
+    }
+  });
 });

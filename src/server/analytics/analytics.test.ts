@@ -461,4 +461,56 @@ describe('PHASE-10: Product 360 & Time Series Analytics Engine', () => {
     expect(tsRes.body.group_by).toBe('week');
     expect(Array.isArray(tsRes.body.data_points)).toBe(true);
   });
+
+  it('isolates multi-character freshness in getTimeSeries: error on Character B does not alter Character A FRESH status (S1-3 fix)', async () => {
+    const now = Date.now();
+
+    // Character 1 has fresh complete sync
+    syncRepo.updateSyncState(CHAR_1, 'wallet_transactions', {
+      status: 'COMPLETE',
+      totalRecords: 10,
+      lastSyncCompletedAt: now - 60000,
+    });
+
+    // Character 2 has an error in sync
+    syncRepo.updateSyncState(CHAR_2, 'wallet_transactions', {
+      status: 'ERROR',
+      totalRecords: 0,
+      errorMessage: 'Fatal network timeout',
+    });
+
+    // 1. Query for Character 1 only: MUST BE FRESH, not contaminated by Character 2!
+    const char1Ts = await analyticsService.getTimeSeries({
+      characterId: CHAR_1,
+      now: new Date(now),
+    });
+    expect(char1Ts.freshness_status).toBe('FRESH');
+
+    // 2. Query for Character 2 only: MUST BE PARTIAL / ERROR
+    const char2Ts = await analyticsService.getTimeSeries({
+      characterId: CHAR_2,
+      now: new Date(now),
+    });
+    expect(char2Ts.freshness_status).toBe('PARTIAL');
+    expect(char2Ts.uncertainty_notes.some((n) => n.includes('incomplètes'))).toBe(true);
+  });
+
+  it('reflects SYNCING or PARTIAL status as PARTIAL in getTimeSeries instead of falsely FRESH (S1-3 fix)', async () => {
+    const now = Date.now();
+
+    syncRepo.updateSyncState(CHAR_1, 'wallet_transactions', {
+      status: 'SYNCING',
+      lastSyncStartedAt: now - 10000,
+      lastSyncCompletedAt: now - 60000,
+      totalRecords: 10,
+    });
+
+    const ts = await analyticsService.getTimeSeries({
+      characterId: CHAR_1,
+      now: new Date(now),
+    });
+
+    // Must be PARTIAL, not falsely FRESH
+    expect(ts.freshness_status).toBe('PARTIAL');
+  });
 });

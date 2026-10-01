@@ -392,4 +392,90 @@ describe('Sync Module (Sales Ledger & Orders Synchronization)', () => {
       expect(allRes.wallet?.itemsFetched).toBe(1);
     });
   });
+
+  describe('Phase F02 — Storage Integrity, Strict Wallet Validation & 5-Streams Freshness', () => {
+    it('rejects invalid or non-numeric wallet balances (null, undefined, string, object) with ERROR without persisting 0 ISK (S0-5 fix)', async () => {
+      const invalidPayloads: unknown[] = [null, undefined, 'not-a-number', {}, [], '   '];
+
+      for (const invalidData of invalidPayloads) {
+        // Clear snapshots before each try
+        walletRepo.clearCharacterData(1001);
+
+        vi.spyOn(esiClient, 'get').mockResolvedValueOnce({
+          data: invalidData,
+          meta: { status: 200, fromCache: false, fetchedAt: Date.now() },
+        } as never);
+
+        const result = await syncService.syncCharacterWallet(1001, 'dummy-token');
+
+        expect(result.status).toBe('ERROR');
+        expect(result.coverageStatus).toBe('ERROR');
+        expect(result.error).toMatch(/Invalid wallet balance/i);
+
+        // Crucial: no snapshot at 0 ISK must be inserted!
+        const snapshot = walletRepo.getCharacterWallet(1001);
+        expect(snapshot).toBeNull();
+
+        const state = syncRepo.getSyncState(1001, 'character_wallet');
+        expect(state.status).toBe('ERROR');
+        expect(state.totalRecords).toBe(0);
+      }
+    });
+
+    it('evaluates getFullStatus across all 5 streams and detects stale assets or error states (S2-2 fix)', () => {
+      const now = Date.now();
+
+      // Seed all 5 streams for character 2001
+      syncRepo.updateSyncState(2001, 'wallet_transactions', {
+        status: 'COMPLETE',
+        totalRecords: 10,
+        lastSyncCompletedAt: now - 2 * 60 * 1000, // 2 mins ago (fresh < 10m)
+      });
+      syncRepo.updateSyncState(2001, 'wallet_journal', {
+        status: 'COMPLETE',
+        totalRecords: 10,
+        lastSyncCompletedAt: now - 2 * 60 * 1000,
+      });
+      syncRepo.updateSyncState(2001, 'character_orders', {
+        status: 'COMPLETE',
+        totalRecords: 5,
+        lastSyncCompletedAt: now - 3 * 60 * 1000, // 3 mins ago (fresh < 10m)
+      });
+      syncRepo.updateSyncState(2001, 'character_wallet', {
+        status: 'COMPLETE',
+        totalRecords: 1,
+        lastSyncCompletedAt: now - 1 * 60 * 1000, // 1 min ago (fresh < 10m)
+      });
+      syncRepo.updateSyncState(2001, 'character_assets', {
+        status: 'COMPLETE',
+        totalRecords: 50,
+        lastSyncCompletedAt: now - 30 * 60 * 1000, // 30 mins ago (fresh < 60m)
+      });
+
+      // 1. All 5 are fresh
+      const status1 = syncRepo.getFullStatus(2001);
+      expect(status1.freshness).toBe('FRESH');
+      expect(status1.assets).toBeDefined();
+      expect(status1.wallet).toBeDefined();
+      expect(status1.transactions.status).toBe('COMPLETE');
+
+      // 2. If assets are 65 mins old (> 60m TTL), overall freshness must be STALE even if orders/txs are fresh!
+      syncRepo.updateSyncState(2001, 'character_assets', {
+        status: 'COMPLETE',
+        totalRecords: 50,
+        lastSyncCompletedAt: now - 65 * 60 * 1000, // 65 mins ago (stale > 60m)
+      });
+      const status2 = syncRepo.getFullStatus(2001);
+      expect(status2.freshness).toBe('STALE');
+
+      // 3. If wallet is in ERROR, overall freshness must be PARTIAL
+      syncRepo.updateSyncState(2001, 'character_wallet', {
+        status: 'ERROR',
+        totalRecords: 0,
+        errorMessage: 'Invalid wallet balance',
+      });
+      const status3 = syncRepo.getFullStatus(2001);
+      expect(status3.freshness).toBe('PARTIAL');
+    });
+  });
 });

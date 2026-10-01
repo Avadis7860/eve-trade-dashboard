@@ -56,24 +56,33 @@ export class DurableFileDatabaseAdapter implements IDatabaseAdapter {
     logger.warn('[Storage] Running with DurableFileDatabaseAdapter (offline local fallback). For production/staging, configure DATABASE_URL for PostgreSQL persistence.');
 
     if (this.storagePath) {
-      try {
-        const dir = path.dirname(this.storagePath);
-        if (!fs.existsSync(dir)) {
-          fs.mkdirSync(dir, { recursive: true });
-        }
+      const dir = path.dirname(this.storagePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
 
-        if (fs.existsSync(this.storagePath)) {
+      if (fs.existsSync(this.storagePath)) {
+        try {
           const raw = fs.readFileSync(this.storagePath, 'utf8');
           const parsed = JSON.parse(raw) as DurableDatabaseState;
           if (parsed && parsed.data) {
             this.state = parsed;
+          } else {
+            throw new Error('Invalid database file structure: missing data property');
           }
-        } else {
+        } catch (err) {
+          const timestamp = Date.now();
+          const corruptBackupPath = `${this.storagePath}.corrupt.${timestamp}.bak`;
+          try {
+            fs.renameSync(this.storagePath, corruptBackupPath);
+            logger.error(`[CRITICAL] Storage file at ${this.storagePath} is corrupted: ${(err as Error).message}. Preserved as backup: ${corruptBackupPath}`);
+          } catch (renameErr) {
+            logger.error(`[CRITICAL] Failed to move corrupted storage file ${this.storagePath}: ${(renameErr as Error).message}`);
+          }
+          this.state = this.createEmptyState();
           this.persist();
         }
-      } catch (err) {
-        logger.error(`Failed to load persistent storage from ${this.storagePath}, initializing clean state: ${(err as Error).message}`);
-        this.state = this.createEmptyState();
+      } else {
         this.persist();
       }
     }
@@ -120,6 +129,7 @@ export class DurableFileDatabaseAdapter implements IDatabaseAdapter {
       fs.renameSync(tmpPath, this.storagePath);
     } catch (err) {
       logger.error(`Error persisting database state to disk: ${(err as Error).message}`);
+      throw err;
     }
   }
 
@@ -153,7 +163,11 @@ export class DurableFileDatabaseAdapter implements IDatabaseAdapter {
       }
       this.inTransaction = false;
       this.transactionSnapshot = null;
-      this.persist();
+      try {
+        this.persist();
+      } catch (persistErr) {
+        logger.error(`Failed to persist rolled back state to disk: ${(persistErr as Error).message}`);
+      }
       defaultMetricsCollector.recordSqlTransaction(false);
       throw err;
     }

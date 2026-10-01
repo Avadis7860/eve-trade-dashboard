@@ -396,7 +396,17 @@ export interface SyncStatusResponse {
     lastSyncCompletedAt?: number;
     totalRecords: number;
   };
-  freshness: 'FRESH' | 'STALE' | 'UNKNOWN';
+  assets?: {
+    status: 'IDLE' | 'SYNCING' | 'COMPLETE' | 'PARTIAL' | 'ERROR';
+    lastSyncCompletedAt?: number;
+    totalRecords: number;
+  };
+  wallet?: {
+    status: 'IDLE' | 'SYNCING' | 'COMPLETE' | 'PARTIAL' | 'ERROR';
+    lastSyncCompletedAt?: number;
+    totalRecords: number;
+  };
+  freshness: 'FRESH' | 'STALE' | 'UNKNOWN' | 'PARTIAL';
 }
 
 export default function App({ client }: { client?: QueryClient } = {}) {
@@ -1126,13 +1136,15 @@ function AppDashboard() {
                   className={`w-2 h-2 rounded-full ${
                     syncStatus?.freshness === 'FRESH'
                       ? 'bg-emerald-400'
+                      : syncStatus?.freshness === 'PARTIAL'
+                      ? 'bg-amber-500'
                       : syncStatus?.freshness === 'STALE'
                       ? 'bg-amber-400'
                       : 'bg-slate-500'
                   } ${isSyncing ? 'animate-ping' : ''}`}
                 />
                 <span className="text-slate-300 font-semibold">
-                  {isSyncing ? 'SYNCHRO...' : syncStatus?.freshness === 'FRESH' ? 'ESI FRESH' : 'ESI STALE'}
+                  {isSyncing ? 'SYNCHRO...' : syncStatus?.freshness === 'FRESH' ? 'ESI FRESH' : syncStatus?.freshness === 'PARTIAL' ? 'ESI PARTIEL' : 'ESI STALE'}
                 </span>
                 <span className="text-slate-500 text-[10px]">
                   ({esiStatus?.rateLimit?.errorLimitRemain ?? 100}/100)

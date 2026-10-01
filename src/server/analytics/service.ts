@@ -765,14 +765,46 @@ export class AnalyticsService {
     });
 
     // 4. Freshness and Uncertainty Notes
-    const syncStates = this.syncRepo.dumpData().states;
-    const hasError = syncStates.some((s: { status: string }) => s.status === 'ERROR');
-    const hasStale = syncStates.some((s: { status: string }) => s.status === 'STALE');
-    const freshnessStatus = hasError ? 'PARTIAL' : hasStale ? 'STALE' : syncStates.length === 0 ? 'EMPTY' : 'FRESH';
+    const targetCharIds = characterIds && characterIds.length > 0
+      ? characterIds
+      : characterId !== undefined
+      ? [characterId]
+      : undefined;
+
+    const allStates = this.syncRepo.dumpData().states;
+    const syncStates = targetCharIds
+      ? allStates.filter((s) => targetCharIds.includes(s.characterId))
+      : allStates;
+
+    const hasError = syncStates.some((s) => s.status === 'ERROR');
+    const isTransitory = syncStates.some((s) => s.status === 'PARTIAL' || s.status === 'SYNCING');
+
+    const TEN_MINUTES = 10 * 60 * 1000;
+    const ONE_HOUR = 60 * 60 * 1000;
+    const completedStates = syncStates.filter((s) => (s.lastSyncCompletedAt || 0) > 0);
+    const hasStale = completedStates.some((s) => {
+      const ttl = s.resource === 'character_assets' || s.resource === 'corporation_assets' ? ONE_HOUR : TEN_MINUTES;
+      return Date.now() - (s.lastSyncCompletedAt || 0) > ttl;
+    });
+
+    let freshnessStatus: 'FRESH' | 'STALE' | 'PARTIAL' | 'EMPTY';
+    if (syncStates.length === 0) {
+      freshnessStatus = 'EMPTY';
+    } else if (hasError || isTransitory) {
+      freshnessStatus = 'PARTIAL';
+    } else if (completedStates.length === 0) {
+      freshnessStatus = 'EMPTY';
+    } else if (hasStale) {
+      freshnessStatus = 'STALE';
+    } else {
+      freshnessStatus = 'FRESH';
+    }
 
     const uncertaintyNotes: string[] = [];
     if (freshnessStatus === 'STALE') {
       uncertaintyNotes.push('Données ESI partiellement périmées : une synchronisation récente est recommandée.');
+    } else if (freshnessStatus === 'PARTIAL') {
+      uncertaintyNotes.push('Données ESI incomplètes ou synchronisation partielle en cours.');
     }
     if (filteredTxs.length === 0) {
       uncertaintyNotes.push(`Aucune transaction observée sur la période de ${daysCount} jours sélectionnée.`);

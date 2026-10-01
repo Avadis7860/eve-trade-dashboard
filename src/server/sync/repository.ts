@@ -102,20 +102,40 @@ export class PersistentSyncRepository implements ISyncRepository {
     const transactions = this.getSyncState(characterId, 'wallet_transactions');
     const journal = this.getSyncState(characterId, 'wallet_journal');
     const orders = this.getSyncState(characterId, 'character_orders');
+    const assets = this.getSyncState(characterId, 'character_assets');
+    const wallet = this.getSyncState(characterId, 'character_wallet');
 
-    const TEN_MINUTES_MS = 10 * 60 * 1000;
-    const lastCompleted = Math.max(
-      transactions.lastSyncCompletedAt || 0,
-      orders.lastSyncCompletedAt || 0
-    );
-    const isFresh = lastCompleted > 0 && Date.now() - lastCompleted < TEN_MINUTES_MS;
-    const freshness = lastCompleted === 0 ? 'UNKNOWN' : isFresh ? 'FRESH' : 'STALE';
+    const streams: Array<{ state: SyncState; ttlMs: number }> = [
+      { state: transactions, ttlMs: 10 * 60 * 1000 },
+      { state: journal, ttlMs: 10 * 60 * 1000 },
+      { state: orders, ttlMs: 10 * 60 * 1000 },
+      { state: assets, ttlMs: 60 * 60 * 1000 },
+      { state: wallet, ttlMs: 10 * 60 * 1000 },
+    ];
+
+    const hasError = streams.some((s) => s.state.status === 'ERROR');
+    const isTransitory = streams.some((s) => s.state.status === 'PARTIAL' || s.state.status === 'SYNCING');
+
+    let freshness: 'FRESH' | 'STALE' | 'UNKNOWN' | 'PARTIAL';
+    if (hasError || isTransitory) {
+      freshness = 'PARTIAL';
+    } else {
+      const completedStreams = streams.filter((s) => (s.state.lastSyncCompletedAt || 0) > 0);
+      if (completedStreams.length === 0) {
+        freshness = 'UNKNOWN';
+      } else {
+        const anyStale = completedStreams.some((s) => Date.now() - (s.state.lastSyncCompletedAt || 0) > s.ttlMs);
+        freshness = anyStale ? 'STALE' : 'FRESH';
+      }
+    }
 
     return {
       characterId,
       transactions,
       journal,
       orders,
+      assets,
+      wallet,
       asOf: Date.now(),
       freshness,
     };
@@ -301,20 +321,40 @@ export class PostgresSyncRepository implements ISyncRepository {
     const transactions = await this.getSyncStateAsync(characterId, 'wallet_transactions');
     const journal = await this.getSyncStateAsync(characterId, 'wallet_journal');
     const orders = await this.getSyncStateAsync(characterId, 'character_orders');
+    const assets = await this.getSyncStateAsync(characterId, 'character_assets');
+    const wallet = await this.getSyncStateAsync(characterId, 'character_wallet');
 
-    const TEN_MINUTES_MS = 10 * 60 * 1000;
-    const lastCompleted = Math.max(
-      transactions.lastSyncCompletedAt || 0,
-      orders.lastSyncCompletedAt || 0
-    );
-    const isFresh = lastCompleted > 0 && Date.now() - lastCompleted < TEN_MINUTES_MS;
-    const freshness = lastCompleted === 0 ? 'UNKNOWN' : isFresh ? 'FRESH' : 'STALE';
+    const streams: Array<{ state: SyncState; ttlMs: number }> = [
+      { state: transactions, ttlMs: 10 * 60 * 1000 },
+      { state: journal, ttlMs: 10 * 60 * 1000 },
+      { state: orders, ttlMs: 10 * 60 * 1000 },
+      { state: assets, ttlMs: 60 * 60 * 1000 },
+      { state: wallet, ttlMs: 10 * 60 * 1000 },
+    ];
+
+    const hasError = streams.some((s) => s.state.status === 'ERROR');
+    const isTransitory = streams.some((s) => s.state.status === 'PARTIAL' || s.state.status === 'SYNCING');
+
+    let freshness: 'FRESH' | 'STALE' | 'UNKNOWN' | 'PARTIAL';
+    if (hasError || isTransitory) {
+      freshness = 'PARTIAL';
+    } else {
+      const completedStreams = streams.filter((s) => (s.state.lastSyncCompletedAt || 0) > 0);
+      if (completedStreams.length === 0) {
+        freshness = 'UNKNOWN';
+      } else {
+        const anyStale = completedStreams.some((s) => Date.now() - (s.state.lastSyncCompletedAt || 0) > s.ttlMs);
+        freshness = anyStale ? 'STALE' : 'FRESH';
+      }
+    }
 
     return {
       characterId,
       transactions,
       journal,
       orders,
+      assets,
+      wallet,
       asOf: Date.now(),
       freshness,
     };

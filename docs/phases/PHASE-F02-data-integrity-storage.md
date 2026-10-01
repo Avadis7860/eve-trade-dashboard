@@ -30,10 +30,10 @@ L'audit post-Phase 12 a identifié des comportements à haut risque pour l'inté
    Le calcul de `freshness_status` dans `getTimeSeries` et `getFullStatus` doit filtrer exclusivement sur les clés correspondant au personnage demandé. Si un flux est `SYNCING` ou `PARTIAL`, la fraîcheur globale doit refléter cet état transitoire ou partiel.
 
 ## 5. Tests Obligatoires & Scénarios de Validation
-- [ ] Test d'intégrité de stockage : simuler un fichier JSON tronqué et vérifier que le fichier corrompu est conservé sous forme de sauvegarde d'archive et non écrasé.
-- [ ] Test de persistance d'E/S : vérifier que si le disque est plein ou protégé en écriture, `persist()` lève une exception claire.
-- [ ] Test de validation de solde : simuler une réponse ESI renvoyant `null`, `undefined`, `"string"` ou `{}` et vérifier que la synchronisation produit un statut `ERROR` et qu'aucun snapshot à 0 ISK n'est inséré.
-- [ ] Test d'isolation multi-personnages : vérifier que l'erreur de synchronisation du Personnage B n'altère pas le statut de fraîcheur `FRESH` du Personnage A dans `getTimeSeries`.
+- [x] Test d'intégrité de stockage : simuler un fichier JSON tronqué et vérifier que le fichier corrompu est conservé sous forme de sauvegarde d'archive et non écrasé.
+- [x] Test de persistance d'E/S : vérifier que si le disque est plein ou protégé en écriture, `persist()` lève une exception claire.
+- [x] Test de validation de solde : simuler une réponse ESI renvoyant `null`, `undefined`, `"string"` ou `{}` et vérifier que la synchronisation produit un statut `ERROR` et qu'aucun snapshot à 0 ISK n'est inséré.
+- [x] Test d'isolation multi-personnages : vérifier que l'erreur de synchronisation du Personnage B n'altère pas le statut de fraîcheur `FRESH` du Personnage A dans `getTimeSeries`.
 
 ## 6. Critères d'Entrée & de Sortie
 - **Entrée :** Validation et merge de la Phase F01. Branche dédiée `feature/F02-data-integrity-storage`.

@@ -636,9 +636,20 @@ export class SyncService {
         { accessToken, refreshTokenFn, forceRevalidate: options?.forceRevalidate, signal: options?.signal }
       );
 
-      const balance = typeof res.data === 'number' ? res.data : Number(res.data);
-      if (isNaN(balance)) {
-        throw new Error(`Invalid wallet balance received from ESI: ${res.data}`);
+      const rawData = res.data as unknown;
+      if (
+        rawData === null ||
+        rawData === undefined ||
+        typeof rawData === 'boolean' ||
+        typeof rawData === 'object' ||
+        (typeof rawData === 'string' && rawData.trim() === '')
+      ) {
+        throw new Error(`Invalid wallet balance received from ESI: expected number, got ${JSON.stringify(rawData)}`);
+      }
+
+      const balance = typeof rawData === 'number' ? rawData : Number(rawData);
+      if (!Number.isFinite(balance) || isNaN(balance)) {
+        throw new Error(`Invalid wallet balance received from ESI: non-finite or NaN value ${rawData}`);
       }
       const characterName = this.universeService.getNameSync(characterId, 'Character');
 
@@ -896,6 +907,22 @@ export class SyncService {
         const divisionNumber = div.division || 1;
         const divisionName = divisionNames.get(divisionNumber) || (divisionNumber === 1 ? 'Master Wallet' : `Division ${divisionNumber}`);
 
+        const rawBalance = div.balance as unknown;
+        if (
+          rawBalance === null ||
+          rawBalance === undefined ||
+          typeof rawBalance === 'boolean' ||
+          typeof rawBalance === 'object' ||
+          (typeof rawBalance === 'string' && rawBalance.trim() === '')
+        ) {
+          throw new Error(`Invalid corporation division balance received from ESI: expected number, got ${JSON.stringify(rawBalance)}`);
+        }
+
+        const balance = typeof rawBalance === 'number' ? rawBalance : Number(rawBalance);
+        if (!Number.isFinite(balance) || isNaN(balance)) {
+          throw new Error(`Invalid corporation division balance received from ESI: non-finite or NaN value ${rawBalance}`);
+        }
+
         const corpSnapshot: WalletBalanceSnapshot = {
           id: `corp:${corpId}:div:${divisionNumber}`,
           type: 'CORPORATION',
@@ -903,7 +930,7 @@ export class SyncService {
           corporationName: corpName,
           division: divisionNumber,
           divisionName,
-          balance: Number(div.balance) || 0,
+          balance,
           observedAt,
           observedByCharacterId: characterId,
           source: `/corporations/${corpId}/wallets/`,

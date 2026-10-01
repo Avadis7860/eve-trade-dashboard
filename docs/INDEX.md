@@ -43,8 +43,8 @@
 
 ## Roadmap Post-Audit — Assurance Fiabilité & Traçabilité (Série F)
 - [F01 Cycle de vie sync, annulation réelle et persistance asynchrone](phases/PHASE-F01-sync-concurrency-lifecycle.md) — *Terminé*
-- [F02 Intégrité du stockage, anti-écrasement et vérité des données](phases/PHASE-F02-data-integrity-storage.md) — *Prête à démarrer*
-- [F03 Invariants financiers, détection chronologique et valorisation FIFO](phases/PHASE-F03-financial-inventory-invariants.md) — *Planifiée*
+- [F02 Intégrité du stockage, anti-écrasement et vérité des données](phases/PHASE-F02-data-integrity-storage.md) — *Terminé*
+- [F03 Invariants financiers, détection chronologique et valorisation FIFO](phases/PHASE-F03-financial-inventory-invariants.md) — *Prête à démarrer*
 - [F04 Preuves de qualification réelles : PostgreSQL CI et tests E2E navigateur](phases/PHASE-F04-testing-ci-real-postgres-e2e.md) — *Planifiée*
 
 ## Release Finale

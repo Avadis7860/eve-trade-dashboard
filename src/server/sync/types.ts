@@ -40,7 +40,7 @@ export interface FullCharacterSyncStatus {
   assets?: SyncState;
   wallet?: SyncState;
   asOf: number;
-  freshness: 'FRESH' | 'STALE' | 'UNKNOWN';
+  freshness: 'FRESH' | 'STALE' | 'UNKNOWN' | 'PARTIAL';
 }
 
 export interface SyncResult {

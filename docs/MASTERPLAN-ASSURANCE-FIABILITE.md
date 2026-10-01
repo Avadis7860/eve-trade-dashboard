@@ -22,9 +22,9 @@ La série **F01 à F04** constitue le plan d'action méthodique et borné pour r
 
 | ID | Intitulé de la Phase | Priorité | Problèmes Traités | Dépendances | Statut |
 |---|---|---|---|---|---|
-| **F01** | [Cycle de Vie Sync, Annulation Réelle & Persistance Asynchrone](phases/PHASE-F01-sync-concurrency-lifecycle.md) | **Critique (S0)** | S0-2, S0-3, S0-4, S1-4 | Post-Phase 12 | **Prête à démarrer** |
-| **F02** | [Intégrité du Stockage, Anti-Écrasement & Vérité des Données](phases/PHASE-F02-data-integrity-storage.md) | **Critique (S0)** | S0-1, S0-5, S1-3, S2-2 | F01 | **Planifiée** |
-| **F03** | [Invariants Financiers, Détection Chronologique & Valorisation FIFO](phases/PHASE-F03-financial-inventory-invariants.md) | **Majeure (S1)** | S1-1, S1-2, S2-3, S2-4 | F01, F02 | **Planifiée** |
+| **F01** | [Cycle de Vie Sync, Annulation Réelle & Persistance Asynchrone](phases/PHASE-F01-sync-concurrency-lifecycle.md) | **Critique (S0)** | S0-2, S0-3, S0-4, S1-4 | Post-Phase 12 | **Terminé** |
+| **F02** | [Intégrité du Stockage, Anti-Écrasement & Vérité des Données](phases/PHASE-F02-data-integrity-storage.md) | **Critique (S0)** | S0-1, S0-5, S1-3, S2-2 | F01 | **Terminé** |
+| **F03** | [Invariants Financiers, Détection Chronologique & Valorisation FIFO](phases/PHASE-F03-financial-inventory-invariants.md) | **Majeure (S1)** | S1-1, S1-2, S2-3, S2-4 | F01, F02 | **Prête à démarrer** |
 | **F04** | [Preuves de Qualification Réelles : PostgreSQL CI & Tests E2E Navigateur](phases/PHASE-F04-testing-ci-real-postgres-e2e.md) | **Majeure (S1)** | S1-5, S2-1 | F01–F03 | **Planifiée** |
 
 ---

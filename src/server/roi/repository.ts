@@ -20,7 +20,13 @@ export interface IRoiRepository {
   saveAllocation(allocation: ExplicitCostAllocation): void;
   saveAllocations(allocations: ExplicitCostAllocation[]): void;
   deleteAllocation(id: string): boolean;
-  clearAutoAllocations(characterId?: number, characterIds?: number[]): void;
+  clearAutoAllocations(characterId?: number, characterIds?: number[], typeId?: number): void;
+  replaceAutoAllocations(params: {
+    characterId?: number;
+    characterIds?: number[];
+    typeId?: number;
+    allocations: ExplicitCostAllocation[];
+  }): void;
   saveOpeningBalance(lot: OpeningBalanceLot): void;
   getOpeningBalance(id: string): OpeningBalanceLot | undefined;
   deleteOpeningBalance(id: string): boolean;
@@ -57,18 +63,38 @@ export class PersistentRoiRepository implements IRoiRepository {
   private syncToStorage(): void {
     if (this.adapter instanceof DurableFileDatabaseAdapter) {
       const state = this.adapter.getState();
-      state.data.roi = {
-        allocations: Array.from(this.allocations.values()),
-        openingBalances: Array.from(this.openingBalances.values()),
-      };
-      this.adapter.persist();
+      const prevAllocations = state?.data?.roi?.allocations ? [...state.data.roi.allocations] : [];
+      const prevOpeningBalances = state?.data?.roi?.openingBalances ? [...state.data.roi.openingBalances] : [];
+      if (state?.data) {
+        state.data.roi = {
+          allocations: Array.from(this.allocations.values()),
+          openingBalances: Array.from(this.openingBalances.values()),
+        };
+      }
+      try {
+        this.adapter.persist();
+      } catch (err) {
+        if (state?.data?.roi) {
+          state.data.roi.allocations = prevAllocations;
+          state.data.roi.openingBalances = prevOpeningBalances;
+        }
+        throw err;
+      }
     }
   }
 
   reset(): void {
+    const backupAlloc = new Map(this.allocations);
+    const backupOb = new Map(this.openingBalances);
     this.allocations.clear();
     this.openingBalances.clear();
-    this.syncToStorage();
+    try {
+      this.syncToStorage();
+    } catch (err) {
+      this.allocations = backupAlloc;
+      this.openingBalances = backupOb;
+      throw err;
+    }
   }
 
   // --- Allocations Management ---
@@ -116,32 +142,57 @@ export class PersistentRoiRepository implements IRoiRepository {
   }
 
   saveAllocation(allocation: ExplicitCostAllocation): void {
+    const prev = this.allocations.get(allocation.id);
     this.allocations.set(allocation.id, { ...allocation });
-    this.syncToStorage();
+    try {
+      this.syncToStorage();
+    } catch (err) {
+      if (prev !== undefined) {
+        this.allocations.set(allocation.id, prev);
+      } else {
+        this.allocations.delete(allocation.id);
+      }
+      throw err;
+    }
   }
 
   saveAllocations(allocations: ExplicitCostAllocation[]): void {
     if (allocations.length === 0) return;
+    const backup = new Map(this.allocations);
     for (const allocation of allocations) {
       this.allocations.set(allocation.id, { ...allocation });
     }
-    this.syncToStorage();
+    try {
+      this.syncToStorage();
+    } catch (err) {
+      this.allocations = backup;
+      throw err;
+    }
   }
 
   deleteAllocation(id: string): boolean {
-    const deleted = this.allocations.delete(id);
-    if (deleted) {
+    const prev = this.allocations.get(id);
+    if (!prev) return false;
+    this.allocations.delete(id);
+    try {
       this.syncToStorage();
+      return true;
+    } catch (err) {
+      this.allocations.set(id, prev);
+      throw err;
     }
-    return deleted;
   }
 
-  clearAutoAllocations(characterId?: number, characterIds?: number[]): void {
+  clearAutoAllocations(characterId?: number, characterIds?: number[], typeId?: number): void {
     const charSet = characterIds && characterIds.length > 0 ? new Set(characterIds) : null;
+    const backup = new Map(this.allocations);
     let modified = false;
 
     for (const [id, alloc] of this.allocations.entries()) {
       if (alloc.reconciliation_mode === 'FIFO_AUTOMATIC') {
+        if (typeId !== undefined && alloc.type_id !== typeId) {
+          continue;
+        }
         if (charSet) {
           if (
             charSet.has(alloc.character_id) ||
@@ -159,15 +210,74 @@ export class PersistentRoiRepository implements IRoiRepository {
     }
 
     if (modified) {
+      try {
+        this.syncToStorage();
+      } catch (err) {
+        this.allocations = backup;
+        throw err;
+      }
+    }
+  }
+
+  replaceAutoAllocations(params: {
+    characterId?: number;
+    characterIds?: number[];
+    typeId?: number;
+    allocations: ExplicitCostAllocation[];
+  }): void {
+    const { characterId, characterIds, typeId, allocations } = params;
+    const charSet = characterIds && characterIds.length > 0 ? new Set(characterIds) : null;
+    const backup = new Map(this.allocations);
+
+    // 1. Remove targeted automatic allocations
+    for (const [id, alloc] of this.allocations.entries()) {
+      if (alloc.reconciliation_mode === 'FIFO_AUTOMATIC') {
+        if (typeId !== undefined && alloc.type_id !== typeId) {
+          continue;
+        }
+        if (charSet) {
+          if (
+            charSet.has(alloc.character_id) ||
+            (alloc.buy_character_id && charSet.has(alloc.buy_character_id)) ||
+            (alloc.sell_character_id && charSet.has(alloc.sell_character_id))
+          ) {
+            this.allocations.delete(id);
+          }
+        } else if (!characterId || alloc.character_id === characterId || alloc.buy_character_id === characterId || alloc.sell_character_id === characterId) {
+          this.allocations.delete(id);
+        }
+      }
+    }
+
+    // 2. Insert new allocations
+    for (const alloc of allocations) {
+      this.allocations.set(alloc.id, { ...alloc });
+    }
+
+    // 3. Atomically persist single state
+    try {
       this.syncToStorage();
+    } catch (err) {
+      this.allocations = backup;
+      throw err;
     }
   }
 
   // --- Opening Balance Lots Management ---
 
   saveOpeningBalance(lot: OpeningBalanceLot): void {
+    const prev = this.openingBalances.get(lot.id);
     this.openingBalances.set(lot.id, { ...lot });
-    this.syncToStorage();
+    try {
+      this.syncToStorage();
+    } catch (err) {
+      if (prev !== undefined) {
+        this.openingBalances.set(lot.id, prev);
+      } else {
+        this.openingBalances.delete(lot.id);
+      }
+      throw err;
+    }
   }
 
   getOpeningBalance(id: string): OpeningBalanceLot | undefined {
@@ -175,11 +285,16 @@ export class PersistentRoiRepository implements IRoiRepository {
   }
 
   deleteOpeningBalance(id: string): boolean {
-    const deleted = this.openingBalances.delete(id);
-    if (deleted) {
+    const prev = this.openingBalances.get(id);
+    if (!prev) return false;
+    this.openingBalances.delete(id);
+    try {
       this.syncToStorage();
+      return true;
+    } catch (err) {
+      this.openingBalances.set(id, prev);
+      throw err;
     }
-    return deleted;
   }
 
   listOpeningBalances(characterId?: number, characterIds?: number[]): OpeningBalanceLot[] {
@@ -324,6 +439,8 @@ export class PersistentRoiRepository implements IRoiRepository {
   }
 
   clearCharacter(characterId: number): void {
+    const backupAlloc = new Map(this.allocations);
+    const backupOb = new Map(this.openingBalances);
     let modified = false;
     for (const [id, alloc] of Array.from(this.allocations.entries())) {
       if (
@@ -342,11 +459,19 @@ export class PersistentRoiRepository implements IRoiRepository {
       }
     }
     if (modified) {
-      this.syncToStorage();
+      try {
+        this.syncToStorage();
+      } catch (err) {
+        this.allocations = backupAlloc;
+        this.openingBalances = backupOb;
+        throw err;
+      }
     }
   }
 
   restoreData(data: { allocations: ExplicitCostAllocation[]; openingBalances?: OpeningBalanceLot[] }, sync = true): void {
+    const backupAlloc = new Map(this.allocations);
+    const backupOb = new Map(this.openingBalances);
     this.allocations.clear();
     for (const alloc of data.allocations) {
       this.allocations.set(alloc.id, alloc);
@@ -358,7 +483,13 @@ export class PersistentRoiRepository implements IRoiRepository {
       }
     }
     if (sync) {
-      this.syncToStorage();
+      try {
+        this.syncToStorage();
+      } catch (err) {
+        this.allocations = backupAlloc;
+        this.openingBalances = backupOb;
+        throw err;
+      }
     }
   }
 }
@@ -646,22 +777,130 @@ export class PostgresRoiRepository implements IRoiRepository {
     return res > 0;
   }
 
-  public clearAutoAllocations(characterId?: number, characterIds?: number[]): void {
-    this.fallbackMemory.clearAutoAllocations(characterId, characterIds);
-    this.clearAutoAllocationsAsync(characterId, characterIds).catch(() => {});
+  public clearAutoAllocations(characterId?: number, characterIds?: number[], typeId?: number): void {
+    this.fallbackMemory.clearAutoAllocations(characterId, characterIds, typeId);
+    this.clearAutoAllocationsAsync(characterId, characterIds, typeId).catch(() => {});
   }
 
-  public async clearAutoAllocationsAsync(characterId?: number, characterIds?: number[]): Promise<void> {
+  public async clearAutoAllocationsAsync(characterId?: number, characterIds?: number[], typeId?: number): Promise<void> {
     let sql = "DELETE FROM explicit_cost_allocations WHERE reconciliation_mode = 'FIFO_AUTOMATIC'";
     const params: unknown[] = [];
+    let paramIdx = 1;
+
     if (characterIds && characterIds.length > 0) {
-      sql += ' AND (character_id = ANY($1) OR buy_character_id = ANY($1) OR sell_character_id = ANY($1))';
+      sql += ` AND (character_id = ANY($${paramIdx}) OR buy_character_id = ANY($${paramIdx}) OR sell_character_id = ANY($${paramIdx}))`;
       params.push(characterIds);
+      paramIdx++;
     } else if (characterId) {
-      sql += ' AND (character_id = $1 OR buy_character_id = $1 OR sell_character_id = $1)';
+      sql += ` AND (character_id = $${paramIdx} OR buy_character_id = $${paramIdx} OR sell_character_id = $${paramIdx})`;
       params.push(characterId);
+      paramIdx++;
     }
+
+    if (typeId) {
+      sql += ` AND type_id = $${paramIdx}`;
+      params.push(typeId);
+      paramIdx++;
+    }
+
     await this.adapter.execute(sql, params);
+  }
+
+  public replaceAutoAllocations(params: {
+    characterId?: number;
+    characterIds?: number[];
+    typeId?: number;
+    allocations: ExplicitCostAllocation[];
+  }): void {
+    this.fallbackMemory.replaceAutoAllocations(params);
+    this.replaceAutoAllocationsAsync(params).catch(() => {});
+  }
+
+  public async replaceAutoAllocationsAsync(params: {
+    characterId?: number;
+    characterIds?: number[];
+    typeId?: number;
+    allocations: ExplicitCostAllocation[];
+  }): Promise<void> {
+    await this.adapter.transaction(async (tx) => {
+      let deleteSql = "DELETE FROM explicit_cost_allocations WHERE reconciliation_mode = 'FIFO_AUTOMATIC'";
+      const deleteParams: unknown[] = [];
+      let paramIdx = 1;
+
+      if (params.characterIds && params.characterIds.length > 0) {
+        deleteSql += ` AND (character_id = ANY($${paramIdx}) OR buy_character_id = ANY($${paramIdx}) OR sell_character_id = ANY($${paramIdx}))`;
+        deleteParams.push(params.characterIds);
+        paramIdx++;
+      } else if (params.characterId) {
+        deleteSql += ` AND (character_id = $${paramIdx} OR buy_character_id = $${paramIdx} OR sell_character_id = $${paramIdx})`;
+        deleteParams.push(params.characterId);
+        paramIdx++;
+      }
+
+      if (params.typeId) {
+        deleteSql += ` AND type_id = $${paramIdx}`;
+        deleteParams.push(params.typeId);
+        paramIdx++;
+      }
+
+      await tx.execute(deleteSql, deleteParams);
+
+      for (const allocation of params.allocations) {
+        const sql = `
+          INSERT INTO explicit_cost_allocations (
+            id, character_id, buy_character_id, sell_character_id, sell_transaction_id,
+            buy_transaction_id, opening_balance_id, source_type, type_id, type_name,
+            quantity_allocated, unit_cost_isk, unit_sale_price_isk,
+            allocated_buy_broker_fee_isk, allocated_sell_broker_fee_isk,
+            allocated_sales_tax_isk, reconciliation_mode, allocated_at, notes
+          ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+            $11, $12, $13, $14, $15, $16, $17, $18, $19
+          )
+          ON CONFLICT (id) DO UPDATE SET
+            character_id = EXCLUDED.character_id,
+            buy_character_id = EXCLUDED.buy_character_id,
+            sell_character_id = EXCLUDED.sell_character_id,
+            sell_transaction_id = EXCLUDED.sell_transaction_id,
+            buy_transaction_id = EXCLUDED.buy_transaction_id,
+            opening_balance_id = EXCLUDED.opening_balance_id,
+            source_type = EXCLUDED.source_type,
+            type_id = EXCLUDED.type_id,
+            type_name = EXCLUDED.type_name,
+            quantity_allocated = EXCLUDED.quantity_allocated,
+            unit_cost_isk = EXCLUDED.unit_cost_isk,
+            unit_sale_price_isk = EXCLUDED.unit_sale_price_isk,
+            allocated_buy_broker_fee_isk = EXCLUDED.allocated_buy_broker_fee_isk,
+            allocated_sell_broker_fee_isk = EXCLUDED.allocated_sell_broker_fee_isk,
+            allocated_sales_tax_isk = EXCLUDED.allocated_sales_tax_isk,
+            reconciliation_mode = EXCLUDED.reconciliation_mode,
+            allocated_at = EXCLUDED.allocated_at,
+            notes = EXCLUDED.notes
+        `;
+        const insertParams = [
+          allocation.id,
+          allocation.character_id,
+          allocation.buy_character_id || null,
+          allocation.sell_character_id || null,
+          allocation.sell_transaction_id,
+          allocation.buy_transaction_id || null,
+          allocation.opening_balance_id || null,
+          allocation.source_type || 'TRANSACTION',
+          allocation.type_id,
+          allocation.type_name,
+          allocation.quantity_allocated,
+          allocation.unit_buy_price,
+          allocation.unit_buy_price,
+          allocation.allocated_buy_fees || 0,
+          allocation.allocated_sell_fees || 0,
+          allocation.allocated_sell_fees || 0,
+          allocation.reconciliation_mode,
+          allocation.created_at || new Date().toISOString(),
+          allocation.notes || null,
+        ];
+        await tx.execute(sql, insertParams);
+      }
+    });
   }
 
   public saveOpeningBalance(lot: OpeningBalanceLot): void {

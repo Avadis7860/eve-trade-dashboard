@@ -1138,5 +1138,449 @@ describe('ROI TTC & Financial Metrics Module', () => {
       // Must not be 0
       expect(unprovenSummary.roi_percent_ttc).not.toBe(0);
     });
+
+    it('targeted autoReconcileFifo on a specific typeId preserves allocations of all other item types', () => {
+      // 1. Setup PLEX (44992) buy & sell
+      const plexBuy = makeTx({
+        transactionId: 101,
+        characterId: CHAR_ID,
+        date: '2026-03-01T08:00:00Z',
+        isBuy: true,
+        locationId: 60003760,
+        quantity: 500,
+        typeId: PLEX_TYPE_ID,
+        typeName: 'PLEX',
+        unitPrice: 5_000_000,
+      });
+      const plexSell = makeTx({
+        transactionId: 102,
+        characterId: CHAR_ID,
+        date: '2026-03-01T12:00:00Z',
+        isBuy: false,
+        locationId: 60003760,
+        quantity: 500,
+        typeId: PLEX_TYPE_ID,
+        typeName: 'PLEX',
+        unitPrice: 5_200_000,
+      });
+
+      // 2. Setup Tritanium (34) buy & sell
+      const tritBuy = makeTx({
+        transactionId: 201,
+        characterId: CHAR_ID,
+        date: '2026-03-01T08:00:00Z',
+        isBuy: true,
+        locationId: 60003760,
+        quantity: 100_000,
+        typeId: TRITANIUM_TYPE_ID,
+        typeName: 'Tritanium',
+        unitPrice: 4.0,
+      });
+      const tritSell = makeTx({
+        transactionId: 202,
+        characterId: CHAR_ID,
+        date: '2026-03-01T14:00:00Z',
+        isBuy: false,
+        locationId: 60003760,
+        quantity: 100_000,
+        typeId: TRITANIUM_TYPE_ID,
+        typeName: 'Tritanium',
+        unitPrice: 5.5,
+      });
+
+      ledgerRepository.saveTransactions([plexBuy, plexSell, tritBuy, tritSell]);
+
+      // Global reconciliation reconciles both
+      roiService.autoReconcileFifo({ characterId: CHAR_ID });
+      const initialAllocations = roiRepository.listAllocations(CHAR_ID);
+      expect(initialAllocations.length).toBe(2);
+      expect(initialAllocations.some((a) => a.type_id === PLEX_TYPE_ID)).toBe(true);
+      expect(initialAllocations.some((a) => a.type_id === TRITANIUM_TYPE_ID)).toBe(true);
+
+      // Now run targeted reconciliation on Tritanium ONLY
+      const tritResult = roiService.autoReconcileFifo({ characterId: CHAR_ID, typeId: TRITANIUM_TYPE_ID });
+      expect(tritResult.allocations_created).toBe(1);
+
+      // CRITICAL CONTRACT: PLEX allocations MUST NOT be deleted!
+      const afterTargetedAllocations = roiRepository.listAllocations(CHAR_ID);
+      expect(afterTargetedAllocations.length).toBe(2);
+      const plexAlloc = afterTargetedAllocations.find((a) => a.type_id === PLEX_TYPE_ID);
+      expect(plexAlloc).toBeDefined();
+      expect(plexAlloc?.sell_transaction_id).toBe(102);
+
+      const tritAlloc = afterTargetedAllocations.find((a) => a.type_id === TRITANIUM_TYPE_ID);
+      expect(tritAlloc).toBeDefined();
+      expect(tritAlloc?.sell_transaction_id).toBe(202);
+    });
+
+    it('getSummary with date filter does not attribute fees or costs from out-of-period historical allocations', () => {
+      // Historical sale in February
+      const febBuy = makeTx({
+        transactionId: 301,
+        characterId: CHAR_ID,
+        date: '2026-02-01T08:00:00Z',
+        isBuy: true,
+        locationId: 60003760,
+        quantity: 10,
+        typeId: TRITANIUM_TYPE_ID,
+        typeName: 'Tritanium',
+        unitPrice: 100,
+      });
+      const febSell = makeTx({
+        transactionId: 302,
+        characterId: CHAR_ID,
+        date: '2026-02-02T08:00:00Z',
+        isBuy: false,
+        locationId: 60003760,
+        quantity: 10,
+        typeId: TRITANIUM_TYPE_ID,
+        typeName: 'Tritanium',
+        unitPrice: 150,
+      });
+      const febSellFee = makeJournal({
+        journalId: 3001,
+        characterId: CHAR_ID,
+        date: '2026-02-02T08:00:00Z',
+        refType: 'transaction_tax',
+        amount: -50,
+        contextId: 302,
+      });
+
+      // Recent sale in March
+      const marBuy = makeTx({
+        transactionId: 401,
+        characterId: CHAR_ID,
+        date: '2026-03-01T08:00:00Z',
+        isBuy: true,
+        locationId: 60003760,
+        quantity: 20,
+        typeId: TRITANIUM_TYPE_ID,
+        typeName: 'Tritanium',
+        unitPrice: 100,
+      });
+      const marSell = makeTx({
+        transactionId: 402,
+        characterId: CHAR_ID,
+        date: '2026-03-02T08:00:00Z',
+        isBuy: false,
+        locationId: 60003760,
+        quantity: 20,
+        typeId: TRITANIUM_TYPE_ID,
+        typeName: 'Tritanium',
+        unitPrice: 200,
+      });
+
+      ledgerRepository.saveTransactions([febBuy, febSell, marBuy, marSell]);
+      ledgerRepository.saveJournalEntries([febSellFee]);
+
+      roiService.autoReconcileFifo({ characterId: CHAR_ID });
+
+      // Request summary ONLY for March
+      const marchSummary = roiService.getSummary({
+        character_id: CHAR_ID,
+        start_date: '2026-03-01T00:00:00Z',
+        end_date: '2026-03-31T23:59:59Z',
+      });
+
+      expect(marchSummary.total_sales_volume).toBe(20);
+      expect(marchSummary.allocated_sales_volume).toBe(20);
+      expect(marchSummary.gross_revenue_isk).toBe(4000); // 20 * 200
+      expect(marchSummary.allocated_buy_cost_isk).toBe(2000); // 20 * 100
+      // Fees from Feb (50 ISK) must NOT leak into March summary
+      expect(marchSummary.attributable_sell_fees_isk).toBe(0);
+      expect(marchSummary.realized_profit_ttc_isk).toBe(2000); // 4000 - 2000
+    });
+
+    it('computeSummary strictly excludes orphan allocations without valid sell transactions', () => {
+      // 1. Setup a valid sale of 50 units
+      const validSell = makeTx({
+        transactionId: 501,
+        characterId: CHAR_ID,
+        date: '2026-03-05T10:00:00Z',
+        isBuy: false,
+        quantity: 50,
+        typeId: TRITANIUM_TYPE_ID,
+        typeName: 'Tritanium',
+        unitPrice: 10,
+        locationId: 60003760,
+      });
+
+      // 2. Valid allocation for transaction 501
+      const validAlloc: ExplicitCostAllocation = {
+        id: 'valid-alloc-1',
+        character_id: CHAR_ID,
+        sell_character_id: CHAR_ID,
+        sell_transaction_id: 501,
+        source_type: 'TRANSACTION',
+        buy_transaction_id: 201,
+        type_id: TRITANIUM_TYPE_ID,
+        type_name: 'Tritanium',
+        quantity_allocated: 50,
+        unit_buy_price: 6,
+        allocated_buy_cost: 300,
+        allocated_buy_fees: 10,
+        allocated_sell_fees: 15,
+        buy_location_id: 60003760,
+        buy_hub_id: 'hub-jita',
+        buy_hub_name: 'Jita 4-4',
+        sell_location_id: 60003760,
+        sell_hub_id: 'hub-jita',
+        sell_hub_name: 'Jita 4-4',
+        reconciliation_mode: 'FIFO_AUTOMATIC',
+        created_at: '2026-03-05T10:05:00Z',
+        updated_at: '2026-03-05T10:05:00Z',
+        version: 1,
+      };
+
+      // 3. Orphan allocation pointing to a non-existent sell transaction 99999
+      const orphanAlloc: ExplicitCostAllocation = {
+        id: 'orphan-alloc-999',
+        character_id: CHAR_ID,
+        sell_character_id: CHAR_ID,
+        sell_transaction_id: 99999, // Does not exist in salesTransactions
+        source_type: 'TRANSACTION',
+        buy_transaction_id: 202,
+        type_id: TRITANIUM_TYPE_ID,
+        type_name: 'Tritanium',
+        quantity_allocated: 100,
+        unit_buy_price: 5,
+        allocated_buy_cost: 500, // Should NOT be added
+        allocated_buy_fees: 50, // Should NOT be added
+        allocated_sell_fees: 40, // Should NOT be added
+        buy_location_id: 60003760,
+        buy_hub_id: 'hub-jita',
+        buy_hub_name: 'Jita 4-4',
+        sell_location_id: 60003760,
+        sell_hub_id: 'hub-jita',
+        sell_hub_name: 'Jita 4-4',
+        reconciliation_mode: 'FIFO_AUTOMATIC',
+        created_at: '2026-03-05T10:05:00Z',
+        updated_at: '2026-03-05T10:05:00Z',
+        version: 1,
+      };
+
+      const summary = RoiCalculator.computeSummary(
+        [validSell],
+        [validAlloc, orphanAlloc],
+        [],
+        CHAR_ID
+      );
+
+      // Orphan allocation MUST NOT pollute totals
+      expect(summary.total_sales_volume).toBe(50);
+      expect(summary.allocated_sales_volume).toBe(50);
+      expect(summary.gross_revenue_isk).toBe(500); // 50 * 10
+      expect(summary.allocated_buy_cost_isk).toBe(300);
+      expect(summary.allocated_buy_fees_isk).toBe(10);
+      expect(summary.attributable_sell_fees_isk).toBe(15);
+      expect(summary.total_allocated_investment_ttc).toBe(310);
+      // Profit = 500 - 300 - 10 - 15 = 175
+      expect(summary.realized_profit_ttc_isk).toBe(175);
+      // ROI = (175 / 310) * 100 = 56.45%
+      expect(summary.roi_percent_ttc).toBe(56.45);
+      expect(summary.coverage_status).toBe('COMPLETE');
+    });
+  });
+
+  describe('Isolated JSON Persistence Atomicity & Rollback Verification', () => {
+    let tempDir: string;
+    let tempStorePath: string;
+
+    beforeEach(async () => {
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const os = await import('node:os');
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'eve-roi-atomic-test-'));
+      tempStorePath = path.join(tempDir, 'test_store.json');
+    });
+
+    it('guarantees complete rollback in Memory Map, Adapter State, and Disk JSON when replaceAutoAllocations persistence fails', async () => {
+      const fs = await import('node:fs');
+      const { DurableFileDatabaseAdapter } = await import('../storage/database.ts');
+      const { PersistentRoiRepository } = await import('./repository.ts');
+      const { PersistentLedgerRepository } = await import('../ledger/repository.ts');
+
+      const adapter = new DurableFileDatabaseAdapter(tempStorePath);
+      adapter.init();
+
+      const testLedgerRepo = new PersistentLedgerRepository(adapter);
+      const testRoiRepo = new PersistentRoiRepository(testLedgerRepo, adapter);
+
+      // 1. Populate initial state with an allocation
+      const initialAlloc: ExplicitCostAllocation = {
+        id: 'initial-alloc-1',
+        character_id: CHAR_ID,
+        sell_character_id: CHAR_ID,
+        sell_transaction_id: 1001,
+        source_type: 'TRANSACTION',
+        buy_transaction_id: 2001,
+        type_id: TRITANIUM_TYPE_ID,
+        type_name: 'Tritanium',
+        quantity_allocated: 50,
+        unit_buy_price: 4.0,
+        allocated_buy_cost: 200,
+        allocated_buy_fees: 5,
+        allocated_sell_fees: 10,
+        buy_location_id: 60003760,
+        buy_hub_id: 'hub-jita',
+        buy_hub_name: 'Jita 4-4',
+        sell_location_id: 60003760,
+        sell_hub_id: 'hub-jita',
+        sell_hub_name: 'Jita 4-4',
+        reconciliation_mode: 'FIFO_AUTOMATIC',
+        created_at: '2026-03-01T08:00:00Z',
+        updated_at: '2026-03-01T08:00:00Z',
+        version: 1,
+      };
+
+      testRoiRepo.replaceAutoAllocations({
+        characterId: CHAR_ID,
+        allocations: [initialAlloc],
+      });
+
+      // Verify baseline persistence across all layers
+      expect(testRoiRepo.listAllocations(CHAR_ID).length).toBe(1);
+      expect(adapter.getState().data.roi.allocations.length).toBe(1);
+      const rawDiskInitial = JSON.parse(fs.readFileSync(tempStorePath, 'utf8'));
+      expect(rawDiskInitial.data.roi.allocations.length).toBe(1);
+      expect(rawDiskInitial.data.roi.allocations[0].id).toBe('initial-alloc-1');
+
+      // 2. Simulate persistence failure during replaceAutoAllocations
+      // Mock persist() to simulate a disk/rename crash
+      const originalPersist = adapter.persist.bind(adapter);
+      adapter.persist = () => {
+        throw new Error('SIMULATED_DISK_WRITE_FAILURE');
+      };
+
+      const replacementAlloc: ExplicitCostAllocation = {
+        id: 'replacement-alloc-2',
+        character_id: CHAR_ID,
+        sell_character_id: CHAR_ID,
+        sell_transaction_id: 1001,
+        source_type: 'TRANSACTION',
+        buy_transaction_id: 2001,
+        type_id: TRITANIUM_TYPE_ID,
+        type_name: 'Tritanium',
+        quantity_allocated: 100,
+        unit_buy_price: 4.0,
+        allocated_buy_cost: 400,
+        allocated_buy_fees: 10,
+        allocated_sell_fees: 20,
+        buy_location_id: 60003760,
+        buy_hub_id: 'hub-jita',
+        buy_hub_name: 'Jita 4-4',
+        sell_location_id: 60003760,
+        sell_hub_id: 'hub-jita',
+        sell_hub_name: 'Jita 4-4',
+        reconciliation_mode: 'FIFO_AUTOMATIC',
+        created_at: '2026-03-01T09:00:00Z',
+        updated_at: '2026-03-01T09:00:00Z',
+        version: 1,
+      };
+
+      // 3. Execution MUST throw the error
+      expect(() => {
+        testRoiRepo.replaceAutoAllocations({
+          characterId: CHAR_ID,
+          allocations: [replacementAlloc],
+        });
+      }).toThrow('SIMULATED_DISK_WRITE_FAILURE');
+
+      // 4. Verify Layer 1: In-memory repository Map rolled back to initial state
+      const memoryAllocs = testRoiRepo.listAllocations(CHAR_ID);
+      expect(memoryAllocs.length).toBe(1);
+      expect(memoryAllocs[0].id).toBe('initial-alloc-1');
+      expect(memoryAllocs[0].quantity_allocated).toBe(50);
+
+      // 5. Verify Layer 2: Adapter internal state rolled back
+      const adapterStateAllocs = adapter.getState().data.roi.allocations;
+      expect(adapterStateAllocs.length).toBe(1);
+      expect(adapterStateAllocs[0].id).toBe('initial-alloc-1');
+
+      // 6. Verify Layer 3: Disk JSON untouched
+      const rawDiskAfterFailure = JSON.parse(fs.readFileSync(tempStorePath, 'utf8'));
+      expect(rawDiskAfterFailure.data.roi.allocations.length).toBe(1);
+      expect(rawDiskAfterFailure.data.roi.allocations[0].id).toBe('initial-alloc-1');
+
+      // 7. Verify Layer 4: Simulated server reboot / new repository instantiation
+      adapter.persist = originalPersist;
+      const rebootedAdapter = new DurableFileDatabaseAdapter(tempStorePath);
+      rebootedAdapter.init();
+      const rebootedLedgerRepo = new PersistentLedgerRepository(rebootedAdapter);
+      const rebootedRoiRepo = new PersistentRoiRepository(rebootedLedgerRepo, rebootedAdapter);
+
+      const rebootedAllocs = rebootedRoiRepo.listAllocations(CHAR_ID);
+      expect(rebootedAllocs.length).toBe(1);
+      expect(rebootedAllocs[0].id).toBe('initial-alloc-1');
+      expect(rebootedAllocs[0].quantity_allocated).toBe(50);
+
+      // Clean up temp directory
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    it('repeated idempotent reconciliations maintain identical deterministic financial metrics', () => {
+      // 1. Setup multi-character purchases and sales
+      const char1Buy = makeTx({
+        transactionId: 801,
+        characterId: CHAR_ID,
+        date: '2026-03-01T08:00:00Z',
+        isBuy: true,
+        locationId: 60003760,
+        quantity: 100,
+        typeId: TRITANIUM_TYPE_ID,
+        typeName: 'Tritanium',
+        unitPrice: 5.0,
+      });
+
+      const char2Buy = makeTx({
+        transactionId: 802,
+        characterId: OTHER_CHAR_ID,
+        date: '2026-03-01T08:30:00Z',
+        isBuy: true,
+        locationId: 60003760,
+        quantity: 100,
+        typeId: TRITANIUM_TYPE_ID,
+        typeName: 'Tritanium',
+        unitPrice: 5.5,
+      });
+
+      const char1Sell = makeTx({
+        transactionId: 803,
+        characterId: CHAR_ID,
+        date: '2026-03-01T12:00:00Z',
+        isBuy: false,
+        locationId: 60003760,
+        quantity: 150,
+        typeId: TRITANIUM_TYPE_ID,
+        typeName: 'Tritanium',
+        unitPrice: 8.0,
+      });
+
+      ledgerRepository.saveTransactions([char1Buy, char2Buy, char1Sell]);
+
+      // First reconciliation across ecosystem
+      const res1 = roiService.autoReconcileFifo({ characterIds: [CHAR_ID, OTHER_CHAR_ID] });
+      const summary1 = roiService.getSummary({ character_ids: [CHAR_ID, OTHER_CHAR_ID] });
+
+      expect(res1.allocations_created).toBe(2);
+      expect(summary1.total_sales_volume).toBe(150);
+      expect(summary1.allocated_sales_volume).toBe(150);
+      expect(summary1.gross_revenue_isk).toBe(1200); // 150 * 8
+      // Char 1 buy (100 * 5 = 500) + Char 2 buy (50 * 5.5 = 275) = 775
+      expect(summary1.allocated_buy_cost_isk).toBe(775);
+      expect(summary1.realized_profit_ttc_isk).toBe(425); // 1200 - 775
+
+      // Second reconciliation run with identical input
+      const res2 = roiService.autoReconcileFifo({ characterIds: [CHAR_ID, OTHER_CHAR_ID] });
+      const summary2 = roiService.getSummary({ character_ids: [CHAR_ID, OTHER_CHAR_ID] });
+
+      // Must produce identical allocation count and exact financial match
+      expect(res2.allocations_created).toBe(2);
+      expect(summary2.gross_revenue_isk).toBe(summary1.gross_revenue_isk);
+      expect(summary2.allocated_buy_cost_isk).toBe(summary1.allocated_buy_cost_isk);
+      expect(summary2.realized_profit_ttc_isk).toBe(summary1.realized_profit_ttc_isk);
+      expect(summary2.roi_percent_ttc).toBe(summary1.roi_percent_ttc);
+    });
   });
 });
+

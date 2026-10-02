@@ -263,14 +263,18 @@ export class RoiCalculator {
     }>();
 
     for (const alloc of allocations) {
+      const sellTx = salesTxMap.get(alloc.sell_transaction_id);
+      // Invariant: Do not impute costs/fees/revenue for allocations whose sale transaction is not in the evaluated sales scope (or orphan)
+      if (!sellTx) {
+        continue;
+      }
+
       allocatedSalesVolume += alloc.quantity_allocated;
       allocatedBuyCostIsk += alloc.allocated_buy_cost;
       allocatedBuyFeesIsk += alloc.allocated_buy_fees;
       attributableSellFeesIsk += alloc.allocated_sell_fees;
 
-      const sellTx = salesTxMap.get(alloc.sell_transaction_id);
-      const sellUnitPrice = sellTx ? sellTx.unitPrice : alloc.unit_buy_price;
-      const allocGross = sellUnitPrice * alloc.quantity_allocated;
+      const allocGross = sellTx.unitPrice * alloc.quantity_allocated;
       allocatedSalesGrossRevenue += allocGross;
 
       // Hub pair key

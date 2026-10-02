@@ -374,8 +374,7 @@ export class RoiService {
       transactions = transactions.filter((t) => set.has(t.characterId));
     }
 
-    // 2. Clear previous automatic FIFO allocations for target scope
-    this.repo.clearAutoAllocations(params.characterId, params.characterIds);
+    // 2. Clear previous automatic FIFO allocations is handled atomically in replaceAutoAllocations at step 6
 
     // 3. Fetch Candidate Purchase Stocks: Transactions + Opening Balances
     interface CandidateLot {
@@ -602,10 +601,13 @@ export class RoiService {
       }
     }
 
-    // Persist all new allocations in a single atomic batch
-    if (newAllocations.length > 0) {
-      this.repo.saveAllocations(newAllocations);
-    }
+    // 6. Atomically replace automatic FIFO allocations for target scope
+    this.repo.replaceAutoAllocations({
+      characterId: params.characterId,
+      characterIds: params.characterIds,
+      typeId: params.typeId,
+      allocations: newAllocations,
+    });
 
     const assetStockMsg = salesWithAssetStock > 0
       ? ` (${salesWithAssetStock} ventes disposent de stocks réels identifiés dans les actifs ESI)`
@@ -708,9 +710,11 @@ export class RoiService {
     }
 
     const salesTransactions = transactions.filter((t) => !t.isBuy);
+    const salesTxIds = new Set(salesTransactions.map((t) => t.transactionId));
 
-    // Filter allocations
+    // Filter allocations to match the evaluated sales scope
     let allocations = this.repo.listAllocations(character_id, character_ids);
+    allocations = allocations.filter((a) => salesTxIds.has(a.sell_transaction_id));
     if (type_id) {
       allocations = allocations.filter((a) => a.type_id === type_id);
     }

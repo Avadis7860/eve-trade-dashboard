@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { InMemoryLedgerRepository } from './repository.ts';
 import { LedgerService } from './service.ts';
 import type { CharacterTransaction, CharacterWalletJournalEntry } from './types.ts';
+import { makeJournalEntryKey } from './types.ts';
 
 describe('Ledger Module (Phase 03 - Sales Ledger)', () => {
   let repo: InMemoryLedgerRepository;
@@ -321,5 +322,233 @@ describe('Ledger Module (Phase 03 - Sales Ledger)', () => {
     // Verify getAllTransactions returns the full dataset (all 600 items)
     const all = repo.getAllTransactions(1001);
     expect(all.length).toBe(600);
+  });
+
+  describe('Phase F06 — Corporation Journal Deduplication (TEST-F06-01 to TEST-F06-04)', () => {
+    it('TEST-F06-01: Saves the same corporation journal entry by 2 distinct characters idempotently (inserted: 1, updated: 1, 1 record stored)', () => {
+      const corpId = 98830;
+      const division = 1;
+      const journalId = 789456;
+
+      const entryCharA: CharacterWalletJournalEntry = {
+        id: makeJournalEntryKey({ isCorporationWallet: true, corporationId: corpId, division, characterId: 1001, journalId }),
+        characterId: 1001,
+        journalId,
+        date: '2026-09-30T12:00:00Z',
+        refType: 'transaction_tax',
+        amount: -50000,
+        tax: 50000,
+        description: 'Corp Tax Division 1',
+        source: `/corporations/${corpId}/wallets/${division}/journal/`,
+        observedAt: 1759235200000,
+        isCorporationWallet: true,
+        corporationId: corpId,
+        division,
+        observedByCharacterIds: [1001],
+      };
+
+      const entryCharB: CharacterWalletJournalEntry = {
+        id: makeJournalEntryKey({ isCorporationWallet: true, corporationId: corpId, division, characterId: 1002, journalId }),
+        characterId: 1002,
+        journalId,
+        date: '2026-09-30T12:00:00Z',
+        refType: 'transaction_tax',
+        amount: -50000,
+        tax: 50000,
+        description: 'Corp Tax Division 1',
+        source: `/corporations/${corpId}/wallets/${division}/journal/`,
+        observedAt: 1759235250000,
+        isCorporationWallet: true,
+        corporationId: corpId,
+        division,
+        observedByCharacterIds: [1002],
+      };
+
+      // 1. Character A imports the corporation journal entry
+      const resA = repo.saveJournalEntries([entryCharA]);
+      expect(resA.inserted).toBe(1);
+      expect(resA.updated).toBe(0);
+
+      // Dump to check total unique storage
+      const dump1 = repo.dumpData();
+      expect(dump1.journalEntries).toHaveLength(1);
+      expect(dump1.journalEntries[0].id).toBe(`corp:${corpId}:${division}:${journalId}`);
+      expect(dump1.journalEntries[0].observedByCharacterIds).toContain(1001);
+
+      // 2. Character B imports the exact same corporation journal entry
+      const resB = repo.saveJournalEntries([entryCharB]);
+      expect(resB.inserted).toBe(0);
+      expect(resB.updated).toBe(1);
+
+      // Total stored entries remains 1 (no duplicate)
+      const dump2 = repo.dumpData();
+      expect(dump2.journalEntries).toHaveLength(1);
+      expect(dump2.journalEntries[0].id).toBe(`corp:${corpId}:${division}:${journalId}`);
+      // Both character observers are recorded in audit trace
+      expect(dump2.journalEntries[0].observedByCharacterIds).toContain(1001);
+      expect(dump2.journalEntries[0].observedByCharacterIds).toContain(1002);
+
+      // Both character queries can see the entry without collision
+      const listA = repo.getJournalEntries(1001);
+      expect(listA.total).toBe(1);
+      const listB = repo.getJournalEntries(1002);
+      expect(listB.total).toBe(1);
+    });
+
+    it('TEST-F06-02: Aggregates ledger summary for an account with 3 characters in the same corp with exact single tax (not 3x)', () => {
+      const corpId = 98830;
+      const division = 1;
+      const taxJournalId = 90050;
+      const taxAmount = 75000;
+
+      // Character 1, 2, 3 in same corp observe the same corp tax
+      const entryChar1: CharacterWalletJournalEntry = {
+        id: makeJournalEntryKey({ isCorporationWallet: true, corporationId: corpId, division, characterId: 1001, journalId: taxJournalId }),
+        characterId: 1001,
+        journalId: taxJournalId,
+        date: '2026-09-30T12:00:00Z',
+        refType: 'transaction_tax',
+        amount: -taxAmount,
+        tax: taxAmount,
+        description: 'Corp Sales Tax',
+        source: `/corporations/${corpId}/wallets/${division}/journal/`,
+        observedAt: 1759235200000,
+        isCorporationWallet: true,
+        corporationId: corpId,
+        division,
+        observedByCharacterIds: [1001],
+      };
+
+      const entryChar2: CharacterWalletJournalEntry = {
+        ...entryChar1,
+        characterId: 1002,
+        observedByCharacterIds: [1002],
+      };
+
+      const entryChar3: CharacterWalletJournalEntry = {
+        ...entryChar1,
+        characterId: 1003,
+        observedByCharacterIds: [1003],
+      };
+
+      // Save from all 3 characters
+      repo.saveJournalEntries([entryChar1]);
+      repo.saveJournalEntries([entryChar2]);
+      repo.saveJournalEntries([entryChar3]);
+
+      // Add a sale transaction for Character 1
+      const saleTx: CharacterTransaction = {
+        id: '1001:50099',
+        characterId: 1001,
+        transactionId: 50099,
+        date: '2026-09-30T12:00:00Z',
+        typeId: 34,
+        typeName: 'Tritanium',
+        quantity: 10000,
+        unitPrice: 100,
+        totalValue: 1000000,
+        isBuy: false,
+        isPersonal: true,
+        journalRefId: taxJournalId,
+        locationId: 60003760,
+        clientId: 2001,
+        source: '/test',
+        observedAt: 1759235200000,
+      };
+      repo.saveTransactions([saleTx]);
+
+      // Summary across the 3 characters of the account
+      const multiCharSummary = repo.getSummary(undefined, [1001, 1002, 1003]);
+      expect(multiCharSummary.totalTaxesIsk).toBe(taxAmount); // Exactly 75,000 ISK, NOT 225,000 ISK (3x)!
+      expect(multiCharSummary.totalGrossSalesIsk).toBe(1000000);
+      expect(multiCharSummary.totalNetSalesIsk).toBe(1000000 - taxAmount);
+    });
+
+    it('TEST-F06-03: Saves 2 entries with same journalId in 2 different divisions as 2 distinct records', () => {
+      const corpId = 98830;
+      const journalId = 101;
+
+      const div1Entry: CharacterWalletJournalEntry = {
+        id: makeJournalEntryKey({ isCorporationWallet: true, corporationId: corpId, division: 1, characterId: 1001, journalId }),
+        characterId: 1001,
+        journalId,
+        date: '2026-09-30T10:00:00Z',
+        refType: 'transaction_tax',
+        amount: -10000,
+        tax: 10000,
+        description: 'Division 1 tax',
+        source: `/corporations/${corpId}/wallets/1/journal/`,
+        observedAt: Date.now(),
+        isCorporationWallet: true,
+        corporationId: corpId,
+        division: 1,
+      };
+
+      const div2Entry: CharacterWalletJournalEntry = {
+        id: makeJournalEntryKey({ isCorporationWallet: true, corporationId: corpId, division: 2, characterId: 1001, journalId }),
+        characterId: 1001,
+        journalId,
+        date: '2026-09-30T10:00:00Z',
+        refType: 'transaction_tax',
+        amount: -20000,
+        tax: 20000,
+        description: 'Division 2 tax',
+        source: `/corporations/${corpId}/wallets/2/journal/`,
+        observedAt: Date.now(),
+        isCorporationWallet: true,
+        corporationId: corpId,
+        division: 2,
+      };
+
+      const saveRes = repo.saveJournalEntries([div1Entry, div2Entry]);
+      expect(saveRes.inserted).toBe(2);
+      expect(saveRes.updated).toBe(0);
+
+      const dump = repo.dumpData();
+      expect(dump.journalEntries).toHaveLength(2);
+      expect(dump.journalEntries.map((e) => e.id)).toContain(`corp:${corpId}:1:${journalId}`);
+      expect(dump.journalEntries.map((e) => e.id)).toContain(`corp:${corpId}:2:${journalId}`);
+    });
+
+    it('TEST-F06-04: Saves personal journal and corp journal having same ESI id as 2 distinct records', () => {
+      const charId = 2124224223;
+      const corpId = 98830;
+      const sharedEsiId = 500;
+
+      const personalEntry: CharacterWalletJournalEntry = {
+        id: makeJournalEntryKey({ characterId: charId, journalId: sharedEsiId }),
+        characterId: charId,
+        journalId: sharedEsiId,
+        date: '2026-09-30T11:00:00Z',
+        refType: 'market_transaction',
+        amount: 250000,
+        description: 'Personal Sale',
+        source: `/characters/${charId}/wallet/journal/`,
+        observedAt: Date.now(),
+      };
+
+      const corpEntry: CharacterWalletJournalEntry = {
+        id: makeJournalEntryKey({ isCorporationWallet: true, corporationId: corpId, division: 1, characterId: charId, journalId: sharedEsiId }),
+        characterId: charId,
+        journalId: sharedEsiId,
+        date: '2026-09-30T11:00:00Z',
+        refType: 'brokers_fee',
+        amount: -15000,
+        description: 'Corp Broker Fee',
+        source: `/corporations/${corpId}/wallets/1/journal/`,
+        observedAt: Date.now(),
+        isCorporationWallet: true,
+        corporationId: corpId,
+        division: 1,
+      };
+
+      const saveRes = repo.saveJournalEntries([personalEntry, corpEntry]);
+      expect(saveRes.inserted).toBe(2);
+
+      const dump = repo.dumpData();
+      expect(dump.journalEntries).toHaveLength(2);
+      expect(dump.journalEntries.map((e) => e.id)).toContain(`char:${charId}:${sharedEsiId}`);
+      expect(dump.journalEntries.map((e) => e.id)).toContain(`corp:${corpId}:1:${sharedEsiId}`);
+    });
   });
 });

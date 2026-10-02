@@ -15,6 +15,14 @@ export type SyncResourceType =
 
 export type SyncStatusState = 'IDLE' | 'SYNCING' | 'COMPLETE' | 'PARTIAL' | 'ERROR' | 'UNKNOWN' | 'ABSENT';
 
+export interface DivisionSyncStatus {
+  status: SyncStatusState;
+  lastPage: number;
+  hasMore: boolean;
+  error?: string;
+  totalFetched?: number;
+}
+
 export interface SyncState {
   characterId: number;
   resource: SyncResourceType;
@@ -25,6 +33,7 @@ export interface SyncState {
   lastSyncCompletedAt?: number;
   lastSuccessfulId?: number; // Cursor from_id for transactions pagination
   lastPage?: number; // Cursor page for x-pages pagination
+  divisionStatuses?: Record<number, DivisionSyncStatus>;
   totalRecords: number;
   newRecordsInLastSync: number;
   itemsCount?: number;
@@ -49,6 +58,7 @@ export interface SyncResult {
   status: SyncStatusState;
   coverageStatus?: EsiCompleteness;
   hasMore?: boolean;
+  divisionStatuses?: Record<number, DivisionSyncStatus>;
   itemsFetched: number;
   newItemsPersisted: number;
   totalPersisted: number;

@@ -6,6 +6,7 @@ import type {
   LedgerSummary,
   LedgerFilterOptions,
 } from './types.ts';
+import { makeJournalEntryKey } from './types.ts';
 import { StorageManager, DurableFileDatabaseAdapter } from '../storage/database.ts';
 import type { IDatabaseAdapter } from '../storage/types.ts';
 
@@ -46,6 +47,7 @@ export class PersistentLedgerRepository implements ILedgerRepository {
   private txByType: Map<number, Set<string>> = new Map();
   private txByLocation: Map<number, Set<string>> = new Map();
   private jnByCharacter: Map<number, Set<string>> = new Map();
+  private jnByCorporation: Map<number, Set<string>> = new Map();
 
   constructor(private adapter: IDatabaseAdapter | null = null) {
     if (this.adapter) {
@@ -77,10 +79,6 @@ export class PersistentLedgerRepository implements ILedgerRepository {
     return `${characterId}:${transactionId}`;
   }
 
-  private makeJournalKey(characterId: number, journalId: number): string {
-    return `${characterId}:${journalId}`;
-  }
-
   private indexTransaction(key: string, tx: CharacterTransaction): void {
     if (!this.txByCharacter.has(tx.characterId)) {
       this.txByCharacter.set(tx.characterId, new Set());
@@ -105,14 +103,40 @@ export class PersistentLedgerRepository implements ILedgerRepository {
   }
 
   private indexJournal(key: string, jn: CharacterWalletJournalEntry): void {
-    if (!this.jnByCharacter.has(jn.characterId)) {
-      this.jnByCharacter.set(jn.characterId, new Set());
+    if (jn.characterId) {
+      if (!this.jnByCharacter.has(jn.characterId)) {
+        this.jnByCharacter.set(jn.characterId, new Set());
+      }
+      this.jnByCharacter.get(jn.characterId)!.add(key);
     }
-    this.jnByCharacter.get(jn.characterId)!.add(key);
+    if (jn.observedByCharacterIds) {
+      for (const cid of jn.observedByCharacterIds) {
+        if (!this.jnByCharacter.has(cid)) {
+          this.jnByCharacter.set(cid, new Set());
+        }
+        this.jnByCharacter.get(cid)!.add(key);
+      }
+    }
+    if (jn.isCorporationWallet && jn.corporationId) {
+      if (!this.jnByCorporation.has(jn.corporationId)) {
+        this.jnByCorporation.set(jn.corporationId, new Set());
+      }
+      this.jnByCorporation.get(jn.corporationId)!.add(key);
+    }
   }
 
   private unindexJournal(key: string, jn: CharacterWalletJournalEntry): void {
-    this.jnByCharacter.get(jn.characterId)?.delete(key);
+    if (jn.characterId) {
+      this.jnByCharacter.get(jn.characterId)?.delete(key);
+    }
+    if (jn.observedByCharacterIds) {
+      for (const cid of jn.observedByCharacterIds) {
+        this.jnByCharacter.get(cid)?.delete(key);
+      }
+    }
+    if (jn.isCorporationWallet && jn.corporationId) {
+      this.jnByCorporation.get(jn.corporationId)?.delete(key);
+    }
   }
 
   public saveTransactions(transactions: CharacterTransaction[]): { inserted: number; updated: number } {
@@ -390,13 +414,35 @@ export class PersistentLedgerRepository implements ILedgerRepository {
     let updated = 0;
 
     for (const entry of entries) {
-      const key = entry.id || this.makeJournalKey(entry.characterId, entry.journalId);
+      const key = entry.id || makeJournalEntryKey(entry);
+      const normalizedEntry: CharacterWalletJournalEntry = {
+        ...entry,
+        id: key,
+      };
+
       if (this.journalEntries.has(key)) {
-        this.journalEntries.set(key, entry);
+        const existing = this.journalEntries.get(key)!;
+        this.unindexJournal(key, existing);
+        const observedBy = new Set(existing.observedByCharacterIds || (existing.characterId ? [existing.characterId] : []));
+        if (normalizedEntry.characterId) observedBy.add(normalizedEntry.characterId);
+        if (normalizedEntry.observedByCharacterIds) {
+          for (const cid of normalizedEntry.observedByCharacterIds) observedBy.add(cid);
+        }
+        const updatedEntry: CharacterWalletJournalEntry = {
+          ...existing,
+          ...normalizedEntry,
+          observedAt: existing.observedAt,
+          observedByCharacterIds: Array.from(observedBy),
+        };
+        this.journalEntries.set(key, updatedEntry);
+        this.indexJournal(key, updatedEntry);
         updated++;
       } else {
-        this.journalEntries.set(key, entry);
-        this.indexJournal(key, entry);
+        if (!normalizedEntry.observedByCharacterIds && normalizedEntry.characterId) {
+          normalizedEntry.observedByCharacterIds = [normalizedEntry.characterId];
+        }
+        this.journalEntries.set(key, normalizedEntry);
+        this.indexJournal(key, normalizedEntry);
         inserted++;
       }
     }
@@ -436,8 +482,22 @@ export class PersistentLedgerRepository implements ILedgerRepository {
   }
 
   public getJournalEntryById(characterId: number, journalId: number): CharacterWalletJournalEntry | null {
-    const key = this.makeJournalKey(characterId, journalId);
-    return this.journalEntries.get(key) || null;
+    const personalKey = `char:${characterId}:${journalId}`;
+    if (this.journalEntries.has(personalKey)) {
+      return this.journalEntries.get(personalKey)!;
+    }
+    const legacyKey = `${characterId}:${journalId}`;
+    if (this.journalEntries.has(legacyKey)) {
+      return this.journalEntries.get(legacyKey)!;
+    }
+    const charKeys = this.jnByCharacter.get(characterId);
+    if (charKeys) {
+      for (const key of charKeys) {
+        const jn = this.journalEntries.get(key);
+        if (jn && jn.journalId === journalId) return jn;
+      }
+    }
+    return null;
   }
 
   public getAllTransactions(characterId?: number, characterIds?: number[]): CharacterTransaction[] {
@@ -590,13 +650,20 @@ export class PersistentLedgerRepository implements ILedgerRepository {
     if (characterId !== undefined && !filterSet) {
       const keys = this.jnByCharacter.get(characterId) || [];
       candidateJns = Array.from(keys).map((k) => this.journalEntries.get(k)!).filter(Boolean);
+    } else if (filterSet) {
+      const uniqueKeys = new Set<string>();
+      for (const cid of filterSet) {
+        const keys = this.jnByCharacter.get(cid);
+        if (keys) {
+          for (const k of keys) uniqueKeys.add(k);
+        }
+      }
+      candidateJns = Array.from(uniqueKeys).map((k) => this.journalEntries.get(k)!).filter(Boolean);
     } else {
       candidateJns = this.journalEntries.values();
     }
 
     for (const jn of candidateJns) {
-      if (filterSet && !filterSet.has(jn.characterId)) continue;
-
       const isTaxRef = jn.refType === 'transaction_tax' || jn.refType === 'market_tax' || jn.refType === 'contract_sales_tax';
       const isBrokerRef = jn.refType === 'brokers_fee' || jn.refType === 'broker_fee' || jn.refType === 'contract_brokers_fee';
 
@@ -690,6 +757,7 @@ export class PersistentLedgerRepository implements ILedgerRepository {
     this.txByType.clear();
     this.txByLocation.clear();
     this.jnByCharacter.clear();
+    this.jnByCorporation.clear();
     this.syncToStorage();
   }
 
@@ -711,8 +779,15 @@ export class PersistentLedgerRepository implements ILedgerRepository {
       for (const key of Array.from(jnKeys)) {
         const jn = this.journalEntries.get(key);
         if (jn) {
-          this.unindexJournal(key, jn);
-          this.journalEntries.delete(key);
+          if (jn.isCorporationWallet && jn.observedByCharacterIds && jn.observedByCharacterIds.length > 1) {
+            jn.observedByCharacterIds = jn.observedByCharacterIds.filter((id) => id !== characterId);
+            if (jn.characterId === characterId && jn.observedByCharacterIds.length > 0) {
+              jn.characterId = jn.observedByCharacterIds[0];
+            }
+          } else {
+            this.unindexJournal(key, jn);
+            this.journalEntries.delete(key);
+          }
         }
       }
       this.jnByCharacter.delete(characterId);
@@ -738,16 +813,37 @@ export class PersistentLedgerRepository implements ILedgerRepository {
     this.txByType.clear();
     this.txByLocation.clear();
     this.jnByCharacter.clear();
+    this.jnByCorporation.clear();
 
     for (const tx of data.transactions) {
-      const key = this.makeTxKey(tx.characterId, tx.transactionId);
+      const key = tx.id || this.makeTxKey(tx.characterId, tx.transactionId);
       this.transactions.set(key, tx);
       this.indexTransaction(key, tx);
     }
     for (const jn of data.journalEntries) {
-      const key = this.makeJournalKey(jn.characterId, jn.journalId);
-      this.journalEntries.set(key, jn);
-      this.indexJournal(key, jn);
+      const key = makeJournalEntryKey(jn);
+      const normalizedJn: CharacterWalletJournalEntry = { ...jn, id: key };
+      if (this.journalEntries.has(key)) {
+        const existing = this.journalEntries.get(key)!;
+        const observedBy = new Set(existing.observedByCharacterIds || (existing.characterId ? [existing.characterId] : []));
+        if (jn.characterId) observedBy.add(jn.characterId);
+        if (jn.observedByCharacterIds) {
+          for (const cid of jn.observedByCharacterIds) observedBy.add(cid);
+        }
+        const merged: CharacterWalletJournalEntry = {
+          ...existing,
+          ...normalizedJn,
+          observedByCharacterIds: Array.from(observedBy),
+        };
+        this.journalEntries.set(key, merged);
+        this.indexJournal(key, merged);
+      } else {
+        if (!normalizedJn.observedByCharacterIds && normalizedJn.characterId) {
+          normalizedJn.observedByCharacterIds = [normalizedJn.characterId];
+        }
+        this.journalEntries.set(key, normalizedJn);
+        this.indexJournal(key, normalizedJn);
+      }
     }
 
     if (sync) {
@@ -800,8 +896,18 @@ export class PostgresLedgerRepository implements ILedgerRepository {
   private mapRowToJournal(row: Record<string, unknown>): CharacterWalletJournalEntry {
     const charId = Number(row.character_id);
     const jnId = Number(row.journal_id);
+    const isCorp = Boolean(row.is_corporation_wallet);
+    const corpId = row.corporation_id ? Number(row.corporation_id) : undefined;
+    const div = row.division ? Number(row.division) : undefined;
+    const id = makeJournalEntryKey({
+      isCorporationWallet: isCorp,
+      corporationId: corpId,
+      division: div,
+      characterId: charId,
+      journalId: jnId,
+    });
     return {
-      id: `${charId}:${jnId}`,
+      id,
       characterId: charId,
       journalId: jnId,
       date: String(row.date),
@@ -816,8 +922,12 @@ export class PostgresLedgerRepository implements ILedgerRepository {
       tax: row.tax !== null && row.tax !== undefined ? Number(row.tax) : undefined,
       contextId: row.context_id ? Number(row.context_id) : undefined,
       contextIdType: row.context_id_type ? String(row.context_id_type) : undefined,
-      source: `esi:/characters/${charId}/wallet/journal/`,
+      source: isCorp && corpId ? `/corporations/${corpId}/wallets/${div || 1}/journal/` : `esi:/characters/${charId}/wallet/journal/`,
       observedAt: Number(row.observed_at || Date.now()),
+      isCorporationWallet: isCorp,
+      corporationId: corpId,
+      division: div,
+      observedByCharacterIds: [charId],
     };
   }
 

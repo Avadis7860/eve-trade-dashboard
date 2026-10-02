@@ -189,6 +189,17 @@ export class PostgresSyncRepository implements ISyncRepository {
   }
 
   private mapRowToSyncState(row: Record<string, unknown>): SyncState {
+    let divisionStatuses: SyncState['divisionStatuses'];
+    if (row.division_statuses) {
+      try {
+        divisionStatuses = typeof row.division_statuses === 'string'
+          ? JSON.parse(row.division_statuses)
+          : (row.division_statuses as SyncState['divisionStatuses']);
+      } catch {
+        divisionStatuses = undefined;
+      }
+    }
+
     return {
       characterId: Number(row.character_id),
       resource: row.resource as SyncState['resource'],
@@ -200,6 +211,7 @@ export class PostgresSyncRepository implements ISyncRepository {
       lastSyncCompletedAt: row.last_sync_completed_at !== null && row.last_sync_completed_at !== undefined ? Number(row.last_sync_completed_at) : undefined,
       lastSuccessfulId: row.last_cursor_from_id !== null && row.last_cursor_from_id !== undefined ? Number(row.last_cursor_from_id) : undefined,
       lastPage: row.last_page_processed !== null && row.last_page_processed !== undefined ? Number(row.last_page_processed) : undefined,
+      divisionStatuses,
       totalRecords: Number(row.total_records || 0),
       newRecordsInLastSync: Number(row.new_records_in_last_sync || 0),
       errorMessage: row.last_error_message ? String(row.last_error_message) : undefined,
@@ -274,9 +286,9 @@ export class PostgresSyncRepository implements ISyncRepository {
         character_id, resource, status, coverage_status, has_more, items_count,
         last_sync_started_at, last_sync_completed_at, last_cursor_from_id,
         last_page_processed, total_records, new_records_in_last_sync,
-        last_error_message, as_of
+        division_statuses, last_error_message, as_of
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
       )
       ON CONFLICT (character_id, resource) DO UPDATE SET
         status = EXCLUDED.status,
@@ -289,6 +301,7 @@ export class PostgresSyncRepository implements ISyncRepository {
         last_page_processed = EXCLUDED.last_page_processed,
         total_records = EXCLUDED.total_records,
         new_records_in_last_sync = EXCLUDED.new_records_in_last_sync,
+        division_statuses = EXCLUDED.division_statuses,
         last_error_message = EXCLUDED.last_error_message,
         as_of = EXCLUDED.as_of
     `;
@@ -305,6 +318,7 @@ export class PostgresSyncRepository implements ISyncRepository {
       updated.lastPage ?? null,
       updated.totalRecords,
       updated.newRecordsInLastSync,
+      updated.divisionStatuses ? JSON.stringify(updated.divisionStatuses) : null,
       updated.errorMessage ?? null,
       updated.asOf,
     ];

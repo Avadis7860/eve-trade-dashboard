@@ -478,4 +478,374 @@ describe('Sync Module (Sales Ledger & Orders Synchronization)', () => {
       expect(status3.freshness).toBe('PARTIAL');
     });
   });
+
+  describe('Phase F05 — Corporation Journal Completeness & Division Pagination (TEST-F05-01 to TEST-F05-07)', () => {
+    function generateMockJournalEntries(startId: number, count: number) {
+      return Array.from({ length: count }, (_, i) => ({
+        id: startId + i,
+        date: '2026-09-30T12:00:00Z',
+        ref_type: 'transaction_tax',
+        amount: -100000.0,
+        balance: 500000000.0,
+        description: `Transaction tax for market sale #${startId + i}`,
+        first_party_id: 1001,
+        second_party_id: 1000132,
+        tax: 100000.0,
+        tax_receiver_id: 1000132,
+        context_id: 2000000 + startId + i,
+        context_id_type: 'market_transaction_id',
+      }));
+    }
+
+    it('TEST-F05-01: Division with 1 single page of journal (50 entries) completes and persists entries without truncation', async () => {
+      const corpId = 9800001;
+      const entries50 = generateMockJournalEntries(1000, 50);
+
+      vi.spyOn(esiClient, 'get').mockImplementation(async (path: string) => {
+        if (path.includes('/characters/1001/')) {
+          return { data: { corporation_id: corpId }, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes('/journal/')) {
+          return { data: entries50, meta: { status: 200, pages: 1, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes('/divisions/')) {
+          return { data: { wallet: [{ division: 1, name: 'Main Treasury' }] }, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes('/wallets/')) {
+          return { data: [{ division: 1, balance: 500000000 }], meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        return { data: [] as never, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } };
+      });
+
+      const result = await syncService.syncCorporationWallets(1001, 'dummy-token');
+
+      expect(result.status).toBe('COMPLETE');
+      expect(result.coverageStatus).toBe('COMPLETE');
+      expect(result.hasMore).toBe(false);
+      expect(result.divisionStatuses?.[1]).toBeDefined();
+      expect(result.divisionStatuses?.[1].status).toBe('COMPLETE');
+      expect(result.divisionStatuses?.[1].lastPage).toBe(1);
+      expect(result.divisionStatuses?.[1].hasMore).toBe(false);
+      expect(result.divisionStatuses?.[1].totalFetched).toBe(50);
+
+      const persisted = ledgerRepo.getJournalEntries(1001, 1, 100);
+      expect(persisted.total).toBe(50);
+    });
+
+    it('TEST-F05-02: Division with 5 pages of journal (250 entries) fetches all pages without hardcoded maxPages=3 truncation', async () => {
+      const corpId = 9800001;
+      const pagesRequested: number[] = [];
+
+      vi.spyOn(esiClient, 'get').mockImplementation(async (path: string, options?: { params?: Record<string, unknown> }) => {
+        if (path.includes('/characters/1001/')) {
+          return { data: { corporation_id: corpId }, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes('/journal/')) {
+          const page = Number(options?.params?.page || 1);
+          pagesRequested.push(page);
+          const entries = generateMockJournalEntries(page * 1000, 50);
+          return { data: entries, meta: { status: 200, pages: 5, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes('/divisions/')) {
+          return { data: { wallet: [{ division: 1, name: 'Main Treasury' }] }, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes('/wallets/')) {
+          return { data: [{ division: 1, balance: 500000000 }], meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        return { data: [] as never, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } };
+      });
+
+      const result = await syncService.syncCorporationWallets(1001, 'dummy-token');
+
+      expect(pagesRequested).toEqual([1, 2, 3, 4, 5]);
+      expect(result.status).toBe('COMPLETE');
+      expect(result.coverageStatus).toBe('COMPLETE');
+      expect(result.hasMore).toBe(false);
+      expect(result.divisionStatuses?.[1].status).toBe('COMPLETE');
+      expect(result.divisionStatuses?.[1].lastPage).toBe(5);
+      expect(result.divisionStatuses?.[1].totalFetched).toBe(250);
+
+      const persisted = ledgerRepo.getJournalEntries(1001, 1, 300);
+      expect(persisted.total).toBe(250);
+    });
+
+    it('TEST-F05-03: Division with pagination interrupted halfway (maxPages: 2 on 5) returns PARTIAL with hasMore=true', async () => {
+      const corpId = 9800001;
+      const pagesRequested: number[] = [];
+
+      vi.spyOn(esiClient, 'get').mockImplementation(async (path: string, options?: { params?: Record<string, unknown> }) => {
+        if (path.includes('/characters/1001/')) {
+          return { data: { corporation_id: corpId }, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes('/journal/')) {
+          const page = Number(options?.params?.page || 1);
+          pagesRequested.push(page);
+          const entries = generateMockJournalEntries(page * 1000, 50);
+          return { data: entries, meta: { status: 200, pages: 5, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes('/divisions/')) {
+          return { data: { wallet: [{ division: 1, name: 'Main Treasury' }] }, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes('/wallets/')) {
+          return { data: [{ division: 1, balance: 500000000 }], meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        return { data: [] as never, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } };
+      });
+
+      const result = await syncService.syncCorporationWallets(1001, 'dummy-token', undefined, { maxPages: 2 });
+
+      expect(pagesRequested).toEqual([1, 2]);
+      expect(result.status).toBe('PARTIAL');
+      expect(result.coverageStatus).toBe('PARTIAL');
+      expect(result.hasMore).toBe(true);
+      expect(result.divisionStatuses?.[1].status).toBe('PARTIAL');
+      expect(result.divisionStatuses?.[1].lastPage).toBe(2);
+      expect(result.divisionStatuses?.[1].hasMore).toBe(true);
+      expect(result.divisionStatuses?.[1].totalFetched).toBe(100);
+
+      const persisted = ledgerRepo.getJournalEntries(1001, 1, 300);
+      expect(persisted.total).toBe(100);
+    });
+
+    it('TEST-F05-04: Resume synchronization (resume: true) starts from page 3 through 5 and completes', async () => {
+      const corpId = 9800001;
+
+      // Seed previous partial state (lastPage = 2, hasMore = true)
+      await syncRepo.updateSyncStateAsync(1001, 'corporation_wallets', {
+        status: 'PARTIAL',
+        coverageStatus: 'PARTIAL',
+        hasMore: true,
+        divisionStatuses: {
+          1: { status: 'PARTIAL', lastPage: 2, hasMore: true, totalFetched: 100 },
+        },
+      });
+
+      const pagesRequested: number[] = [];
+
+      vi.spyOn(esiClient, 'get').mockImplementation(async (path: string, options?: { params?: Record<string, unknown> }) => {
+        if (path.includes('/characters/1001/')) {
+          return { data: { corporation_id: corpId }, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes('/journal/')) {
+          const page = Number(options?.params?.page || 1);
+          pagesRequested.push(page);
+          const entries = generateMockJournalEntries(page * 1000, 50);
+          return { data: entries, meta: { status: 200, pages: 5, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes('/divisions/')) {
+          return { data: { wallet: [{ division: 1, name: 'Main Treasury' }] }, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes('/wallets/')) {
+          return { data: [{ division: 1, balance: 500000000 }], meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        return { data: [] as never, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } };
+      });
+
+      const result = await syncService.syncCorporationWallets(1001, 'dummy-token', undefined, { resume: true });
+
+      expect(pagesRequested).toEqual([3, 4, 5]);
+      expect(result.status).toBe('COMPLETE');
+      expect(result.coverageStatus).toBe('COMPLETE');
+      expect(result.hasMore).toBe(false);
+      expect(result.divisionStatuses?.[1].status).toBe('COMPLETE');
+      expect(result.divisionStatuses?.[1].lastPage).toBe(5);
+      expect(result.divisionStatuses?.[1].hasMore).toBe(false);
+    });
+
+    it('TEST-F05-05: Division 3 failure (HTTP 500) produces overall PARTIAL status with detailed error without crashing', async () => {
+      const corpId = 9800001;
+
+      vi.spyOn(esiClient, 'get').mockImplementation(async (path: string) => {
+        if (path.includes('/characters/1001/')) {
+          return { data: { corporation_id: corpId }, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes('/wallets/1/journal/')) {
+          return { data: generateMockJournalEntries(1000, 20), meta: { status: 200, pages: 1, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes('/wallets/2/journal/')) {
+          return { data: generateMockJournalEntries(2000, 20), meta: { status: 200, pages: 1, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes('/wallets/3/journal/')) {
+          throw new Error('500 Internal Server Error: division journal unavailable');
+        }
+        if (path.includes('/divisions/')) {
+          return { data: { wallet: [] }, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes('/wallets/')) {
+          return {
+            data: [
+              { division: 1, balance: 1000000 },
+              { division: 2, balance: 2000000 },
+              { division: 3, balance: 3000000 },
+            ],
+            meta: { status: 200, fromCache: false, fetchedAt: Date.now() },
+          } as never;
+        }
+        return { data: [] as never, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } };
+      });
+
+      const result = await syncService.syncCorporationWallets(1001, 'dummy-token');
+
+      expect(result.status).toBe('PARTIAL');
+      expect(result.coverageStatus).toBe('PARTIAL');
+      expect(result.hasMore).toBe(true);
+      expect(result.divisionStatuses?.[1].status).toBe('COMPLETE');
+      expect(result.divisionStatuses?.[2].status).toBe('COMPLETE');
+      expect(result.divisionStatuses?.[3].status).toBe('ERROR');
+      expect(result.divisionStatuses?.[3].error).toContain('500 Internal Server Error');
+      expect(result.error).toContain('Division 3');
+
+      const savedState = await syncRepo.getSyncStateAsync(1001, 'corporation_wallets');
+      expect(savedState.status).toBe('PARTIAL');
+      expect(savedState.divisionStatuses?.[3].status).toBe('ERROR');
+    });
+
+    it('TEST-F05-06: Integration - Complete synchronization of a corporation with all 7 divisions', async () => {
+      const corpId = 9800001;
+
+      vi.spyOn(esiClient, 'get').mockImplementation(async (path: string) => {
+        if (path.includes('/characters/1001/')) {
+          return { data: { corporation_id: corpId }, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes('/divisions/')) {
+          return {
+            data: {
+              wallet: Array.from({ length: 7 }, (_, i) => ({ division: i + 1, name: `Division ${i + 1} Hangar` })),
+            },
+            meta: { status: 200, fromCache: false, fetchedAt: Date.now() },
+          } as never;
+        }
+        for (let div = 1; div <= 7; div++) {
+          if (path.includes(`/wallets/${div}/journal/`)) {
+            return {
+              data: generateMockJournalEntries(div * 10000, 50),
+              meta: { status: 200, pages: 1, fromCache: false, fetchedAt: Date.now() },
+            } as never;
+          }
+        }
+        if (path.includes('/wallets/')) {
+          return {
+            data: Array.from({ length: 7 }, (_, i) => ({ division: i + 1, balance: (i + 1) * 10000000 })),
+            meta: { status: 200, fromCache: false, fetchedAt: Date.now() },
+          } as never;
+        }
+        return { data: [] as never, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } };
+      });
+
+      const result = await syncService.syncCorporationWallets(1001, 'dummy-token');
+
+      expect(result.status).toBe('COMPLETE');
+      expect(result.coverageStatus).toBe('COMPLETE');
+      expect(result.hasMore).toBe(false);
+
+      const corpWallets = walletRepo.getCorporationWallets(corpId);
+      for (let div = 1; div <= 7; div++) {
+        expect(result.divisionStatuses?.[div]?.status).toBe('COMPLETE');
+        expect(result.divisionStatuses?.[div]?.totalFetched).toBe(50);
+        const snap = corpWallets.find((w) => w.division === div);
+        expect(snap).toBeDefined();
+        expect(snap?.divisionName).toBe(`Division ${div} Hangar`);
+      }
+
+      const totalJournal = ledgerRepo.getJournalEntries(1001, 1, 500);
+      expect(totalJournal.total).toBe(350);
+    });
+
+    it('TEST-F05-07: Non-regression - Character without corporation wallet roles (403 Forbidden) returns PARTIAL without infinite loop', async () => {
+      const corpId = 9800001;
+
+      vi.spyOn(esiClient, 'get').mockImplementation(async (path: string) => {
+        if (path.includes('/characters/1001/')) {
+          return { data: { corporation_id: corpId }, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes(`/corporations/${corpId}/wallets/`)) {
+          throw new Error('403 Forbidden: Character lacks Accountant or Junior Accountant role');
+        }
+        return { data: [] as never, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } };
+      });
+
+      const result = await syncService.syncCorporationWallets(1001, 'dummy-token');
+
+      expect(result.status).toBe('PARTIAL');
+      expect(result.coverageStatus).toBe('PARTIAL');
+      expect(result.hasMore).toBe(false);
+      expect(result.error).toContain('Lacks corporation wallet roles');
+
+      // Next call should immediately return PARTIAL from inaccessibleCorpCharacters set
+      const result2 = await syncService.syncCorporationWallets(1001, 'dummy-token');
+      expect(result2.status).toBe('PARTIAL');
+      expect(result2.coverageStatus).toBe('PARTIAL');
+    });
+  });
+
+  describe('Phase F06 — Corporation Journal Deduplication Across Multi-Character ESI Sync (TEST-F06-05)', () => {
+    it('TEST-F06-05: Simultaneous or successive ESI sync of 2 characters in the same corporation deduplicates journal entries perfectly', async () => {
+      const corpId = 98000001;
+      const mockCorpJournal = [
+        {
+          id: 55001,
+          date: '2026-09-30T12:00:00Z',
+          ref_type: 'transaction_tax',
+          amount: -120000,
+          balance: 100000000,
+          description: 'Sales tax SCC',
+          first_party_id: 1001,
+          second_party_id: 1000132,
+          tax: 120000,
+          tax_receiver_id: 1000132,
+          context_id: 888999,
+          context_id_type: 'market_transaction_id',
+        },
+        {
+          id: 55002,
+          date: '2026-09-30T11:00:00Z',
+          ref_type: 'brokers_fee',
+          amount: -45000,
+          balance: 100120000,
+          description: 'Brokers fee',
+        },
+      ];
+
+      vi.spyOn(esiClient, 'get').mockImplementation(async (path: string) => {
+        if (path.includes('/characters/1001/') || path.includes('/characters/1002/')) {
+          return { data: { corporation_id: corpId }, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes('/divisions/')) {
+          return { data: { wallet: [{ division: 1, name: 'Main' }] }, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes('/journal/')) {
+          return { data: mockCorpJournal, meta: { status: 200, pages: 1, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        if (path.includes('/wallets/')) {
+          return { data: [{ division: 1, balance: 100000000 }], meta: { status: 200, fromCache: false, fetchedAt: Date.now() } } as never;
+        }
+        return { data: [] as never, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } };
+      });
+
+      // Character 1 syncs corporation wallets (2 journal entries + 1 division snapshot)
+      const resChar1 = await syncService.syncCorporationWallets(1001, 'token-1001');
+      expect(resChar1.status).toBe('COMPLETE');
+      expect(resChar1.newItemsPersisted).toBe(3);
+
+      // Character 2 syncs the same corporation wallets (0 new journal entries + 1 division snapshot)
+      const resChar2 = await syncService.syncCorporationWallets(1002, 'token-1002');
+      expect(resChar2.status).toBe('COMPLETE');
+      expect(resChar2.newItemsPersisted).toBe(1);
+
+      // Unique storage check: exactly 2 journal entries exist in total in the ledger
+      const dump = ledgerRepo.dumpData();
+      expect(dump.journalEntries).toHaveLength(2);
+      expect(dump.journalEntries[0].id).toBe(`corp:${corpId}:1:55001`);
+      expect(dump.journalEntries[1].id).toBe(`corp:${corpId}:1:55002`);
+
+      // Both characters are recorded in audit trace
+      expect(dump.journalEntries[0].observedByCharacterIds).toContain(1001);
+      expect(dump.journalEntries[0].observedByCharacterIds).toContain(1002);
+
+      // Summary across the whole multi-character account reflects exact single taxes & broker fees
+      const summary = ledgerRepo.getSummary(undefined, [1001, 1002]);
+      expect(summary.totalTaxesIsk).toBe(120000); // NOT 240,000 ISK
+      expect(summary.totalBrokerFeesIsk).toBe(45000); // NOT 90,000 ISK
+    });
+  });
 });

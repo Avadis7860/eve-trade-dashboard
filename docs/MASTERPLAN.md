@@ -28,10 +28,16 @@ Un seul chantier actif, une phase, une branche, un PR. Jamais sur main. Petits l
 | F01 | Cycle de vie sync, annulation réelle et persistance asynchrone | 00–12, R00–R08 | Terminé |
 | F02 | Intégrité du stockage, anti-écrasement et vérité des données | F01 | Terminé |
 | F03 | Invariants financiers, détection chronologique et valorisation FIFO | F01, F02 | Terminé |
-| F04 | Preuves de qualification réelles : PostgreSQL CI et tests E2E navigateur | F01–F03 | Prête à démarrer |
-| H03 | Hardening UX, performance et release finale | 00–12, F01–F04 | Planifiée |
+| F04 | Preuves de qualification réelles : PostgreSQL CI et tests E2E navigateur | F01–F03 | En attente base réelle |
+| F05 | Exhaustivité et vérité des journaux de corporation (pagination et statuts) | F03 | Terminé |
+| F06 | Identité canonique et déduplication des journaux de corporation multi-personnages | F05 | Terminé |
+| F07 | Rapprochement fiscal déterministe et attribution unique (M+1 & non-duplication) | F06 | Planifiée |
+| F08 | Modélisation et attribution des frais de courtage (cycle de vie ordres & FIFO) | F07 | Planifiée |
+| F09 | Réconciliation financière TTC et cohérence des indicateurs (Couverture CA vs Volume) | F08 | Planifiée |
+| F10 | Reconstitution historique, recalcul et qualification financière finale | F09 | Planifiée |
+| H03 | Hardening UX, performance et release finale | 00–12, F01–F10 | Planifiée |
 
-Voir également le rapport complet d'audit [`docs/AUDIT-POST-PHASE-12.md`](AUDIT-POST-PHASE-12.md) et la feuille de route détaillée [`docs/MASTERPLAN-ASSURANCE-FIABILITE.md`](MASTERPLAN-ASSURANCE-FIABILITE.md).
+Voir également le rapport complet d'audit post-Phase 12 [`docs/AUDIT-POST-PHASE-12.md`](AUDIT-POST-PHASE-12.md), le rapport d'investigation financière [`docs/AUDIT-TASK-55-FINANCIAL-RECONCILIATION.md`](AUDIT-TASK-55-FINANCIAL-RECONCILIATION.md) et la feuille de route détaillée [`docs/MASTERPLAN-ASSURANCE-FIABILITE.md`](MASTERPLAN-ASSURANCE-FIABILITE.md).
 
 Chaque phase possède un fichier dédié dans `docs/phases`. Fin de phase : critères propres satisfaits, tests ajoutés et verts, index du code à jour, PR vérifiable, aucun secret. Le statut « terminé » requiert merge et revalidation de main.
 

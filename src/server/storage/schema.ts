@@ -1,6 +1,6 @@
 import type { SchemaMigration } from './types.ts';
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 export const INITIAL_MIGRATION_SQL = `
 -- Schema Migrations Table
@@ -319,6 +319,13 @@ export const MIGRATIONS: SchemaMigration[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_wallet_char ON wallet_snapshots (character_id);
       CREATE INDEX IF NOT EXISTS idx_wallet_corp ON wallet_snapshots (corporation_id);
+    `,
+  },
+  {
+    version: 7,
+    name: '007_sync_states_division_statuses',
+    upSql: `
+      ALTER TABLE sync_states ADD COLUMN IF NOT EXISTS division_statuses TEXT;
     `,
   },
 ];

@@ -3,6 +3,7 @@
 | Besoin | Document |
 |---|---|
 | Audit technique approfondi Post-Phase 12 | [AUDIT-POST-PHASE-12](AUDIT-POST-PHASE-12.md) |
+| Audit Task-55 : Fiabilité Financière & Réconciliation TTC | [AUDIT-TASK-55-FINANCIAL-RECONCILIATION](AUDIT-TASK-55-FINANCIAL-RECONCILIATION.md) |
 | Masterplan Assurance Fiabilité & Traçabilité | [MASTERPLAN-ASSURANCE-FIABILITE](MASTERPLAN-ASSURANCE-FIABILITE.md) |
 | Plan et statut des phases | [MASTERPLAN](MASTERPLAN.md) |
 | Roadmap Fiabilité & Performance | [MASTERPLAN-RELIABILITY-PERFORMANCE](MASTERPLAN-RELIABILITY-PERFORMANCE.md) |
@@ -45,10 +46,16 @@
 - [F01 Cycle de vie sync, annulation réelle et persistance asynchrone](phases/PHASE-F01-sync-concurrency-lifecycle.md) — *Terminé*
 - [F02 Intégrité du stockage, anti-écrasement et vérité des données](phases/PHASE-F02-data-integrity-storage.md) — *Terminé*
 - [F03 Invariants financiers, détection chronologique et valorisation FIFO](phases/PHASE-F03-financial-inventory-invariants.md) — *Terminé*
-- [F04 Preuves de qualification réelles : PostgreSQL CI et tests E2E navigateur](phases/PHASE-F04-testing-ci-real-postgres-e2e.md) — *Prête à démarrer*
+- [F04 Preuves de qualification réelles : PostgreSQL CI et tests E2E navigateur](phases/PHASE-F04-testing-ci-real-postgres-e2e.md) — *En attente base réelle*
+- [F05 Exhaustivité et vérité des journaux de corporation](phases/PHASE-F05-corporation-journal-completeness.md) — *Terminé*
+- [F06 Identité canonique et déduplication des journaux de corporation](phases/PHASE-F06-corporation-journal-deduplication.md) — *Prête à démarrer*
+- [F07 Rapprochement fiscal déterministe et attribution unique](phases/PHASE-F07-deterministic-tax-reconciliation.md) — *Planifiée*
+- [F08 Modélisation et attribution des frais de courtage](phases/PHASE-F08-broker-fee-attribution.md) — *Planifiée*
+- [F09 Réconciliation financière TTC et cohérence des indicateurs](phases/PHASE-F09-ttc-financial-reconciliation.md) — *Planifiée*
+- [F10 Reconstitution historique, recalcul et qualification financière](phases/PHASE-F10-historical-financial-recovery.md) — *Planifiée*
 
 ## Release Finale
-- [H03 Hardening UX, performance et release](phases/PHASE-H03-quality-release.md) — *Planifiée (après série F)*
+- [H03 Hardening UX, performance et release](phases/PHASE-H03-quality-release.md) — *Planifiée (après série F complète)*
 
 ## Roadmap Historique — Fiabilité & Performance (R00–R08)
 - [R00 Baseline, mesure et gel fonctionnel](phases/PHASE-R00-baseline.md) — *Terminé*

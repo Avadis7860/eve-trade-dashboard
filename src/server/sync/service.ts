@@ -13,10 +13,11 @@ import type { UniverseService } from '../universe/service.ts';
 import { defaultUniverseService } from '../universe/service.ts';
 import { SyncCoordinator, defaultSyncCoordinator } from './coordinator.ts';
 import type { CharacterTransaction, CharacterWalletJournalEntry } from '../ledger/types.ts';
+import { makeJournalEntryKey } from '../ledger/types.ts';
 import type { RawEsiOrder, CharacterOrderSnapshot } from '../orders/types.ts';
 import type { RawEsiAsset, CharacterAsset } from '../assets/types.ts';
 import { evaluateOrderLifecycle, calculateExpirationIso } from '../orders/lifecycle.ts';
-import type { SyncResult, SyncResourceType, SyncAllResult } from './types.ts';
+import type { SyncResult, SyncResourceType, SyncAllResult, DivisionSyncStatus, SyncStatusState } from './types.ts';
 import type { IWalletRepository } from '../ledger/walletRepository.ts';
 import { defaultWalletRepository } from '../ledger/walletRepository.ts';
 import type { WalletBalanceSnapshot, WalletSyncMode } from '../capital/types.ts';
@@ -305,7 +306,7 @@ export class SyncService {
             if (rawItems.length > 0) {
               const observedAt = Date.now();
               const entries: CharacterWalletJournalEntry[] = (rawItems as RawEsiJournalEntry[]).map((raw) => ({
-                id: `${characterId}:${raw.id}`,
+                id: makeJournalEntryKey({ characterId, journalId: raw.id }),
                 characterId,
                 journalId: raw.id,
                 date: raw.date,
@@ -322,6 +323,7 @@ export class SyncService {
                 taxReceiverId: raw.tax_receiver_id,
                 source: `/characters/${characterId}/wallet/journal/`,
                 observedAt,
+                observedByCharacterIds: [characterId],
               }));
 
               const saveResult = this.ledgerRepo.saveJournalEntries(entries);
@@ -723,7 +725,12 @@ export class SyncService {
     characterId: number,
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>,
-    options?: { walletSyncMode?: WalletSyncMode }
+    options?: {
+      walletSyncMode?: WalletSyncMode;
+      resume?: boolean;
+      maxPages?: number;
+      forceRevalidate?: boolean;
+    }
   ): Promise<SyncResult> {
     const key = `sync:${characterId}:corporation_wallets`;
     return this.coordinator.enqueue(key, (signal) =>
@@ -735,7 +742,13 @@ export class SyncService {
     characterId: number,
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>,
-    options?: { walletSyncMode?: WalletSyncMode; signal?: AbortSignal }
+    options?: {
+      walletSyncMode?: WalletSyncMode;
+      resume?: boolean;
+      maxPages?: number;
+      forceRevalidate?: boolean;
+      signal?: AbortSignal;
+    }
   ): Promise<SyncResult> {
     const resource: SyncResourceType = 'corporation_wallets';
     const startTime = Date.now();
@@ -776,11 +789,14 @@ export class SyncService {
       lastSyncStartedAt: startTime,
     });
 
+    const previousState = await this.syncRepo.getSyncStateAsync(characterId, resource);
+
     try {
       // 1. Fetch character public info to get corporation_id
       const charInfoRes = await this.esiClient.get<{ corporation_id: number }>(`/characters/${characterId}/`, {
         accessToken,
         refreshTokenFn,
+        forceRevalidate: options?.forceRevalidate,
         signal: options?.signal,
       });
 
@@ -815,34 +831,58 @@ export class SyncService {
       try {
         const divisionsRes = await this.esiClient.get<Array<{ division: number; balance: number }>>(
           `/corporations/${corpId}/wallets/`,
-          { accessToken, refreshTokenFn, signal: options?.signal }
+          { accessToken, refreshTokenFn, forceRevalidate: options?.forceRevalidate, signal: options?.signal }
         );
         if (Array.isArray(divisionsRes.data) && divisionsRes.data.length > 0) {
           divisions = divisionsRes.data;
         }
-      } catch {
-        // If 403 Forbidden or scope error, character lacks corp wallet roles - mark and stop immediately
-        this.inaccessibleCorpCharacters.add(characterId);
-        await this.syncRepo.updateSyncStateAsync(characterId, resource, {
-          status: 'PARTIAL',
-          coverageStatus: 'PARTIAL',
-          hasMore: false,
-          lastSyncCompletedAt: Date.now(),
-          errorMessage: 'Lacks corporation wallet roles',
-        });
-        return {
-          resource,
-          characterId,
-          status: 'PARTIAL',
-          coverageStatus: 'PARTIAL',
-          hasMore: false,
-          itemsFetched: 0,
-          newItemsPersisted: 0,
-          totalPersisted: 0,
-          durationMs: Date.now() - startTime,
-          error: 'Lacks corporation wallet roles',
-          asOf: Date.now(),
-        };
+      } catch (walletErr) {
+        const errMsg = (walletErr as Error).message || '';
+        const isForbidden = errMsg.includes('403') || errMsg.toLowerCase().includes('forbidden') || errMsg.toLowerCase().includes('lacks');
+        if (isForbidden) {
+          this.inaccessibleCorpCharacters.add(characterId);
+          await this.syncRepo.updateSyncStateAsync(characterId, resource, {
+            status: 'PARTIAL',
+            coverageStatus: 'PARTIAL',
+            hasMore: false,
+            lastSyncCompletedAt: Date.now(),
+            errorMessage: 'Lacks corporation wallet roles',
+          });
+          return {
+            resource,
+            characterId,
+            status: 'PARTIAL',
+            coverageStatus: 'PARTIAL',
+            hasMore: false,
+            itemsFetched: 0,
+            newItemsPersisted: 0,
+            totalPersisted: 0,
+            durationMs: Date.now() - startTime,
+            error: 'Lacks corporation wallet roles',
+            asOf: Date.now(),
+          };
+        } else {
+          // Unexpected error fetching wallets list (e.g. 500 Internal Server Error, network failure)
+          await this.syncRepo.updateSyncStateAsync(characterId, resource, {
+            status: 'ERROR',
+            coverageStatus: 'ERROR',
+            lastSyncCompletedAt: Date.now(),
+            errorMessage: errMsg || 'Corporation wallet sync failed',
+          });
+          return {
+            resource,
+            characterId,
+            status: 'ERROR',
+            coverageStatus: 'ERROR',
+            hasMore: false,
+            itemsFetched: 0,
+            newItemsPersisted: 0,
+            totalPersisted: 0,
+            durationMs: Date.now() - startTime,
+            error: errMsg || 'Corporation wallet sync failed',
+            asOf: Date.now(),
+          };
+        }
       }
 
       if (divisions.length === 0) {
@@ -876,6 +916,7 @@ export class SyncService {
         }>(`/corporations/${corpId}/divisions/`, {
           accessToken,
           refreshTokenFn,
+          forceRevalidate: options?.forceRevalidate,
           signal: options?.signal,
         });
         if (divNamesRes.data?.wallet && Array.isArray(divNamesRes.data.wallet)) {
@@ -900,9 +941,16 @@ export class SyncService {
         // Ignore resolution error
       }
 
-      // 5. Persist real balances for each corporation division
+      // 5. Persist real balances and journals for each corporation division
       const observedAt = Date.now();
       let totalJournalFetched = 0;
+      let newJournalPersisted = 0;
+      const divisionStatuses: Record<number, DivisionSyncStatus> = {};
+      let succeededDivisions = 0;
+      let partialDivisions = 0;
+      let failedDivisions = 0;
+      const divisionErrors: string[] = [];
+
       for (const div of divisions) {
         const divisionNumber = div.division || 1;
         const divisionName = divisionNames.get(divisionNumber) || (divisionNumber === 1 ? 'Master Wallet' : `Division ${divisionNumber}`);
@@ -938,6 +986,13 @@ export class SyncService {
         };
         this.walletRepo.saveWalletSnapshot(corpSnapshot);
 
+        // Calculate pagination startPage and maxPages per division
+        const prevDiv = options?.resume ? previousState?.divisionStatuses?.[divisionNumber] : undefined;
+        const startPage = prevDiv && prevDiv.hasMore ? Math.max(1, (prevDiv.lastPage || 1) + 1) : 1;
+        const maxPages = options?.maxPages ?? 50;
+
+        let divHighestPage = 0;
+
         try {
           // Fetch journal for division (containing transaction_tax and brokers_fee)
           const paginatedJournal = await fetchXPages<RawEsiJournalEntry>(
@@ -946,62 +1001,134 @@ export class SyncService {
             {
               accessToken,
               refreshTokenFn,
-              maxPages: 3,
+              startPage,
+              maxPages,
+              forceRevalidate: options?.forceRevalidate,
               signal: options?.signal,
+              onPageSuccess: async (page, rawItems) => {
+                if (page > divHighestPage) {
+                  divHighestPage = page;
+                }
+                if (rawItems && rawItems.length > 0) {
+                  const entries: CharacterWalletJournalEntry[] = (rawItems as RawEsiJournalEntry[]).map((raw) => ({
+                    id: makeJournalEntryKey({
+                      isCorporationWallet: true,
+                      corporationId: corpId,
+                      division: divisionNumber,
+                      characterId,
+                      journalId: raw.id,
+                    }),
+                    characterId,
+                    journalId: raw.id,
+                    date: raw.date,
+                    refType: raw.ref_type,
+                    amount: raw.amount,
+                    balance: raw.balance,
+                    contextId: raw.context_id,
+                    contextIdType: raw.context_id_type,
+                    description: raw.description,
+                    firstPartyId: raw.first_party_id,
+                    secondPartyId: raw.second_party_id,
+                    reason: raw.reason,
+                    tax: raw.tax,
+                    taxReceiverId: raw.tax_receiver_id,
+                    source: `/corporations/${corpId}/wallets/${divisionNumber}/journal/`,
+                    observedAt,
+                    isCorporationWallet: true,
+                    corporationId: corpId,
+                    division: divisionNumber,
+                    observedByCharacterIds: [characterId],
+                  }));
+                  const saveRes = this.ledgerRepo.saveJournalEntries(entries);
+                  newJournalPersisted += saveRes.inserted;
+                }
+              },
             }
           );
 
-          if (paginatedJournal.data && paginatedJournal.data.length > 0) {
-            totalJournalFetched += paginatedJournal.data.length;
-            const entries: CharacterWalletJournalEntry[] = paginatedJournal.data.map((raw) => ({
-              id: `${characterId}:corp:${corpId}:${divisionNumber}:${raw.id}`,
-              characterId,
-              journalId: raw.id,
-              date: raw.date,
-              refType: raw.ref_type,
-              amount: raw.amount,
-              balance: raw.balance,
-              contextId: raw.context_id,
-              contextIdType: raw.context_id_type,
-              description: raw.description,
-              firstPartyId: raw.first_party_id,
-              secondPartyId: raw.second_party_id,
-              reason: raw.reason,
-              tax: raw.tax,
-              taxReceiverId: raw.tax_receiver_id,
-              source: `/corporations/${corpId}/wallets/${divisionNumber}/journal/`,
-              observedAt,
-              isCorporationWallet: true,
-              corporationId: corpId,
-              division: divisionNumber,
-            }));
-            this.ledgerRepo.saveJournalEntries(entries);
+          const divFetched = paginatedJournal.totalFetched;
+          totalJournalFetched += divFetched;
+          const divLastPage = divHighestPage || (paginatedJournal.pagesFetched > 0 ? (startPage + paginatedJournal.pagesFetched - 1) : (prevDiv?.lastPage || 1));
+          const divHasMore = Boolean(paginatedJournal.hasMore);
+          const divStatus: SyncStatusState = paginatedJournal.status;
+
+          if (divStatus === 'COMPLETE') {
+            succeededDivisions++;
+          } else if (divStatus === 'PARTIAL') {
+            partialDivisions++;
+          } else if (divStatus === 'ERROR') {
+            failedDivisions++;
+            if (paginatedJournal.error) {
+              divisionErrors.push(`Division ${divisionNumber}: ${paginatedJournal.error}`);
+            }
           }
-        } catch {
-          // Ignore division errors
+
+          divisionStatuses[divisionNumber] = {
+            status: divStatus,
+            lastPage: divLastPage,
+            hasMore: divHasMore,
+            error: paginatedJournal.error,
+            totalFetched: divFetched,
+          };
+        } catch (divErr) {
+          if (options?.signal?.aborted) {
+            throw options.signal.reason || divErr;
+          }
+          const divErrMsg = (divErr as Error).message || 'Division journal sync failed';
+          failedDivisions++;
+          divisionErrors.push(`Division ${divisionNumber}: ${divErrMsg}`);
+          divisionStatuses[divisionNumber] = {
+            status: 'ERROR',
+            lastPage: prevDiv?.lastPage || 0,
+            hasMore: true,
+            error: divErrMsg,
+            totalFetched: 0,
+          };
         }
       }
 
+      // Consolidate global status across divisions
+      let consolidatedStatus: SyncStatusState = 'COMPLETE';
+      let consolidatedError: string | undefined;
+
+      if (failedDivisions > 0 && succeededDivisions === 0 && partialDivisions === 0) {
+        consolidatedStatus = 'ERROR';
+        consolidatedError = divisionErrors.join('; ');
+      } else if (failedDivisions > 0 || partialDivisions > 0) {
+        consolidatedStatus = 'PARTIAL';
+        consolidatedError = divisionErrors.length > 0 ? divisionErrors.join('; ') : undefined;
+      } else {
+        consolidatedStatus = 'COMPLETE';
+      }
+
+      const hasMoreOverall = Object.values(divisionStatuses).some((d) => d.hasMore);
+      const journalTotal = this.ledgerRepo.getJournalEntries(characterId, 1, 1).total;
+      const totalPersistedCount = journalTotal > 0 ? journalTotal : (totalJournalFetched + divisions.length);
+
       await this.syncRepo.updateSyncStateAsync(characterId, resource, {
-        status: 'COMPLETE',
-        coverageStatus: 'COMPLETE',
-        hasMore: false,
+        status: consolidatedStatus,
+        coverageStatus: consolidatedStatus,
+        hasMore: hasMoreOverall,
+        divisionStatuses,
         lastSyncCompletedAt: Date.now(),
-        totalRecords: divisions.length,
-        itemsCount: divisions.length,
-        newRecordsInLastSync: divisions.length,
+        totalRecords: totalPersistedCount,
+        itemsCount: totalPersistedCount,
+        newRecordsInLastSync: newJournalPersisted + divisions.length,
+        errorMessage: consolidatedError,
       });
 
       return {
         resource,
         characterId,
-        status: 'COMPLETE',
-        coverageStatus: 'COMPLETE',
-        hasMore: false,
-        itemsFetched: divisions.length + totalJournalFetched,
-        newItemsPersisted: divisions.length,
-        totalPersisted: divisions.length,
+        status: consolidatedStatus,
+        coverageStatus: consolidatedStatus,
+        hasMore: hasMoreOverall,
+        divisionStatuses,
+        itemsFetched: totalJournalFetched + divisions.length,
+        newItemsPersisted: newJournalPersisted + divisions.length,
+        totalPersisted: totalPersistedCount,
         durationMs: Date.now() - startTime,
+        error: consolidatedError,
         asOf: Date.now(),
       };
     } catch (err) {

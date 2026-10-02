@@ -3,6 +3,7 @@
 ## 1. Identités, Preuves & Immuabilité
 - `transaction_id`, `journal_id`, `order_id` et `asset_id` sont des identifiants distincts et non interchangeables.
 - Toute observation issue de l'ESI est une preuve immuable conservant sa route source, son horodatage UTC métier et sa date d'observation locale.
+- **Identité canonique des journaux** : Une entrée de journal de corporation a pour identité canonique universelle `corp:${corporationId}:${division}:${journalId}`, indépendante du personnage observateur. Les journaux personnels ont pour identité canonique `char:${characterId}:${journalId}`. La traçabilité de l'ensemble des personnages ayant observé l'événement est conservée (`observedByCharacterIds`) sans aucune duplication de l'enregistrement économique ni de son impact financier.
 - Une projection (bénéfice, ROI, besoin de réapprovisionnement, position de capital) est une interprétation explicable, versionnée et reproductible.
 - Une intervention utilisateur (ex: allocation manuelle, lot d'ouverture) est une annotation séparée, datée et justifiée sans altération de la donnée brute.
 

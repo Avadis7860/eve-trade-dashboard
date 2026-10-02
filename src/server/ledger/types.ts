@@ -27,7 +27,7 @@ export interface CharacterTransaction {
 }
 
 export interface CharacterWalletJournalEntry {
-  id: string; // Composite key: `${characterId}:${journalId}`
+  id: string; // Composite key: `${characterId}:${journalId}` or canonical `corp:${corpId}:${div}:${journalId}` / `char:${characterId}:${journalId}`
   characterId: number;
   journalId: number;
   date: string; // ISO 8601 UTC date
@@ -47,6 +47,21 @@ export interface CharacterWalletJournalEntry {
   isCorporationWallet?: boolean;
   corporationId?: number;
   division?: number;
+  observedByCharacterIds?: number[];
+}
+
+export function makeJournalEntryKey(entry: {
+  isCorporationWallet?: boolean;
+  corporationId?: number;
+  division?: number;
+  characterId: number;
+  journalId: number;
+}): string {
+  if (entry.isCorporationWallet && entry.corporationId) {
+    const div = entry.division ?? 1;
+    return `corp:${entry.corporationId}:${div}:${entry.journalId}`;
+  }
+  return `char:${entry.characterId}:${entry.journalId}`;
 }
 
 export type LedgerFilterType = 'ALL' | 'SELL' | 'BUY';

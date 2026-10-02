@@ -24,8 +24,14 @@ La série **F01 à F04** constitue le plan d'action méthodique et borné pour r
 |---|---|---|---|---|---|
 | **F01** | [Cycle de Vie Sync, Annulation Réelle & Persistance Asynchrone](phases/PHASE-F01-sync-concurrency-lifecycle.md) | **Critique (S0)** | S0-2, S0-3, S0-4, S1-4 | Post-Phase 12 | **Terminé** |
 | **F02** | [Intégrité du Stockage, Anti-Écrasement & Vérité des Données](phases/PHASE-F02-data-integrity-storage.md) | **Critique (S0)** | S0-1, S0-5, S1-3, S2-2 | F01 | **Terminé** |
-| **F03** | [Invariants Financiers, Détection Chronologique & Valorisation FIFO](phases/PHASE-F03-financial-inventory-invariants.md) | **Majeure (S1)** | S1-1, S1-2, S2-3, S2-4 | F01, F02 | **Prête à démarrer** |
-| **F04** | [Preuves de Qualification Réelles : PostgreSQL CI & Tests E2E Navigateur](phases/PHASE-F04-testing-ci-real-postgres-e2e.md) | **Majeure (S1)** | S1-5, S2-1 | F01–F03 | **Planifiée** |
+| **F03** | [Invariants Financiers, Détection Chronologique & Valorisation FIFO](phases/PHASE-F03-financial-inventory-invariants.md) | **Majeure (S1)** | S1-1, S1-2, S2-3, S2-4 | F01, F02 | **Terminé** |
+| **F04** | [Preuves de Qualification Réelles : PostgreSQL CI & Tests E2E Navigateur](phases/PHASE-F04-testing-ci-real-postgres-e2e.md) | **Majeure (S1)** | S1-5, S2-1 | F01–F03 | **Prête à démarrer** |
+| **F05** | [Exhaustivité et Vérité des Journaux de Corporation](phases/PHASE-F05-corporation-journal-completeness.md) | **Critique (S0)** | Troncature maxPages=3, faux COMPLETE, perte 27% taxes | F04 | **Planifiée** |
+| **F06** | [Identité Canonique et Déduplication des Journaux Corporation](phases/PHASE-F06-corporation-journal-deduplication.md) | **Critique (S0)** | Duplication multi-personnages, frais multipliés par N | F05 | **Planifiée** |
+| **F07** | [Rapprochement Fiscal Déterministe et Attribution Unique](phases/PHASE-F07-deterministic-tax-reconciliation.md) | **Majeure (S1)** | Sur-attribution taxes, break heuristique 3s, pattern M+1 | F06 | **Planifiée** |
+| **F08** | [Modélisation et Attribution des Frais de Courtage](phases/PHASE-F08-broker-fee-attribution.md) | **Majeure (S1)** | Frais achat nuls, rupture lien order_id vs tx_id | F07 | **Planifiée** |
+| **F09** | [Réconciliation Financière TTC et Cohérence des Indicateurs](phases/PHASE-F09-ttc-financial-reconciliation.md) | **Majeure (S1)** | Distorsion Couverture CA vs Volume, formule profit TTC | F08 | **Planifiée** |
+| **F10** | [Reconstitution Historique, Recalcul et Qualification Financière](phases/PHASE-F10-historical-financial-recovery.md) | **Majeure (S1)** | Assainissement base .data, recalcul idempotent, backup SHA-256 | F09 | **Planifiée** |
 
 ---
 
@@ -67,6 +73,48 @@ La série **F01 à F04** constitue le plan d'action méthodique et borné pour r
 │  • Exécution de tests sur véritable PostgreSQL           │
 │  • Tests E2E Playwright réels avec navigateur            │
 │  • Tests de pannes réseau, coupures et reprises          │
+└──────────────────────────┬───────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────┐
+│ PHASE-F05 : Exhaustivité Journaux de Corporation         │
+│  • Pagination adaptative sans limite arbitraire maxPages │
+│  • Vérité stricte des statuts COMPLETE/PARTIAL par div   │
+└──────────────────────────┬───────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────┐
+│ PHASE-F06 : Identité Canonique & Déduplication           │
+│  • Clé économique stable : (corpId, division, journalId) │
+│  • Isolation de l'observateur vs propriété de la donnée  │
+└──────────────────────────┬───────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────┐
+│ PHASE-F07 : Rapprochement Fiscal Déterministe            │
+│  • Attribution exclusive 1-to-1 des transaction_tax      │
+│  • Exploitation séquentielle M+1 & exclusion heuristique │
+└──────────────────────────┬───────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────┐
+│ PHASE-F08 : Modélisation des Frais de Courtage           │
+│  • Imputation des brokers_fee aux lots FIFO d'achat      │
+│  • Catégorisation explicite des frais non attribués      │
+└──────────────────────────┬───────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────┐
+│ PHASE-F09 : Réconciliation TTC & Indicateurs Cohérents   │
+│  • Séparation Couverture CA (%) vs Couverture Volume (%) │
+│  • Formule de profit TTC prouvée et auditée unitairement │
+└──────────────────────────┬───────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────┐
+│ PHASE-F10 : Reconstitution Historique & Qualification    │
+│  • Recalcul persistant idempotent avec backup SHA-256    │
+│  • Rapport d'écart contradictoire Avant / Après          │
 └──────────────────────────┬───────────────────────────────┘
                            │
                            ▼
@@ -116,6 +164,54 @@ La série **F01 à F04** constitue le plan d'action méthodique et borné pour r
   - `src/e2e/*.spec.ts`
   - `.github/workflows/*.yml`
 - **Preuve attendue :** Exécution complète de la suite de tests contre une véritable instance PostgreSQL et validation des 11 parcours E2E dans un navigateur Chromium piloté par Playwright.
+
+### Phase F05 — Exhaustivité et Vérité des Journaux de Corporation
+- **Objectif :** Remplacer la limite fixe `maxPages: 3` par une pagination exhaustive adaptative et propager la vérité stricte de complétude (`COMPLETE` vs `PARTIAL` vs `ERROR`) par division.
+- **Fichiers concernés :**
+  - `src/server/sync/service.ts`
+  - `src/server/sync/repository.ts`
+  - `src/server/esi/pagination.ts`
+- **Preuve attendue :** Tests unitaires prouvant la pagination multi-pages avec reprise, et le rejet du statut `COMPLETE` en cas d'erreur de division.
+
+### Phase F06 — Identité Canonique et Déduplication des Journaux Corporation
+- **Objectif :** Établir une clé canonique d'événement économique `corp:${corpId}:${div}:${journalId}` indépendante de l'observateur pour éliminer tout double comptage multi-personnages.
+- **Fichiers concernés :**
+  - `src/server/ledger/types.ts`
+  - `src/server/ledger/repository.ts`
+  - `src/server/sync/service.ts`
+- **Preuve attendue :** Test de synchronisation concurrente par plusieurs directeurs prouvant que les totaux financiers restent strictement constants.
+
+### Phase F07 — Rapprochement Fiscal Déterministe et Attribution Unique
+- **Objectif :** Remplacer le matching heuristique flou par un moteur d'attribution exclusive avec réservation d'identifiants et exploitation déterministe du pattern séquentiel CCP `M+1`.
+- **Fichiers concernés :**
+  - `src/server/ledger/taxReconciler.ts` (nouveau)
+  - `src/server/ledger/repository.ts`
+  - `src/server/roi/service.ts`
+- **Preuve attendue :** Invariance $\sum \text{Taxes attribuées} \le \sum \text{Taxes uniques en base}$ démontrée unitairement sur séries de ventes simultanées.
+
+### Phase F08 — Modélisation et Attribution des Frais de Courtage
+- **Objectif :** Réconcilier les `brokers_fee` via le cycle de vie des ordres pour imputer les commissions d'achat aux lots FIFO et isoler les frais non alloués.
+- **Fichiers concernés :**
+  - `src/server/ledger/brokerFeeReconciler.ts` (nouveau)
+  - `src/server/orders/repository.ts`
+  - `src/server/roi/service.ts`
+- **Preuve attendue :** Test démontrant que `allocated_buy_fees_isk > 0` sur les achats issus d'ordres, et conservation exacte de la somme des frais.
+
+### Phase F09 — Réconciliation Financière TTC et Cohérence des Indicateurs
+- **Objectif :** Dissocier la Couverture Financière du Chiffre d'Affaires de la Couverture Volume dans les types, calculs et vues du Cockpit, et alimenter la formule TTC vérifiée.
+- **Fichiers concernés :**
+  - `src/server/roi/types.ts`
+  - `src/server/roi/calculator.ts`
+  - `src/server/roi/service.ts`
+  - `src/client/pages/CockpitPage.tsx`
+- **Preuve attendue :** Tests d'affichage séparé du CA alloué vs non alloué et validation de la formule de bénéfice TTC au centime d'ISK.
+
+### Phase F10 — Reconstitution Historique, Recalcul et Qualification Finale
+- **Objectif :** Fournir un service de maintenance idempotent avec backup SHA-256 pour assainir l'état persistant historique et produire un rapport d'écart contradictoire avant/après.
+- **Fichiers concernés :**
+  - `src/server/ledger/recovery.ts` (nouveau)
+  - `scripts/recalculate-financials.ts` (nouveau)
+- **Preuve attendue :** Démonstration d'idempotence et rapport d'écart prouvant la réconciliation intégrale sur jeu de données réel.
 
 ---
 

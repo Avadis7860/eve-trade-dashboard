@@ -53,3 +53,15 @@ Pour tout article dans une station ou structure donnée :
 - **Contrat de traçabilité** : Chaque transaction de vente enrichie expose un objet `taxReconciliation` avec `status` (`EXACT_MATCH`, `SEQUENTIAL_M_PLUS_1`, `CORRELATED_BIJECTIVE`, `UNMATCHED`, `AMBIGUOUS`), `matchedJournalId`, `taxAmount`, `taxRate` et `justification`.
 - **Invariance arithmétique** : $\sum \text{Taxes attribuées aux ventes} \le \sum \text{Taxes réelles uniques du grand livre}$.
 - **Absence de taxe fictive** : Toute vente non associée à une taxe prouvée est marquée `UNMATCHED` avec une taxe numérique de 0 ISK dans le net provisoire.
+
+## 8. Modélisation et Attribution des Frais de Courtage (Phase F08)
+- **Modélisation du cycle de vie des ordres** : Les écritures `brokers_fee` référençant un ordre de marché via `context_id == order_id` sont corrélées aux ordres correspondants puis ventilées au prorata des volumes exécutés sur les transactions d'achat et de vente associées.
+- **Les 4 états de frais étanches** :
+  1. $\text{Frais Récupérés}$ : Somme de toutes les entrées `brokers_fee` uniques collectées en base.
+  2. $\text{Frais Rapprochés}$ : Somme des frais associés avec certitude à un ordre de marché ou transaction directe.
+  3. $\text{Frais Alloués}$ : Quote-part de frais imputée aux lots exécutés et consommés en FIFO (`allocated_buy_fees_isk`, `allocated_sell_fees_isk`).
+  4. $\text{Frais Non Attribués}$ : Reliquats de frais d'ordres annulés, expirés sans exécution ou orphelins (`unallocated_broker_fees_isk`), conservés dans le bilan global sans perte.
+- **Invariance arithmétique stricte** :
+  $$\text{Frais Récupérés} = \text{Frais Alloués} + \text{Frais Non Attribués}$$
+- **Explicabilité unitaire** : Chaque transaction enrichie porte sa traçabilité `brokerFeeReconciliation` (`EXACT_TRANSACTION`, `ORDER_PRO_RATA`, `UNMATCHED`).
+

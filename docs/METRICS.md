@@ -38,6 +38,19 @@ Toutes les métriques produites par l'application sont déterministes, auditable
   3. *Passe 3 (Corrélation bijective)* : Appariement déterministe 1-to-1 par cohorte temporelle et taux sans réutilisation d'écritures fiscales.
 - **Gestion de l'incertitude** : Toute vente non couverte par une taxe prouvée est qualifiée `UNMATCHED` avec taxe numérique nulle (0 ISK) dans le net provisoire tout en conservant le détail dans `taxReconciliation`.
 
+### 1.7. Attribution et Proratisation des Frais de Courtage ($Brokers\_Fee$)
+- **Principe de corrélation d'ordres** :
+  - Dans l'ESI, les commissions de courtage sont prélevées lors de la pose ou modification d'ordre (`jn.context_id == order_id`).
+  - Les frais d'un ordre d'achat ou de vente sont attribués au prorata des volumes exécutés par chaque transaction fille :
+    $$Fee_{tx,i} = \text{roundIsk}\left(\text{Total\_Order\_Fee} \times \frac{q_i}{Volume\_Total_{ordre}}\right)$$
+- **Les 4 états de conservation** :
+  - $\text{Frais Récupérés}$ = Total des écritures `brokers_fee` collectées.
+  - $\text{Frais Rapprochés}$ = Total des frais corrélés avec certitude à un ordre ou transaction.
+  - $\text{Frais Alloués}$ = Quote-part imputée aux transactions exécutées et consommées en FIFO (`allocated_buy_fees_isk`, `allocated_sell_fees_isk`).
+  - $\text{Frais Non Attribués}$ = Quote-part des volumes non exécutés (ordres annulés/expirés) et frais orphelins (`unallocated_broker_fees_isk`).
+- **Invariance stricte** :
+  $$\text{Frais Récupérés} = \text{Frais Alloués} + \text{Frais Non Attribués}$$
+
 ---
 
 ## 2. Métriques de Capital & Patrimoine

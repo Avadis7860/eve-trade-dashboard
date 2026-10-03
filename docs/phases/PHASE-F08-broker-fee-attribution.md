@@ -164,4 +164,4 @@ Dans l'API ESI EVE Online :
 
 ## 12. Statut
 
-**Planifiée** (Dépend de F07).
+**Terminé** — `BrokerFeeReconciliationEngine` implémenté avec corrélation des `order_id`, proratisation déterministe sur les transactions d'achat et de vente, 4 états de frais étanches et validation intégrale des tests `TEST-F08-01` à `TEST-F08-05`.

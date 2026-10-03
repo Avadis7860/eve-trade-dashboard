@@ -49,8 +49,8 @@
 - [F04 Preuves de qualification réelles : PostgreSQL CI et tests E2E navigateur](phases/PHASE-F04-testing-ci-real-postgres-e2e.md) — *En attente base réelle*
 - [F05 Exhaustivité et vérité des journaux de corporation](phases/PHASE-F05-corporation-journal-completeness.md) — *Terminé*
 - [F06 Identité canonique et déduplication des journaux de corporation](phases/PHASE-F06-corporation-journal-deduplication.md) — *Terminé*
-- [F07 Rapprochement fiscal déterministe et attribution unique](phases/PHASE-F07-deterministic-tax-reconciliation.md) — *Planifiée*
-- [F08 Modélisation et attribution des frais de courtage](phases/PHASE-F08-broker-fee-attribution.md) — *Planifiée*
+- [F07 Rapprochement fiscal déterministe et attribution unique](phases/PHASE-F07-deterministic-tax-reconciliation.md) — *Terminé*
+- [F08 Modélisation et attribution des frais de courtage](phases/PHASE-F08-broker-fee-attribution.md) — *Terminé*
 - [F09 Réconciliation financière TTC et cohérence des indicateurs](phases/PHASE-F09-ttc-financial-reconciliation.md) — *Planifiée*
 - [F10 Reconstitution historique, recalcul et qualification financière](phases/PHASE-F10-historical-financial-recovery.md) — *Planifiée*
 

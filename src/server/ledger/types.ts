@@ -10,6 +10,24 @@ export interface TaxReconciliationDetail {
   justification: string;
 }
 
+export interface BrokerFeeReconciliationDetail {
+  status: 'EXACT_TRANSACTION' | 'ORDER_PRO_RATA' | 'UNMATCHED';
+  orderId?: number;
+  totalOrderFee?: number;
+  orderVolumeTotal?: number;
+  orderVolumeFilled?: number;
+  transactionQuantity?: number;
+  allocatedFeeAmount: number;
+  justification: string;
+}
+
+export interface BrokerFeeReconciliationSummary {
+  totalBrokerFeesCollectedIsk: number;
+  reconciledOrderFeesIsk: number;
+  allocatedBrokerFeesIsk: number;
+  unallocatedBrokerFeesIsk: number;
+}
+
 export interface CharacterTransaction {
   id: string; // Composite key: `${characterId}:${transactionId}`
   characterId: number;
@@ -33,6 +51,7 @@ export interface CharacterTransaction {
   brokerFee?: number; // Resolved broker fee from ESI journal
   netValue?: number; // Total value net of taxes and broker fees (TTC)
   taxReconciliation?: TaxReconciliationDetail;
+  brokerFeeReconciliation?: BrokerFeeReconciliationDetail;
 }
 
 export interface CharacterWalletJournalEntry {
@@ -101,6 +120,8 @@ export interface LedgerSummary {
   totalBuySpendIsk: number; // ISK spent on buys
   totalTaxesIsk: number; // ISK paid in transaction taxes
   totalBrokerFeesIsk: number; // ISK paid in brokers fees
+  unallocatedBrokerFeesIsk?: number; // ISK in unallocated / cancelled / orphan broker fees
+  totalBrokerFeesCollectedIsk?: number; // Total ISK of broker fee entries in journal
   totalNetSalesIsk: number; // ISK from sales after taxes & broker fees
   distinctItemsCount: number;
   distinctLocationsCount: number;

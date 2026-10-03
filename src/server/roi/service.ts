@@ -738,12 +738,20 @@ export class RoiService {
       ? `Du ${start_date.substring(0, 10)} au ${end_date.substring(0, 10)}`
       : 'Toutes périodes';
 
+    const brokerSummary = typeof this.ledgerRepo.getBrokerFeeSummary === 'function'
+      ? this.ledgerRepo.getBrokerFeeSummary(character_id, character_ids)
+      : undefined;
+
     return RoiCalculator.computeSummary(
       salesTransactions,
       allocations,
       unsoldInventory,
       character_id,
-      periodLabel
+      periodLabel,
+      brokerSummary ? {
+        unallocated_broker_fees_isk: brokerSummary.unallocatedBrokerFeesIsk,
+        total_broker_fees_collected_isk: brokerSummary.totalBrokerFeesCollectedIsk,
+      } : undefined
     );
   }
 }

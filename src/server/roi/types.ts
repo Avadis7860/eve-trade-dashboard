@@ -172,6 +172,8 @@ export interface RoiFinancialSummary {
   allocated_buy_cost_isk: number;
   allocated_buy_fees_isk: number;
   attributable_sell_fees_isk: number;
+  unallocated_broker_fees_isk?: number;
+  total_broker_fees_collected_isk?: number;
   total_allocated_investment_ttc: number;
   realized_profit_ttc_isk: number | null; // null if UNKNOWN
   roi_percent_ttc: number | null; // null if UNKNOWN

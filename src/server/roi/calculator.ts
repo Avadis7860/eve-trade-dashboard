@@ -178,7 +178,8 @@ export class RoiCalculator {
     allocations: ExplicitCostAllocation[],
     unsoldInventory: UnsoldInventoryItem[],
     characterId?: number,
-    periodLabel: string = 'Toutes périodes'
+    periodLabel: string = 'Toutes périodes',
+    brokerFeeMetrics?: { unallocated_broker_fees_isk?: number; total_broker_fees_collected_isk?: number }
   ): RoiFinancialSummary {
     const asOf = new Date().toISOString();
 
@@ -209,6 +210,8 @@ export class RoiCalculator {
         allocated_buy_cost_isk: 0,
         allocated_buy_fees_isk: 0,
         attributable_sell_fees_isk: 0,
+        unallocated_broker_fees_isk: brokerFeeMetrics?.unallocated_broker_fees_isk ?? 0,
+        total_broker_fees_collected_isk: brokerFeeMetrics?.total_broker_fees_collected_isk ?? 0,
         total_allocated_investment_ttc: 0,
         realized_profit_ttc_isk: null,
         roi_percent_ttc: null,
@@ -414,6 +417,8 @@ export class RoiCalculator {
       allocated_buy_cost_isk: allocatedBuyCostIsk,
       allocated_buy_fees_isk: allocatedBuyFeesIsk,
       attributable_sell_fees_isk: attributableSellFeesIsk,
+      unallocated_broker_fees_isk: brokerFeeMetrics?.unallocated_broker_fees_isk ?? 0,
+      total_broker_fees_collected_isk: brokerFeeMetrics?.total_broker_fees_collected_isk ?? 0,
       total_allocated_investment_ttc: totalAllocatedInvestmentTtc,
       realized_profit_ttc_isk: realizedProfitTtcIsk,
       roi_percent_ttc: roiPercentTtc,

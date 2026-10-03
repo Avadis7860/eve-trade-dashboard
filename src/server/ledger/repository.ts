@@ -6,9 +6,14 @@ import type {
   LedgerSummary,
   LedgerFilterOptions,
   TaxReconciliationDetail,
+  BrokerFeeReconciliationDetail,
+  BrokerFeeReconciliationSummary,
 } from './types.ts';
 import { makeJournalEntryKey } from './types.ts';
 import { TaxReconciliationEngine } from './taxReconciler.ts';
+import { BrokerFeeReconciliationEngine } from './brokerFeeReconciler.ts';
+import type { IOrdersRepository } from '../orders/repository.ts';
+import { defaultOrdersRepository } from '../orders/repository.ts';
 import { StorageManager, DurableFileDatabaseAdapter } from '../storage/database.ts';
 import type { IDatabaseAdapter } from '../storage/types.ts';
 
@@ -29,6 +34,8 @@ export interface ILedgerRepository {
     txTotalValue?: number,
     isBuy?: boolean
   ): { tax: number; brokerFee: number; entries: CharacterWalletJournalEntry[] };
+  getBrokerFeeSummary?(characterId?: number, characterIds?: number[]): BrokerFeeReconciliationSummary;
+  setOrdersRepository?(ordersRepo: IOrdersRepository): void;
   countTransactions(characterId: number): number;
   saveJournalEntries(entries: CharacterWalletJournalEntry[]): { inserted: number; updated: number };
   getJournalEntries(characterId?: number, page?: number, pageSize?: number): { items: CharacterWalletJournalEntry[]; total: number };
@@ -44,8 +51,15 @@ export class PersistentLedgerRepository implements ILedgerRepository {
   private transactions: Map<string, CharacterTransaction> = new Map();
   private journalEntries: Map<string, CharacterWalletJournalEntry> = new Map();
 
-  // Tax reconciliation cache
+  // Reconciliation caches
   private taxReconciliations: Map<string, TaxReconciliationDetail> = new Map();
+  private brokerFeeReconciliations: Map<string, BrokerFeeReconciliationDetail> = new Map();
+  private brokerFeeSummary: BrokerFeeReconciliationSummary = {
+    totalBrokerFeesCollectedIsk: 0,
+    reconciledOrderFeesIsk: 0,
+    allocatedBrokerFeesIsk: 0,
+    unallocatedBrokerFeesIsk: 0,
+  };
   private txRelatedJournalEntries: Map<string, CharacterWalletJournalEntry[]> = new Map();
   private isReconciliationDirty: boolean = true;
 
@@ -56,34 +70,80 @@ export class PersistentLedgerRepository implements ILedgerRepository {
   private jnByCharacter: Map<number, Set<string>> = new Map();
   private jnByCorporation: Map<number, Set<string>> = new Map();
 
-  constructor(private adapter: IDatabaseAdapter | null = null) {
+  constructor(
+    private adapter: IDatabaseAdapter | null = null,
+    private ordersRepo?: IOrdersRepository
+  ) {
     if (this.adapter) {
       this.loadFromStorage();
     }
   }
 
+  public setOrdersRepository(ordersRepo: IOrdersRepository): void {
+    this.ordersRepo = ordersRepo;
+    this.isReconciliationDirty = true;
+  }
+
   private ensureReconciliation(): void {
     if (!this.isReconciliationDirty) return;
+    const txList = Array.from(this.transactions.values());
+    const jnList = Array.from(this.journalEntries.values());
+    const ordersRepo = this.ordersRepo || defaultOrdersRepository;
+    const ordersList = ordersRepo ? ordersRepo.dumpData().snapshots : [];
+
     if (this.journalEntries.size === 0) {
       this.taxReconciliations.clear();
+      this.brokerFeeReconciliations.clear();
       this.txRelatedJournalEntries.clear();
-      for (const tx of this.transactions.values()) {
+      for (const tx of txList) {
         const txKey = this.makeTxKey(tx.characterId, tx.transactionId);
         this.taxReconciliations.set(txKey, {
           status: 'UNMATCHED',
           taxAmount: 0,
           justification: tx.isBuy ? 'Buy transaction: sales tax not applicable' : 'No matching tax journal entry found in ledger',
         });
+        this.brokerFeeReconciliations.set(txKey, {
+          status: 'UNMATCHED',
+          allocatedFeeAmount: 0,
+          transactionQuantity: tx.quantity,
+          justification: tx.isBuy ? 'Immediate market buy or unlinked order' : 'Immediate market sell or unlinked order',
+        });
       }
+      this.brokerFeeSummary = {
+        totalBrokerFeesCollectedIsk: 0,
+        reconciledOrderFeesIsk: 0,
+        allocatedBrokerFeesIsk: 0,
+        unallocatedBrokerFeesIsk: 0,
+      };
       this.isReconciliationDirty = false;
       return;
     }
-    const result = TaxReconciliationEngine.reconcile(
-      Array.from(this.transactions.values()),
-      Array.from(this.journalEntries.values())
-    );
-    this.taxReconciliations = result.reconciliations;
-    this.txRelatedJournalEntries = result.transactionJournalEntries;
+
+    // 1. Tax Reconciliation
+    const taxResult = TaxReconciliationEngine.reconcile(txList, jnList);
+    this.taxReconciliations = taxResult.reconciliations;
+    this.txRelatedJournalEntries = taxResult.transactionJournalEntries;
+
+    // 2. Broker Fee Reconciliation
+    const brokerResult = BrokerFeeReconciliationEngine.reconcile(txList, jnList, ordersList);
+    this.brokerFeeReconciliations = brokerResult.reconciliations;
+    this.brokerFeeSummary = brokerResult.summary;
+
+    // Merge broker fee related entries into txRelatedJournalEntries
+    for (const [txKey, entries] of brokerResult.transactionJournalEntries.entries()) {
+      let list = this.txRelatedJournalEntries.get(txKey);
+      if (!list) {
+        list = [];
+        this.txRelatedJournalEntries.set(txKey, list);
+      }
+      for (const e of entries) {
+        const eKey = e.id || makeJournalEntryKey(e);
+        if (!list.some((existing) => (existing.id || makeJournalEntryKey(existing)) === eKey)) {
+          list.push(e);
+        }
+      }
+    }
+
     this.isReconciliationDirty = false;
   }
 
@@ -221,15 +281,10 @@ export class PersistentLedgerRepository implements ILedgerRepository {
     const taxRec = this.taxReconciliations.get(txKey);
     const tax = taxRec?.taxAmount || 0;
 
-    const entries: CharacterWalletJournalEntry[] = this.txRelatedJournalEntries.get(txKey) || [];
+    const brokerRec = this.brokerFeeReconciliations.get(txKey);
+    const brokerFee = brokerRec?.allocatedFeeAmount || 0;
 
-    let brokerFee = 0;
-    for (let i = 0; i < entries.length; i++) {
-      const jn = entries[i];
-      if (TaxReconciliationEngine.isBrokerFeeJournalEntry(jn)) {
-        brokerFee += Math.abs(jn.amount || 0);
-      }
-    }
+    const entries: CharacterWalletJournalEntry[] = this.txRelatedJournalEntries.get(txKey) || [];
 
     return {
       tax: Math.round((tax + Number.EPSILON) * 100) / 100,
@@ -238,10 +293,43 @@ export class PersistentLedgerRepository implements ILedgerRepository {
     };
   }
 
+  public getBrokerFeeSummary(characterId?: number, characterIds?: number[]): BrokerFeeReconciliationSummary {
+    this.ensureReconciliation();
+    if (
+      (characterId === undefined && (!characterIds || characterIds.length === 0)) ||
+      (this.jnByCharacter.size <= 1 && (characterId === undefined || this.jnByCharacter.has(characterId)))
+    ) {
+      return { ...this.brokerFeeSummary };
+    }
+    const filterSet = characterIds && characterIds.length > 0 ? new Set(characterIds) : (characterId !== undefined ? new Set([characterId]) : null);
+    const txs = this.getAllTransactions(characterId, characterIds);
+    const jns: CharacterWalletJournalEntry[] = [];
+    if (filterSet) {
+      for (const cid of filterSet) {
+        const keys = this.jnByCharacter.get(cid);
+        if (keys) {
+          for (const k of keys) {
+            const jn = this.journalEntries.get(k);
+            if (jn) jns.push(jn);
+          }
+        }
+      }
+    } else {
+      for (const jn of this.journalEntries.values()) {
+        jns.push(jn);
+      }
+    }
+    const ordersRepo = this.ordersRepo || defaultOrdersRepository;
+    const orders = (ordersRepo ? ordersRepo.dumpData().snapshots : []).filter((o) => !filterSet || filterSet.has(o.characterId));
+    const result = BrokerFeeReconciliationEngine.reconcile(txs, jns, orders);
+    return result.summary;
+  }
+
   public enrichTransaction(tx: CharacterTransaction): CharacterTransaction {
     this.ensureReconciliation();
     const txKey = this.makeTxKey(tx.characterId, tx.transactionId);
     const taxRec = this.taxReconciliations.get(txKey);
+    const brokerFeeRec = this.brokerFeeReconciliations.get(txKey);
     const { tax, brokerFee } = this.getJournalEntriesForTransaction(
       tx.characterId,
       tx.transactionId,
@@ -260,6 +348,7 @@ export class PersistentLedgerRepository implements ILedgerRepository {
       brokerFee,
       netValue,
       taxReconciliation: taxRec,
+      brokerFeeReconciliation: brokerFeeRec,
     };
   }
 
@@ -605,9 +694,11 @@ export class PersistentLedgerRepository implements ILedgerRepository {
       distinctTypes.add(tx.typeId);
       distinctLocations.add(tx.locationId);
 
-      const enriched = this.enrichTransaction(tx);
-      totalTaxesIsk += (enriched.tax || 0);
-      totalBrokerFeesIsk += (enriched.brokerFee || 0);
+      const txKey = this.makeTxKey(tx.characterId, tx.transactionId);
+      const taxRec = this.taxReconciliations.get(txKey);
+      const brokerFeeRec = this.brokerFeeReconciliations.get(txKey);
+      totalTaxesIsk += (taxRec?.taxAmount || tx.tax || 0);
+      totalBrokerFeesIsk += (brokerFeeRec?.allocatedFeeAmount || tx.brokerFee || 0);
 
       if (tx.isBuy) {
         buyTransactionsCount++;
@@ -654,6 +745,8 @@ export class PersistentLedgerRepository implements ILedgerRepository {
     totalTaxesIsk = Math.max(totalTaxesIsk, journalTaxesTotal);
     totalBrokerFeesIsk = Math.max(totalBrokerFeesIsk, journalBrokerFeesTotal);
 
+    const brokerSummary = this.getBrokerFeeSummary(characterId, characterIds);
+
     totalGrossSalesIsk = Math.round((totalGrossSalesIsk + Number.EPSILON) * 100) / 100;
     totalBuySpendIsk = Math.round((totalBuySpendIsk + Number.EPSILON) * 100) / 100;
     totalTaxesIsk = Math.round((totalTaxesIsk + Number.EPSILON) * 100) / 100;
@@ -674,6 +767,8 @@ export class PersistentLedgerRepository implements ILedgerRepository {
       totalBuySpendIsk,
       totalTaxesIsk,
       totalBrokerFeesIsk,
+      unallocatedBrokerFeesIsk: brokerSummary.unallocatedBrokerFeesIsk,
+      totalBrokerFeesCollectedIsk: brokerSummary.totalBrokerFeesCollectedIsk,
       totalNetSalesIsk,
       distinctItemsCount: distinctTypes.size,
       distinctLocationsCount: distinctLocations.size,
@@ -1364,6 +1459,14 @@ export class PostgresLedgerRepository implements ILedgerRepository {
     );
     if (res.rows.length === 0) return null;
     return this.mapRowToJournal(res.rows[0]);
+  }
+
+  public getBrokerFeeSummary(characterId?: number, characterIds?: number[]): BrokerFeeReconciliationSummary {
+    return this.fallbackMemory.getBrokerFeeSummary(characterId, characterIds);
+  }
+
+  public setOrdersRepository(ordersRepo: IOrdersRepository): void {
+    this.fallbackMemory.setOrdersRepository(ordersRepo);
   }
 
   public getSummary(characterId?: number, characterIds?: number[]): LedgerSummary {

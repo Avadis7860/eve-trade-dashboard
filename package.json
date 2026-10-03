@@ -18,6 +18,8 @@
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "express": "^4.21.2",
+    "firebase": "^12.19.0",
+    "firebase-admin": "^14.5.0",
     "lucide-react": "^1.16.0",
     "pg": "^8.23.0",
     "react": "^19.0.0",

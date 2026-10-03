@@ -1,0 +1,62 @@
+{
+  "entities": {
+    "app_backup": {
+      "title": "App Backup",
+      "description": "Full application state backup snapshot",
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "number",
+          "description": "Backup schema version"
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "ISO timestamp of backup creation"
+        },
+        "data": {
+          "type": "object",
+          "description": "Serialized store data"
+        }
+      },
+      "required": ["version", "timestamp", "data"]
+    },
+    "hub": {
+      "title": "Trading Hub",
+      "description": "Trade hub definition and location mappings",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Hub identifier"
+        },
+        "name": {
+          "type": "string",
+          "description": "Hub display name"
+        },
+        "system_name": {
+          "type": "string",
+          "description": "Solar system name"
+        },
+        "is_system_default": {
+          "type": "boolean",
+          "description": "Whether this is a built-in default hub"
+        },
+        "created_at": {
+          "type": "string",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["id", "name", "system_name", "is_system_default", "created_at"]
+    }
+  },
+  "firestore": {
+    "/backups/{backupId}": {
+      "schema": "app_backup",
+      "description": "Application state backup documents"
+    },
+    "/hubs/{hubId}": {
+      "schema": "hub",
+      "description": "Custom trading hubs"
+    }
+  }
+}

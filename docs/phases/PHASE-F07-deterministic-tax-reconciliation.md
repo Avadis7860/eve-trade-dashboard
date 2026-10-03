@@ -50,44 +50,52 @@ De plus, l'observation fréquente de la relation séquentielle `taxJns.journalId
 - Attribution des commissions de courtage `brokers_fee` (réservé à **F08**).
 - Calcul global du bénéfice et des indicateurs de Cockpit (réservé à **F09**).
 
-### 3.3 Limites
-- Si l'historique ESI de journal est incomplet (ex: ventes antérieures à la fenêtre ESI), les ventes concernées doivent rester classées `TAX_UNKNOWN`, sans extrapolation.
+#### 3.3 Limites & Invariant d'Accumulation Historique (Au-delà du plafond ESI de 2 500 transactions)
+- **Persistance et accumulation multi-annuelle :** L'API ESI CCP présente une fenêtre glissante limitée à 2 500 transactions et environ 30 jours de journal. L'application garantit une conservation **strictement cumulative et append-only** en base de données : aucune transaction passée n'est écrasée ou supprimée lors des cycles de synchronisation ultérieurs.
+- **Support des volumes multi-mois / multi-années :** Le moteur de réconciliation et les index de stockage doivent être dimensionnés pour traiter efficacement des dizaines de milliers de transactions accumulées ($50\,000+$ items).
+- **Complexité algorithmique maîtrisée :** La réconciliation s'opère de manière atomique et indexée à l'ingestion ($O(N \log N)$ lors des syncs), garantissant un accès instantané en $O(1)$ lors des lectures paginées et des rendus UI sans recalcul à la volée.
+- **Absence d'extrapolation pour l'historique froid :** Si une vente ancienne accumulée en base est antérieure à la fenêtre de journal disponible lors de l'import initial, son statut est formellement classé `UNMATCHED` / `TAX_UNKNOWN`. Sa taxe est comptabilisée à 0 ISK dans le net provisoire tout en traçant explicitement l'incertitude dans `taxReconciliation.status`, sans inventer de taxe approximative.
 
 ---
 
 ## 4. État Technique Initial
 
 - **Fichiers concernés :**
-  - `src/server/ledger/repository.ts` (`getJournalEntriesForTransaction`, `enrichTransaction`)
-  - `src/server/ledger/types.ts`
+  - `src/server/ledger/repository.ts` (`getJournalEntriesForTransaction`, `enrichTransaction`, indexations secondaires)
+  - `src/server/ledger/types.ts` (`CharacterTransaction`, `CharacterWalletJournalEntry`, `TaxReconciliationDetail`)
   - `src/server/roi/service.ts` (`getTransactionFees`)
+  - `src/server/sync/service.ts` (déclenchement de la réconciliation à l'ingestion)
 - **Comportement actuel :**
-  - Traitement isolé, transaction par transaction.
-  - Matching heuristique non exclusif permettant le double comptage.
+  - Traitement isolé, transaction par transaction, recalculé à chaque lecture unitaire ou paginée.
+  - Matching heuristique non exclusif permettant le double comptage de la même taxe sur des ventes simultanées.
+  - Risque de régression de performance et d'instabilité d'état si un reconciler stateful est invoqué à la volée.
 
 ---
 
 ## 5. Architecture Cible et Stratégie
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│               TaxReconciliationEngine                     │
-│                                                          │
-│ 1. Tri chronologique et ordonnancement strict (M+1)      │
-│ 2. Réservation exclusive (allocatedTaxJournalIds: Set)   │
-│ 3. Passe 1 : context_id == tx_id (Exact)                 │
-│ 4. Passe 2 : tax.journal_id == tx.journal_ref_id + 1     │
-│ 5. Passe 3 : Corrélation bijective sans ambiguïté        │
-│ 6. Tout candidat résiduel ambigu -> Status: AMBIGUOUS    │
-└──────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                       TaxReconciliationEngine                           │
+│                                                                         │
+│ Ingestion/Batch -> Tri chronologique & Indexation atomique              │
+│ Réservation exclusive (allocatedTaxJournalIds: Set<string>)             │
+│                                                                         │
+│ 1. Passe 1 : context_id == tx_id (Exact)                                │
+│ 2. Passe 2 : tax.journal_id == tx.journal_ref_id + 1 (Séquentiel M+1)   │
+│ 3. Passe 3 : Corrélation bijective sans ambiguïté                       │
+│ 4. Tout candidat résiduel ambigu ou manquant -> Status: UNMATCHED       │
+│                                                                         │
+│ Lecture UI/API -> Accès instantané O(1) via données enrichies/indexées  │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-1. **Tableau de réconciliation avec réservation d'état :**
-   Le moteur opère sur l'ensemble du périmètre évalué (ou par lot cohérent) avec un ensemble `usedTaxJournalKeys = new Set<string>()`.
-2. **Explicabilité et preuve :**
+1. **Tableau de réconciliation avec réservation d'état et indexation :**
+   Le moteur opère sur l'ensemble du lot synchronisé ou à réconcilier avec un ensemble de clés uniques `usedTaxJournalKeys = new Set<string>()`. Les résultats de réconciliation sont persistés ou mis en cache indexé.
+2. **Explicabilité et preuve dans le contrat :**
    Chaque transaction enrichie comporte le détail :
    ```typescript
-   taxReconciliation: {
+   export interface TaxReconciliationDetail {
      status: 'EXACT_MATCH' | 'SEQUENTIAL_M_PLUS_1' | 'CORRELATED_BIJECTIVE' | 'UNMATCHED' | 'AMBIGUOUS';
      matchedJournalId?: number;
      taxAmount: number;
@@ -95,25 +103,26 @@ De plus, l'observation fréquente de la relation séquentielle `taxJns.journalId
      justification: string;
    }
    ```
-3. **Invariance comptable :**
-   $\sum \text{Taxes attribuées aux ventes} \le \sum \text{Taxes uniques du grand livre}$.
+3. **Invariance comptable & Non-régression :**
+   - $\sum \text{Taxes attribuées aux ventes} \le \sum \text{Taxes uniques réelles du grand livre}$.
+   - Rétrocompatibilité totale : `tax: number` (0 si UNMATCHED), `brokerFee: number`, `netValue: number` restent des valeurs numériques fiables pour l'ensemble des modules avals (ROI, Cockpit, Analytics).
 
 ---
 
 ## 6. Plan d'Implémentation Ordonné
 
 ### Étape 1 : Création du `TaxReconciliationEngine`
-- Créer `src/server/ledger/taxReconciler.ts` implémentant les passes d'appariement déterministes avec réservation exclusive d'identifiants.
+- Créer `src/server/ledger/taxReconciler.ts` implémentant les 3 passes d'appariement déterministes avec réservation exclusive d'identifiants et gestion des portefeuilles personnels et de corporation.
 
-### Étape 2 : Intégration dans `PersistentLedgerRepository`
-- Remplacer l'implémentation naïve de `getJournalEntriesForTransaction` par l'appel au moteur avec contexte d'attribution partagé.
-- Fournir une méthode batch `reconcileTaxesForScope(characterIds, dateRange)` pour enrichir l'ensemble des ventes en une passe atomique.
+### Étape 2 : Intégration dans `PersistentLedgerRepository` & Persistance
+- Intégrer le réconciliateur dans le flux d'ingestion et de sauvegarde (`saveTransactions`, `saveJournalEntries`) avec mise à jour d'un index d'attribution optimisé.
+- Rendre `enrichTransaction` et `getTransactionById` en temps constant $O(1)$ sans recalcul dynamique conflictuel.
 
-### Étape 3 : Gestion explicite des statuts de taxe
-- Mettre à jour `CharacterTransaction` pour exposer le statut de réconciliation fiscale et la preuve associée.
+### Étape 3 : Gestion explicite des statuts et typage
+- Étendre `CharacterTransaction` avec `taxReconciliation?: TaxReconciliationDetail` sans altérer la signature numérique existante.
 
-### Étape 4 : Tests exhaustifs de non-duplication
-- Tester les cas de ventes simultanées, de doublons de montants, de sauts de `journalId` et d'exceptions au pattern `M+1`.
+### Étape 4 : Tests exhaustifs d'invariance et de volume
+- Valider le comportement sur des ventes simultanées, des sauts de `journalId`, des transactions de corporation (divisions 1 à 7) et des benchmarks de volume (10 000+ transactions accumulées).
 
 ---
 
@@ -127,6 +136,7 @@ De plus, l'observation fréquente de la relation séquentielle `taxJns.journalId
 | `TEST-F07-04` | Unitaire | 3 ventes identiques dans la même seconde mais seulement 2 entrées `transaction_tax` en base | 2 ventes reçoivent une taxe, la 3ème est marquée `UNMATCHED` (pas de partage indu). |
 | `TEST-F07-05` | Unitaire | 2 ventes de montants différents et 2 taxes inversées dans l'ordre de tri | Le moteur apparie correctement chaque taxe à la vente correspondante par montant/taux. |
 | `TEST-F07-06` | Invariance | Somme des taxes attribuées sur 1 000 ventes synthétiques | $\sum \text{Taxes attribuées} \le \sum \text{Taxes réelles en base}$ (aucun dépassement arithmétique). |
+| `TEST-F07-07` | Volume/Durable | Historique accumulé de 10 000 transactions au-delà du plafond ESI 2 500 | Temps de lecture $O(1)$, aucune perte de transactions anciennes, conservation exacte de l'historique. |
 
 ---
 

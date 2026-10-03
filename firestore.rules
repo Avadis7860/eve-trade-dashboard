@@ -1,0 +1,39 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    match /backups/{backupId} {
+      allow read: if isSignedIn() && isValidId(backupId);
+      allow create: if isSignedIn() && isValidId(backupId) && incoming().version is number;
+      allow update: if isSignedIn() && isValidId(backupId) && incoming().version is number;
+      allow delete: if isSignedIn() && isValidId(backupId);
+    }
+
+    match /hubs/{hubId} {
+      allow read: if isSignedIn() && isValidId(hubId);
+      allow create: if isSignedIn() && isValidId(hubId) && incoming().id is string && incoming().name is string;
+      allow update: if isSignedIn() && isValidId(hubId) && incoming().id == existing().id;
+      allow delete: if isSignedIn() && isValidId(hubId);
+    }
+  }
+}

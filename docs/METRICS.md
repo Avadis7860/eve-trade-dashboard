@@ -6,30 +6,50 @@ Toutes les métriques produites par l'application sont déterministes, auditable
 
 ## 1. Métriques de Réalisation (Ventes exécutées)
 
-### 1.1. Chiffre d'Affaires Brut Observé ($CA_{brut}$)
-- **Formule** : $CA_{brut} = \sum (\text{Quantité vendue} \times \text{Prix unitaire de vente})$
-- **Source** : Transactions de vente ESI (`isBuy = false`).
-- **Périmètre** : Filtrable par période, personnage, hub, article.
+### 1.1. Décomposition du Chiffre d'Affaires Brut ($CA_{brut}$)
+- **Chiffre d'Affaires Brut Total ($CA_{brut,total}$)** :
+  $$CA_{brut,total} = \sum (\text{Quantité vendue} \times \text{Prix unitaire de vente})$$
+- **Chiffre d'Affaires Alloué ($CA_{brut,alloué}$)** : Fraction du chiffre d'affaires associée avec certitude à des lots d'achat FIFO ou stocks d'ouverture démontrés :
+  $$CA_{brut,alloué} = \sum (\text{Quantité allouée} \times \text{Prix unitaire de vente})$$
+- **Chiffre d'Affaires Non Alloué ($CA_{brut,non\_alloué}$)** : Fraction du chiffre d'affaires provenant de ventes sans historique d'achat dans la fenêtre d'observation ESI et sans stock d'ouverture :
+  $$CA_{brut,non\_alloué} = CA_{brut,total} - CA_{brut,alloué}$$
+- **Invariance arithmétique stricte** :
+  $$CA_{brut,total} = CA_{brut,alloué} + CA_{brut,non\_alloué}$$
+  *Règle d'intégrité* : Le CA non alloué ne génère aucun profit spéculatif. Le profit sur cette part reste strictement `UNKNOWN`.
 
-### 1.2. Investissement Alloué TTC ($Inv_{TTC}$)
+### 1.2. Indicateurs de Couverture : Financière vs Quantitative
+- **Couverture Financière ($Cov_{financière}$)** : Mesure économique de la part du chiffre d'affaires dont le coût d'acquisition est prouvé :
+  $$Cov_{financière} = \left(\frac{CA_{brut,alloué}}{CA_{brut,total}}\right) \times 100$$
+- **Couverture Quantitative ($Cov_{volume}$)** : Mesure physique de la proportion d'unités d'articles réconciliées :
+  $$Cov_{volume} = \left(\frac{\text{Volume alloué}}{\text{Volume total vendu}}\right) \times 100$$
+- **Statut de Couverture** :
+  - `COMPLETE` : $Cov_{financière} \ge 99.99\%$ et $Cov_{volume} \ge 99.99\%$.
+  - `PARTIAL` : $0 < Cov_{financière} < 99.99\%$ ou $0 < Cov_{volume} < 99.99\%$.
+  - `UNKNOWN` : $CA_{brut,alloué} = 0$ et $CA_{brut,total} > 0$.
+  - `EMPTY` : 0 transaction de vente dans le périmètre.
+
+### 1.3. Investissement Alloué TTC ($Inv_{TTC}$)
 - **Formule** : $Inv_{TTC} = \text{Coût d'acquisition matière alloué} + \text{Frais de courtage d'achat alloués}$
 - **Condition** : Si une fraction de la vente n'est pas rapprochée, $Inv_{TTC}$ correspond uniquement à la part rapprochée et le statut est `PARTIAL`.
 
-### 1.3. Bénéfice Réalisé TTC ($Profit_{TTC}$)
-- **Formule** :
-  $$Profit_{TTC} = CA_{brut,\text{alloué}} - \text{Coût d'acquisition alloué} - \text{Frais d'achat alloués} - \text{Taxes SCC vente} - \text{Frais courtage vente}$$
-- **Règle** : Si aucune transaction d'achat n'est rapprochée, $Profit_{TTC} = \text{null}$ avec statut `UNKNOWN`.
+### 1.4. Frais de Vente Alloués TTC ($Frais_{vente}$)
+- **Formule** : $Frais_{vente} = \text{Taxes SCC vente attribuées} + \text{Frais de courtage de vente attribués}$
 
-### 1.4. Taux de Retour sur Investissement TTC ($ROI_{TTC}$)
+### 1.5. Bénéfice Réalisé TTC ($Profit_{TTC}$)
+- **Formule** :
+  $$Profit_{TTC} = CA_{brut,\text{alloué}} - Inv_{TTC} - Frais_{vente}$$
+- **Règle** : Si aucune transaction d'achat n'est rapprochée ($Inv_{TTC} \le 0$), $Profit_{TTC} = \text{null}$ avec statut `UNKNOWN`.
+
+### 1.6. Taux de Retour sur Investissement TTC ($ROI_{TTC}$)
 - **Formule** :
   $$ROI_{TTC} = \left(\frac{Profit_{TTC}}{Inv_{TTC}}\right) \times 100$$
-- **Condition** : Calculé si et seulement si $Inv_{TTC} > 0$. Sinon `null`.
+- **Condition** : Calculé si et seulement si $Inv_{TTC} > 0$. Sinon `null` (`UNKNOWN`).
 
-### 1.5. Flux de Trésorerie Net de la Période ($Cash\_Flow_{net}$)
+### 1.7. Flux de Trésorerie Net de la Période ($Cash\_Flow_{net}$)
 - **Formule** :
   $$Cash\_Flow_{net} = \sum \text{Encaissements Ventes Nets} - \sum \text{Dépenses Achats Brutes} - \sum \text{Frais \& Taxes Journal}$$
 
-### 1.6. Rapprochement Fiscal Déterministe & Imputation des Taxes de Vente TTC
+### 1.8. Rapprochement Fiscal Déterministe & Imputation des Taxes de Vente TTC
 - **Principe d'unicité (1-to-1)** : Chaque écriture de taxe `transaction_tax` / `market_tax` du grand livre est attribuée à au plus une seule transaction de vente.
 - **Invariance comptable stricte** : $\sum \text{Taxes attribuées aux ventes} \le \sum \text{Taxes réelles uniques du grand livre}$.
 - **Attribution en 3 passes** :
@@ -38,7 +58,7 @@ Toutes les métriques produites par l'application sont déterministes, auditable
   3. *Passe 3 (Corrélation bijective)* : Appariement déterministe 1-to-1 par cohorte temporelle et taux sans réutilisation d'écritures fiscales.
 - **Gestion de l'incertitude** : Toute vente non couverte par une taxe prouvée est qualifiée `UNMATCHED` avec taxe numérique nulle (0 ISK) dans le net provisoire tout en conservant le détail dans `taxReconciliation`.
 
-### 1.7. Attribution et Proratisation des Frais de Courtage ($Brokers\_Fee$)
+### 1.9. Attribution et Proratisation des Frais de Courtage ($Brokers\_Fee$)
 - **Principe de corrélation d'ordres** :
   - Dans l'ESI, les commissions de courtage sont prélevées lors de la pose ou modification d'ordre (`jn.context_id == order_id`).
   - Les frais d'un ordre d'achat ou de vente sont attribués au prorata des volumes exécutés par chaque transaction fille :

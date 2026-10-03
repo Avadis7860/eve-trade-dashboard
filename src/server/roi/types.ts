@@ -63,6 +63,8 @@ export interface ExplicitCostAllocation {
   allocated_buy_cost: number; // quantity_allocated * unit_buy_price
   allocated_buy_fees: number; // allocated broker fees on buy
   allocated_sell_fees: number; // allocated sales taxes / broker fees on sell
+  allocated_sell_taxes?: number; // allocated sales taxes on sell
+  allocated_sell_broker_fees?: number; // allocated broker fees on sell
   buy_location_id: number;
   buy_hub_id: string;
   buy_hub_name: string;
@@ -79,9 +81,14 @@ export interface ExplicitCostAllocation {
 export interface FormulaProof {
   as_of: string;
   gross_revenue_isk: number;
+  gross_revenue_total_isk?: number;
+  gross_revenue_allocated_isk?: number;
+  gross_revenue_unallocated_isk?: number;
   allocated_buy_cost_isk: number;
   allocated_buy_fees_isk: number;
   allocated_sell_fees_isk: number;
+  allocated_sell_taxes_isk?: number;
+  allocated_sell_broker_fees_isk?: number;
   total_investment_ttc_isk: number;
   realized_profit_ttc_isk: number | null;
   roi_percent_ttc: number | null;
@@ -99,16 +106,23 @@ export interface SaleReconciliationDetail {
   quantity_sold: number;
   unit_sale_price_isk: number;
   gross_revenue_isk: number;
+  gross_revenue_total_isk?: number;
+  gross_revenue_allocated_isk?: number;
+  gross_revenue_unallocated_isk?: number;
   allocated_quantity: number;
   unallocated_quantity: number;
   allocated_buy_cost_isk: number;
   allocated_buy_fees_isk: number;
   allocated_sell_fees_isk: number;
+  allocated_sell_taxes_isk?: number;
+  allocated_sell_broker_fees_isk?: number;
   total_investment_ttc_isk: number;
   realized_profit_ttc_isk: number | null;
   roi_percent_ttc: number | null;
   coverage_status: MetricCoverageStatus;
   coverage_percent: number;
+  volume_coverage_percent: number;
+  financial_coverage_percent: number;
   location_id: number;
   location_name?: string;
   hub_id: string;
@@ -125,13 +139,19 @@ export interface HubPairPerformance {
   sold_volume_total: number;
   sold_volume_allocated: number;
   gross_revenue: number;
+  gross_revenue_allocated?: number;
+  gross_revenue_unallocated?: number;
   allocated_buy_cost: number;
   allocated_buy_fees: number;
   attributable_sell_fees: number;
+  allocated_sell_taxes?: number;
+  allocated_sell_broker_fees?: number;
   realized_profit_ttc: number | null; // null if UNKNOWN
   roi_percent_ttc: number | null; // null if UNKNOWN
   coverage_status: MetricCoverageStatus;
   coverage_percent: number; // 0 to 100
+  volume_coverage_percent?: number;
+  financial_coverage_percent?: number;
   transaction_count: number;
 }
 
@@ -168,10 +188,15 @@ export interface RoiFinancialSummary {
   unallocated_sales_volume: number;
   
   // Financial metrics
-  gross_revenue_isk: number;
+  gross_revenue_isk: number; // legacy alias to gross_revenue_total_isk
+  gross_revenue_total_isk: number;
+  gross_revenue_allocated_isk: number;
+  gross_revenue_unallocated_isk: number;
   allocated_buy_cost_isk: number;
   allocated_buy_fees_isk: number;
   attributable_sell_fees_isk: number;
+  allocated_sell_taxes_isk: number;
+  allocated_sell_broker_fees_isk: number;
   unallocated_broker_fees_isk?: number;
   total_broker_fees_collected_isk?: number;
   total_allocated_investment_ttc: number;
@@ -184,7 +209,10 @@ export interface RoiFinancialSummary {
   
   // Coverage & State
   coverage_status: MetricCoverageStatus;
-  coverage_percent: number; // Percentage of sold volume backed by explicit cost allocations
+  coverage_percent: number; // Percentage of sold volume backed by explicit cost allocations (legacy alias)
+  volume_coverage_percent: number; // Ratio en unités (allocated_sales_volume / total_sales_volume * 100)
+  financial_coverage_percent: number; // Ratio en ISK (gross_revenue_allocated_isk / gross_revenue_total_isk * 100)
+  financial_coverage_status?: MetricCoverageStatus;
   
   // Arithmetic Formula Proof
   proof: FormulaProof;

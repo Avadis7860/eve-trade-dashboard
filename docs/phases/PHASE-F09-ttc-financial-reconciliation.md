@@ -165,4 +165,10 @@ $$\text{ROI \% TTC} = \frac{\text{Bénéfice Réalisé TTC}}{\text{Investissemen
 
 ## 12. Statut
 
-**Planifiée** (Dépend de F08).
+**Terminée** — Tous les critères de sortie sont validés :
+1. Couverture quantitative vs couverture financière rigoureusement distinguées dans les types, calculs et l'UI.
+2. Formule du bénéfice réalisé TTC prouvée avec séparation taxes SCC et frais de courtage.
+3. Ventes non allouées tracées sans aucun profit fictif (`UNKNOWN`).
+4. Tests `TEST-F09-01` à `TEST-F09-05` au vert.
+5. Invariance stricte CA alloué + CA non alloué = CA total vérifiée sur 500 cas.
+6. Documentation et CODE_INDEX synchronisés.

@@ -65,3 +65,21 @@ Pour tout article dans une station ou structure donnée :
   $$\text{Frais Récupérés} = \text{Frais Alloués} + \text{Frais Non Attribués}$$
 - **Explicabilité unitaire** : Chaque transaction enrichie porte sa traçabilité `brokerFeeReconciliation` (`EXACT_TRANSACTION`, `ORDER_PRO_RATA`, `UNMATCHED`).
 
+## 9. Réconciliation Financière TTC et Couverture Déterministe (Phase F09)
+- **Distinction étanche Couverture Financière vs Couverture Quantitative** :
+  - La couverture financière ($Cov_{financière}$) mesure le ratio économique entre le chiffre d'affaires alloué à des achats connus ($CA_{alloué}$) et le chiffre d'affaires brut total observé ($CA_{total}$).
+  - La couverture quantitative ($Cov_{volume}$) mesure le ratio physique entre le volume d'unités d'articles rapprochées et le volume total d'unités vendues.
+  - Ces deux grandeurs ne doivent jamais être confondues ni amalgamées : une forte couverture en volume ne garantit en aucun cas une couverture financière équivalente.
+- **Invariance arithmétique stricte du chiffre d'affaires** :
+  $$\text{CA Brut Total} = \text{CA Alloué (Prouvé)} + \text{CA Non Alloué (Historique Incomplet)}$$
+  Vérifiée au centime d'ISK près sur tout le périmètre de calcul.
+- **Traitement du chiffre d'affaires non alloué** :
+  - Les ventes dépourvues d'historique d'achat ou de stock d'ouverture restent visibles et identifiées (`gross_revenue_unallocated_isk`).
+  - Aucun profit fictif ou spéculatif n'est calculé sur ce volume : le profit correspondant est strictement `null` avec statut `UNKNOWN`.
+- **Formule unifiée du Bénéfice Réalisé TTC** :
+  $$\text{Profit TTC} = \text{CA Alloué} - \text{Coût d'Achat Alloué} - \text{Frais Courtage Achat Alloués} - \text{Taxes Vente Attribuées} - \text{Frais Courtage Vente Attribués}$$
+  $$\text{Investissement TTC Alloué} = \text{Coût d'Achat Alloué} + \text{Frais Courtage Achat Alloués}$$
+  $$\text{ROI \% TTC} = \left(\frac{\text{Profit TTC}}{\text{Investissement TTC Alloué}}\right) \times 100$$
+  Calculé si et seulement si $\text{Investissement TTC Alloué} > 0$.
+
+

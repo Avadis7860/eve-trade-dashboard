@@ -33,7 +33,7 @@ Un seul chantier actif, une phase, une branche, un PR. Jamais sur main. Petits l
 | F06 | Identité canonique et déduplication des journaux de corporation multi-personnages | F05 | Terminé |
 | F07 | Rapprochement fiscal déterministe et attribution unique (M+1 & non-duplication) | F06 | Terminé |
 | F08 | Modélisation et attribution des frais de courtage (cycle de vie ordres & FIFO) | F07 | Terminé |
-| F09 | Réconciliation financière TTC et cohérence des indicateurs (Couverture CA vs Volume) | F08 | Planifiée |
+| F09 | Réconciliation financière TTC et cohérence des indicateurs (Couverture CA vs Volume) | F08 | Terminé |
 | F10 | Reconstitution historique, recalcul et qualification financière finale | F09 | Planifiée |
 | H03 | Hardening UX, performance et release finale | 00–12, F01–F10 | Planifiée |
 

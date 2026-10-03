@@ -20,6 +20,7 @@ import {
   ArrowRight,
   HelpCircle,
   Settings,
+  Info,
 } from 'lucide-react';
 import {
   RoiFinancialSummary,
@@ -359,15 +360,46 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             </div>
             <div className="p-2.5 bg-slate-950/80 rounded border border-slate-800">
               <div className="text-emerald-300">
-                Profit_TTC = CA_brut - Coût_achat_FIFO - Taxes_vente - Frais_courtage
+                Profit_TTC = CA_alloué − Coût_achat_FIFO − Frais_courtage_achat − Taxes_vente − Frais_courtage_vente
               </div>
               <div className="text-sky-300 mt-1">
                 ROI_TTC = (Profit_TTC / Investissement_alloué_TTC) × 100
               </div>
             </div>
-            <div className="text-[11px] text-slate-400">
-              • Taux de couverture des coûts : <strong className="text-slate-200">{roiSummary?.coverage_percent ?? 0}%</strong> ({roiSummary?.allocated_sales_volume ?? 0} unités réconciliées avec lots d&apos;achat).
+            <div className="text-[11px] text-slate-400 space-y-1">
+              <div>
+                • Couverture financière (valeur CA) : <strong className="text-slate-200">{roiSummary?.financial_coverage_percent ?? 0}%</strong> ({formatIsk(roiSummary?.gross_revenue_allocated_isk ?? 0)} alloués sur {formatIsk(roiSummary?.gross_revenue_total_isk ?? roiSummary?.gross_revenue_isk ?? 0)} de CA brut).
+              </div>
+              <div>
+                • Couverture quantitative (volume d&apos;unités) : <strong className="text-slate-200">{roiSummary?.volume_coverage_percent ?? roiSummary?.coverage_percent ?? 0}%</strong> ({roiSummary?.allocated_sales_volume ?? 0} / {roiSummary?.total_sales_volume ?? 0} unités réconciliées avec lots d&apos;achat).
+              </div>
+              {(roiSummary?.gross_revenue_unallocated_isk ?? 0) > 0 && (
+                <div className="text-amber-400 pt-1">
+                  • CA en attente de stock d&apos;ouverture : <strong className="text-amber-300">{formatIsk(roiSummary?.gross_revenue_unallocated_isk ?? 0)}</strong> (aucun profit spéculatif calculé sur ces ventes).
+                </div>
+              )}
             </div>
+          </div>
+        )}
+
+        {/* Unallocated Revenue Explanatory Notice if unallocated sales exist */}
+        {(roiSummary?.gross_revenue_unallocated_isk ?? 0) > 0 && (
+          <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 text-xs text-amber-200 flex items-start justify-between gap-3">
+            <div className="flex items-start gap-2">
+              <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-semibold text-amber-300">Chiffre d&apos;affaires non réconcilié : {formatIsk(roiSummary?.gross_revenue_unallocated_isk ?? 0)}</span> ({((roiSummary?.gross_revenue_unallocated_isk ?? 0) / (roiSummary?.gross_revenue_total_isk || roiSummary?.gross_revenue_isk || 1) * 100).toFixed(1)}% du CA total sans achat d&apos;origine tracé dans la fenêtre ESI).
+                <div className="text-amber-300/80 text-[11px] mt-0.5">
+                  Ces ventes ne génèrent aucun profit fictif. Vous pouvez enregistrer un Stock d&apos;Ouverture pour y associer un coût d&apos;acquisition historique certifié.
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => onNavigateTab('transactions', 'reconciliation')}
+              className="text-xs px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded border border-amber-500/30 whitespace-nowrap cursor-pointer transition-colors"
+            >
+              Créer Stock d&apos;Ouverture
+            </button>
           </div>
         )}
 
@@ -382,10 +414,10 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               <span className="text-slate-500">{summary?.sellTransactionsCount ?? 0} v.</span>
             </div>
             <div className="text-base font-bold font-mono text-emerald-400">
-              {summary ? formatIsk(summary.totalGrossSalesIsk) : '0.00 ISK'}
+              {summary ? formatIsk(roiSummary?.gross_revenue_total_isk ?? summary.totalGrossSalesIsk) : '0.00 ISK'}
             </div>
-            <div className="text-[10px] text-slate-500 font-mono">
-              {summary ? `${summary.totalSellVolume.toLocaleString()} u. vendues` : '0 u.'}
+            <div className="text-[10px] text-slate-400 font-mono">
+              Alloué : {formatIsk(roiSummary?.gross_revenue_allocated_isk ?? 0)} · Non alloué : {formatIsk(roiSummary?.gross_revenue_unallocated_isk ?? 0)}
             </div>
           </div>
 
@@ -439,7 +471,9 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 : 'En attente'}
             </div>
             <div className="text-[10px] text-slate-400 font-mono flex items-center justify-between">
-              <span>Couverture: {roiSummary?.coverage_percent ?? 0}%</span>
+              <span title={`Couverture financière (CA): ${roiSummary?.financial_coverage_percent ?? 0}% | Couverture volume: ${roiSummary?.volume_coverage_percent ?? roiSummary?.coverage_percent ?? 0}%`}>
+                Couv. CA: {roiSummary?.financial_coverage_percent ?? 0}% (Vol: {roiSummary?.volume_coverage_percent ?? roiSummary?.coverage_percent ?? 0}%)
+              </span>
               <button
                 onClick={() => onNavigateTab('transactions', 'reconciliation')}
                 className="text-amber-400 hover:text-amber-300 underline cursor-pointer"

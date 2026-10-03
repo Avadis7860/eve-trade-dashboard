@@ -223,13 +223,19 @@ export interface HubPairPerformance {
   sold_volume_total: number;
   sold_volume_allocated: number;
   gross_revenue: number;
+  gross_revenue_allocated?: number;
+  gross_revenue_unallocated?: number;
   allocated_buy_cost: number;
   allocated_buy_fees: number;
   attributable_sell_fees: number;
+  allocated_sell_taxes?: number;
+  allocated_sell_broker_fees?: number;
   realized_profit_ttc: number | null;
   roi_percent_ttc: number | null;
   coverage_status: 'COMPLETE' | 'PARTIAL' | 'UNKNOWN' | 'EMPTY';
   coverage_percent: number;
+  volume_coverage_percent?: number;
+  financial_coverage_percent?: number;
   transaction_count: number;
 }
 
@@ -257,9 +263,14 @@ export interface OpeningBalanceLot {
 export interface FormulaProof {
   as_of: string;
   gross_revenue_isk: number;
+  gross_revenue_total_isk?: number;
+  gross_revenue_allocated_isk?: number;
+  gross_revenue_unallocated_isk?: number;
   allocated_buy_cost_isk: number;
   allocated_buy_fees_isk: number;
   allocated_sell_fees_isk: number;
+  allocated_sell_taxes_isk?: number;
+  allocated_sell_broker_fees_isk?: number;
   total_investment_ttc_isk: number;
   realized_profit_ttc_isk: number | null;
   roi_percent_ttc: number | null;
@@ -277,16 +288,23 @@ export interface SaleReconciliationDetail {
   quantity_sold: number;
   unit_sale_price_isk: number;
   gross_revenue_isk: number;
+  gross_revenue_total_isk?: number;
+  gross_revenue_allocated_isk?: number;
+  gross_revenue_unallocated_isk?: number;
   allocated_quantity: number;
   unallocated_quantity: number;
   allocated_buy_cost_isk: number;
   allocated_buy_fees_isk: number;
   allocated_sell_fees_isk: number;
+  allocated_sell_taxes_isk?: number;
+  allocated_sell_broker_fees_isk?: number;
   total_investment_ttc_isk: number;
   realized_profit_ttc_isk: number | null;
   roi_percent_ttc: number | null;
   coverage_status: 'COMPLETE' | 'PARTIAL' | 'UNKNOWN' | 'EMPTY';
   coverage_percent: number;
+  volume_coverage_percent?: number;
+  financial_coverage_percent?: number;
   location_id: number;
   location_name?: string;
   hub_id: string;
@@ -311,6 +329,8 @@ export interface ExplicitCostAllocation {
   allocated_buy_cost: number;
   allocated_buy_fees: number;
   allocated_sell_fees: number;
+  allocated_sell_taxes?: number;
+  allocated_sell_broker_fees?: number;
   buy_hub_id: string;
   buy_hub_name: string;
   sell_hub_id: string;
@@ -348,9 +368,16 @@ export interface RoiFinancialSummary {
   allocated_sales_volume: number;
   unallocated_sales_volume: number;
   gross_revenue_isk: number;
+  gross_revenue_total_isk?: number;
+  gross_revenue_allocated_isk?: number;
+  gross_revenue_unallocated_isk?: number;
   allocated_buy_cost_isk: number;
   allocated_buy_fees_isk: number;
   attributable_sell_fees_isk: number;
+  allocated_sell_taxes_isk?: number;
+  allocated_sell_broker_fees_isk?: number;
+  unallocated_broker_fees_isk?: number;
+  total_broker_fees_collected_isk?: number;
   total_allocated_investment_ttc: number;
   realized_profit_ttc_isk: number | null;
   roi_percent_ttc: number | null;
@@ -358,6 +385,9 @@ export interface RoiFinancialSummary {
   unsold_items_count: number;
   coverage_status: 'COMPLETE' | 'PARTIAL' | 'UNKNOWN' | 'EMPTY';
   coverage_percent: number;
+  volume_coverage_percent?: number;
+  financial_coverage_percent?: number;
+  financial_coverage_status?: 'COMPLETE' | 'PARTIAL' | 'UNKNOWN' | 'EMPTY';
   proof?: FormulaProof;
   hub_pairs: HubPairPerformance[];
 }

@@ -10,6 +10,7 @@ import {
   Coins,
   Percent,
   Download,
+  Info,
 } from 'lucide-react';
 import {
   RoiFinancialSummary,
@@ -112,6 +113,21 @@ export const HubsRoiView: React.FC<HubsRoiViewProps> = ({
         </div>
       )}
 
+      {/* Unallocated Revenue Notice if unallocated sales exist */}
+      {roiSummary && (roiSummary.gross_revenue_unallocated_isk ?? 0) > 0 && (
+        <div className="p-3.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-xs text-amber-200 flex items-start gap-3">
+          <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <div className="font-semibold text-amber-300">
+              Chiffre d&apos;affaires non alloué : {formatIsk(roiSummary.gross_revenue_unallocated_isk ?? 0)} ({((roiSummary.gross_revenue_unallocated_isk ?? 0) / (roiSummary.gross_revenue_total_isk || roiSummary.gross_revenue_isk || 1) * 100).toFixed(1)}% du CA total)
+            </div>
+            <div className="text-amber-300/80 text-[11px]">
+              Ce montant correspond à des ventes antérieures à votre fenêtre ESI ou sans transaction d&apos;achat tracée. Aucun profit spéculatif n&apos;est imputé dessus. Créez un Stock d&apos;Ouverture dans l&apos;onglet Rapprochements pour certifier le coût d&apos;acquisition initial.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Global Financial Metrics Cards */}
       {roiSummary && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -121,10 +137,13 @@ export const HubsRoiView: React.FC<HubsRoiViewProps> = ({
               Chiffre d&apos;Affaires Brut
             </span>
             <div className="text-xl font-bold font-mono text-emerald-400">
-              {formatIsk(roiSummary.gross_revenue_isk)}
+              {formatIsk(roiSummary.gross_revenue_total_isk ?? roiSummary.gross_revenue_isk)}
             </div>
             <div className="text-xs text-slate-400 font-mono">
-              Volume alloué : {roiSummary.allocated_sales_volume.toLocaleString()} / {roiSummary.total_sales_volume.toLocaleString()} un.
+              Alloué : {formatIsk(roiSummary.gross_revenue_allocated_isk ?? roiSummary.gross_revenue_isk)} ({roiSummary.financial_coverage_percent ?? 0}%)
+              {(roiSummary.gross_revenue_unallocated_isk ?? 0) > 0 && (
+                <span className="text-amber-400 ml-1">· Non alloué : {formatIsk(roiSummary.gross_revenue_unallocated_isk ?? 0)}</span>
+              )}
             </div>
           </div>
 
@@ -138,8 +157,11 @@ export const HubsRoiView: React.FC<HubsRoiViewProps> = ({
                 ? formatIsk(roiSummary.realized_profit_ttc_isk)
                 : 'En attente d\'allocation'}
             </div>
-            <div className="text-xs text-emerald-400 font-mono font-semibold">
-              {roiSummary.roi_percent_ttc !== null ? `ROI Global : +${roiSummary.roi_percent_ttc.toFixed(2)}% TTC` : 'ROI non calculable (0%)'}
+            <div className="text-xs text-emerald-400 font-mono font-semibold flex items-center justify-between">
+              <span>{roiSummary.roi_percent_ttc !== null ? `ROI Global : +${roiSummary.roi_percent_ttc.toFixed(2)}% TTC` : 'ROI non calculable (0%)'}</span>
+              <span className="text-[10px] text-slate-400" title={`Couv. financière: ${roiSummary.financial_coverage_percent ?? 0}% | Couv. volume: ${roiSummary.volume_coverage_percent ?? roiSummary.coverage_percent ?? 0}%`}>
+                Couv: {roiSummary.financial_coverage_percent ?? 0}% CA
+              </span>
             </div>
           </div>
 

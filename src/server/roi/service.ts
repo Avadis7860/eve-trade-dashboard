@@ -24,21 +24,31 @@ export class RoiService {
   ) {}
 
   /**
-   * Helper to retrieve linked fees for a transaction from wallet journal entries
+   * Helper to retrieve linked fees and taxes for a transaction from wallet journal entries
    */
-  private getTransactionFees(tx: CharacterTransaction): number {
-    if (tx.tax !== undefined && tx.brokerFee !== undefined && (tx.tax > 0 || tx.brokerFee > 0)) {
-      return tx.isBuy ? (tx.brokerFee || 0) : ((tx.tax || 0) + (tx.brokerFee || 0));
+  private getTransactionTaxesAndFees(tx: CharacterTransaction): { tax: number; brokerFee: number; totalSellFees: number } {
+    let tax = tx.tax;
+    let brokerFee = tx.brokerFee;
+    if (tax === undefined || brokerFee === undefined) {
+      const jn = this.ledgerRepo.getJournalEntriesForTransaction(
+        tx.characterId,
+        tx.transactionId,
+        tx.journalRefId,
+        tx.date,
+        tx.totalValue,
+        tx.isBuy
+      );
+      tax = jn.tax;
+      brokerFee = jn.brokerFee;
     }
-    const { tax, brokerFee } = this.ledgerRepo.getJournalEntriesForTransaction(
-      tx.characterId,
-      tx.transactionId,
-      tx.journalRefId,
-      tx.date,
-      tx.totalValue,
-      tx.isBuy
-    );
-    return tx.isBuy ? brokerFee : (tax + brokerFee);
+    const safeTax = tax || 0;
+    const safeBroker = brokerFee || 0;
+    const totalSellFees = tx.isBuy ? safeBroker : (safeTax + safeBroker);
+    return { tax: safeTax, brokerFee: safeBroker, totalSellFees };
+  }
+
+  private getTransactionFees(tx: CharacterTransaction): number {
+    return this.getTransactionTaxesAndFees(tx).totalSellFees;
   }
 
   // --- Opening Balance Lots Management ---
@@ -163,6 +173,8 @@ export class RoiService {
     quantity_to_allocate: number;
     custom_buy_fees?: number;
     custom_sell_fees?: number;
+    custom_sell_taxes?: number;
+    custom_sell_broker_fees?: number;
     notes?: string;
   }): { success: boolean; allocation?: ExplicitCostAllocation; error?: string } {
     const {
@@ -201,13 +213,20 @@ export class RoiService {
       };
     }
 
-    // 3. Impute sell fees
-    let allocatedSellFees = params.custom_sell_fees !== undefined ? params.custom_sell_fees : 0;
-    if (params.custom_sell_fees === undefined) {
-      const totalSellFees = this.getTransactionFees(sellTx);
-      const ratio = sellTx.quantity > 0 ? quantity_to_allocate / sellTx.quantity : 0;
-      allocatedSellFees = roundIsk(totalSellFees * ratio);
-    }
+    // 3. Impute sell fees and taxes
+    const { tax: sellTax, brokerFee: sellBrokerFee } = this.getTransactionTaxesAndFees(sellTx);
+    const sellFeeRatio = sellTx.quantity > 0 ? quantity_to_allocate / sellTx.quantity : 0;
+    const defaultSellTax = roundIsk(sellTax * sellFeeRatio) ?? 0;
+    const defaultSellBroker = roundIsk(sellBrokerFee * sellFeeRatio) ?? 0;
+    const allocatedSellTaxes = params.custom_sell_taxes !== undefined
+      ? roundIsk(params.custom_sell_taxes) ?? 0
+      : defaultSellTax;
+    const allocatedSellBrokerFees = params.custom_sell_broker_fees !== undefined
+      ? roundIsk(params.custom_sell_broker_fees) ?? 0
+      : defaultSellBroker;
+    const allocatedSellFees = params.custom_sell_fees !== undefined
+      ? roundIsk(params.custom_sell_fees) ?? 0
+      : roundIsk(allocatedSellTaxes + allocatedSellBrokerFees) ?? 0;
 
     const sellHub = hubsService.resolveLocationToHub(sellTx.locationId, sellTx.locationName);
 
@@ -262,6 +281,8 @@ export class RoiService {
         allocated_buy_cost: allocatedBuyCost,
         allocated_buy_fees: 0, // Opening balances carry no additional buy broker fee
         allocated_sell_fees: allocatedSellFees,
+        allocated_sell_taxes: allocatedSellTaxes,
+        allocated_sell_broker_fees: allocatedSellBrokerFees,
         buy_location_id: ob.location_id,
         buy_hub_id: ob.hub_id,
         buy_hub_name: ob.hub_name,
@@ -338,6 +359,8 @@ export class RoiService {
       allocated_buy_cost: allocatedBuyCost,
       allocated_buy_fees: allocatedBuyFees,
       allocated_sell_fees: allocatedSellFees,
+      allocated_sell_taxes: allocatedSellTaxes,
+      allocated_sell_broker_fees: allocatedSellBrokerFees,
       buy_location_id: buyTx.locationId,
       buy_hub_id: buyHub.hub_id,
       buy_hub_name: buyHub.hub_name,
@@ -530,9 +553,11 @@ export class RoiService {
         const buyFeeRatio = lot.initialQty > 0 ? allocQty / lot.initialQty : 0;
         const allocatedBuyFees = roundIsk(lot.totalFees * buyFeeRatio);
 
-        const totalSellFees = this.getTransactionFees(sale);
+        const { tax: sellTax, brokerFee: sellBrokerFee } = this.getTransactionTaxesAndFees(sale);
         const sellFeeRatio = sale.quantity > 0 ? allocQty / sale.quantity : 0;
-        const allocatedSellFees = roundIsk(totalSellFees * sellFeeRatio);
+        const allocatedSellTaxes = roundIsk(sellTax * sellFeeRatio) ?? 0;
+        const allocatedSellBrokerFees = roundIsk(sellBrokerFee * sellFeeRatio) ?? 0;
+        const allocatedSellFees = roundIsk(allocatedSellTaxes + allocatedSellBrokerFees) ?? 0;
 
         const buyHub = hubsService.resolveLocationToHub(lot.locationId, lot.locationName);
         const sellHub = hubsService.resolveLocationToHub(sale.locationId, sale.locationName);
@@ -556,6 +581,8 @@ export class RoiService {
           allocated_buy_cost: allocatedBuyCost,
           allocated_buy_fees: allocatedBuyFees,
           allocated_sell_fees: allocatedSellFees,
+          allocated_sell_taxes: allocatedSellTaxes,
+          allocated_sell_broker_fees: allocatedSellBrokerFees,
           buy_location_id: lot.locationId,
           buy_hub_id: buyHub.hub_id,
           buy_hub_name: buyHub.hub_name,

@@ -1582,5 +1582,295 @@ describe('ROI TTC & Financial Metrics Module', () => {
       expect(summary2.roi_percent_ttc).toBe(summary1.roi_percent_ttc);
     });
   });
+
+  describe('Phase F09 — Réconciliation Financière TTC et Cohérence des Indicateurs', () => {
+    const BATTLESHIP_TYPE_ID = 644; // Raven
+    const AMMO_TYPE_ID = 262; // Scourge Heavy Missile
+
+    it('TEST-F09-01: distinguishes volume coverage from financial coverage (100 munitions 100k ISK vs 1 battleship 1 Mrd ISK)', () => {
+      // 1. Buy 100 ammo @ 500 ISK = 50,000 ISK
+      const ammoBuy = makeTx({
+        characterId: CHAR_ID,
+        transactionId: 9001,
+        date: '2026-03-01T08:00:00Z',
+        isBuy: true,
+        typeId: AMMO_TYPE_ID,
+        typeName: 'Scourge Heavy Missile',
+        quantity: 100,
+        unitPrice: 500,
+        locationId: 60003760,
+      });
+
+      // 2. Sell 100 ammo @ 1,000 ISK = 100,000 ISK
+      const ammoSell = makeTx({
+        characterId: CHAR_ID,
+        transactionId: 9002,
+        date: '2026-03-01T10:00:00Z',
+        isBuy: false,
+        typeId: AMMO_TYPE_ID,
+        typeName: 'Scourge Heavy Missile',
+        quantity: 100,
+        unitPrice: 1000,
+        locationId: 60003760,
+      });
+
+      // 3. Sell 1 battleship @ 1,000,000,000 ISK (1 Billion ISK) without purchase history
+      const battleshipSell = makeTx({
+        characterId: CHAR_ID,
+        transactionId: 9003,
+        date: '2026-03-01T11:00:00Z',
+        isBuy: false,
+        typeId: BATTLESHIP_TYPE_ID,
+        typeName: 'Raven',
+        quantity: 1,
+        unitPrice: 1000000000,
+        locationId: 60003760,
+      });
+
+      ledgerRepository.saveTransactions([ammoBuy, ammoSell, battleshipSell]);
+
+      // Reconcile FIFO
+      const autoRes = roiService.autoReconcileFifo({ characterId: CHAR_ID });
+      expect(autoRes.allocations_created).toBe(1);
+
+      const summary = roiService.getSummary({ character_id: CHAR_ID });
+
+      // Total units: 100 ammo + 1 battleship = 101 units
+      expect(summary.total_sales_volume).toBe(101);
+      // Allocated units: 100 ammo
+      expect(summary.allocated_sales_volume).toBe(100);
+      expect(summary.unallocated_sales_volume).toBe(1);
+
+      // Volume coverage: 100 / 101 * 100 = 99.0099... -> 99.01%
+      expect(summary.volume_coverage_percent).toBe(99.01);
+      expect(summary.coverage_percent).toBe(99.01);
+
+      // Financial breakdown:
+      // Total CA: 100,000 + 1,000,000,000 = 1,000,100,000 ISK
+      expect(summary.gross_revenue_total_isk).toBe(1000100000);
+      expect(summary.gross_revenue_isk).toBe(1000100000);
+      // Allocated CA: 100,000 ISK
+      expect(summary.gross_revenue_allocated_isk).toBe(100000);
+      // Unallocated CA: 1,000,000,000 ISK
+      expect(summary.gross_revenue_unallocated_isk).toBe(1000000000);
+
+      // Financial coverage: 100,000 / 1,000,100,000 * 100 = 0.009999... -> 0.01%
+      expect(summary.financial_coverage_percent).toBe(0.01);
+
+      // Status must be PARTIAL because financial coverage is 0.01% despite 99.01% volume coverage
+      expect(summary.coverage_status).toBe('PARTIAL');
+    });
+
+    it('TEST-F09-02: calculates exact profit TTC with separated purchase cost, buy fees, sales taxes and sell broker fees', () => {
+      // Coût achat: 10,000,000 ISK
+      // Frais achat: 200,000 ISK
+      // Taxes vente: 800,000 ISK
+      // Frais vente: 300,000 ISK
+      // CA alloué: 15,000,000 ISK
+      const proof = RoiCalculator.buildProof({
+        asOf: '2026-03-01T12:00:00Z',
+        grossRevenue: 15000000,
+        allocatedBuyCost: 10000000,
+        allocatedBuyFees: 200000,
+        allocatedSellFees: 1100000,
+        allocatedSellTaxes: 800000,
+        allocatedSellBrokerFees: 300000,
+        allocatedVolume: 10,
+        totalVolume: 10,
+      });
+
+      // Investissement TTC = 10M + 200k = 10,200,000 ISK
+      expect(proof.total_investment_ttc_isk).toBe(10200000);
+      // Frais de vente alloués = 800k + 300k = 1,100,000 ISK
+      expect(proof.allocated_sell_fees_isk).toBe(1100000);
+      expect(proof.allocated_sell_taxes_isk).toBe(800000);
+      expect(proof.allocated_sell_broker_fees_isk).toBe(300000);
+      // Bénéfice = 15M - 10.2M - 1.1M = 3,700,000 ISK
+      expect(proof.realized_profit_ttc_isk).toBe(3700000);
+      // ROI = (3.7M / 10.2M) * 100 = 36.2745... -> 36.27%
+      expect(proof.roi_percent_ttc).toBe(36.27);
+    });
+
+    it('TEST-F09-03: returns UNKNOWN with 100% unallocated revenue when purchase history is completely absent', () => {
+      const sellTx = makeTx({
+        characterId: CHAR_ID,
+        transactionId: 9101,
+        date: '2026-03-01T10:00:00Z',
+        isBuy: false,
+        typeId: TRITANIUM_TYPE_ID,
+        typeName: 'Tritanium',
+        quantity: 500,
+        unitPrice: 200,
+        locationId: 60003760,
+      });
+
+      ledgerRepository.saveTransactions([sellTx]);
+
+      const summary = roiService.getSummary({ character_id: CHAR_ID });
+      expect(summary.total_sales_volume).toBe(500);
+      expect(summary.allocated_sales_volume).toBe(0);
+      expect(summary.unallocated_sales_volume).toBe(500);
+
+      expect(summary.gross_revenue_total_isk).toBe(100000);
+      expect(summary.gross_revenue_allocated_isk).toBe(0);
+      expect(summary.gross_revenue_unallocated_isk).toBe(100000); // 100% du CA brut
+      expect(summary.financial_coverage_percent).toBe(0);
+      expect(summary.volume_coverage_percent).toBe(0);
+
+      // Strict Domain Contract: ROI and Realized profit must be null (UNKNOWN)
+      expect(summary.realized_profit_ttc_isk).toBeNull();
+      expect(summary.roi_percent_ttc).toBeNull();
+      expect(summary.coverage_status).toBe('UNKNOWN');
+    });
+
+    it('TEST-F09-04: strict invariance CA Alloué + CA Non Alloué = CA Brut Total verified across 500 random cases', () => {
+      for (let i = 0; i < 500; i++) {
+        const totalSalesVolume = Math.floor(Math.random() * 5000) + 1;
+        const allocatedSalesVolume = Math.floor(Math.random() * (totalSalesVolume + 1));
+        const unitPrice = Math.round((Math.random() * 100000 + 0.01) * 100) / 100;
+
+        const fakeTxs: CharacterTransaction[] = [
+          makeTx({
+            characterId: CHAR_ID,
+            transactionId: 100000 + i,
+            date: '2026-03-01T10:00:00Z',
+            isBuy: false,
+            typeId: TRITANIUM_TYPE_ID,
+            typeName: 'Tritanium',
+            quantity: totalSalesVolume,
+            unitPrice,
+            locationId: 60003760,
+          }),
+        ];
+
+        const fakeAllocations: ExplicitCostAllocation[] = allocatedSalesVolume > 0 ? [
+          {
+            id: `test-alloc-${i}`,
+            character_id: CHAR_ID,
+            sell_transaction_id: 100000 + i,
+            source_type: 'TRANSACTION',
+            type_id: TRITANIUM_TYPE_ID,
+            type_name: 'Tritanium',
+            quantity_allocated: allocatedSalesVolume,
+            unit_buy_price: unitPrice * 0.7,
+            allocated_buy_cost: roundIsk(allocatedSalesVolume * (unitPrice * 0.7)),
+            allocated_buy_fees: 0,
+            allocated_sell_fees: 0,
+            buy_location_id: 60003760,
+            buy_hub_id: 'jita',
+            buy_hub_name: 'Jita',
+            sell_location_id: 60003760,
+            sell_hub_id: 'jita',
+            sell_hub_name: 'Jita',
+            reconciliation_mode: 'FIFO_AUTOMATIC',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            version: 1,
+          },
+        ] : [];
+
+        const summary = RoiCalculator.computeSummary(
+          fakeTxs,
+          fakeAllocations,
+          [],
+          CHAR_ID
+        );
+
+        // Strict invariant check: CA Alloué + CA Non Alloué === CA Brut Total (to the exact cent of ISK)
+        const sumRecomputed = roundIsk(summary.gross_revenue_allocated_isk + summary.gross_revenue_unallocated_isk);
+        expect(sumRecomputed).toBe(summary.gross_revenue_total_isk);
+        expect(summary.gross_revenue_isk).toBe(summary.gross_revenue_total_isk);
+      }
+    });
+
+    it('TEST-F09-05: cockpit multi-character integration provides isolated and consolidated financial coverage', () => {
+      // Char 1: Sell 100 Tritanium @ 10 ISK = 1,000 ISK, fully allocated with buy @ 5 ISK
+      const char1Buy = makeTx({
+        characterId: CHAR_ID,
+        transactionId: 9201,
+        date: '2026-03-01T08:00:00Z',
+        isBuy: true,
+        typeId: TRITANIUM_TYPE_ID,
+        typeName: 'Tritanium',
+        quantity: 100,
+        unitPrice: 5,
+        locationId: 60003760,
+      });
+
+      const char1Sell = makeTx({
+        characterId: CHAR_ID,
+        transactionId: 9202,
+        date: '2026-03-01T10:00:00Z',
+        isBuy: false,
+        typeId: TRITANIUM_TYPE_ID,
+        typeName: 'Tritanium',
+        quantity: 100,
+        unitPrice: 10,
+        locationId: 60003760,
+      });
+
+      // Char 2: Sell 100 PLEX @ 50,000 ISK = 5,000,000 ISK, unallocated (0 purchase)
+      const char2Sell = makeTx({
+        characterId: OTHER_CHAR_ID,
+        transactionId: 9203,
+        date: '2026-03-01T11:00:00Z',
+        isBuy: false,
+        typeId: PLEX_TYPE_ID,
+        typeName: 'PLEX',
+        quantity: 100,
+        unitPrice: 50000,
+        locationId: 60003760,
+      });
+
+      ledgerRepository.saveTransactions([char1Buy, char1Sell, char2Sell]);
+
+      // Reconcile FIFO for all characters
+      roiService.autoReconcileFifo({ characterIds: [CHAR_ID, OTHER_CHAR_ID] });
+
+      // 1. Char 1 filtered view
+      const summaryChar1 = roiService.getSummary({ character_id: CHAR_ID });
+      expect(summaryChar1.total_sales_volume).toBe(100);
+      expect(summaryChar1.allocated_sales_volume).toBe(100);
+      expect(summaryChar1.gross_revenue_total_isk).toBe(1000);
+      expect(summaryChar1.gross_revenue_allocated_isk).toBe(1000);
+      expect(summaryChar1.gross_revenue_unallocated_isk).toBe(0);
+      expect(summaryChar1.financial_coverage_percent).toBe(100);
+      expect(summaryChar1.volume_coverage_percent).toBe(100);
+      expect(summaryChar1.coverage_status).toBe('COMPLETE');
+      expect(summaryChar1.realized_profit_ttc_isk).toBe(500);
+
+      // 2. Char 2 filtered view
+      const summaryChar2 = roiService.getSummary({ character_id: OTHER_CHAR_ID });
+      expect(summaryChar2.total_sales_volume).toBe(100);
+      expect(summaryChar2.allocated_sales_volume).toBe(0);
+      expect(summaryChar2.gross_revenue_total_isk).toBe(5000000);
+      expect(summaryChar2.gross_revenue_allocated_isk).toBe(0);
+      expect(summaryChar2.gross_revenue_unallocated_isk).toBe(5000000);
+      expect(summaryChar2.financial_coverage_percent).toBe(0);
+      expect(summaryChar2.volume_coverage_percent).toBe(0);
+      expect(summaryChar2.coverage_status).toBe('UNKNOWN');
+      expect(summaryChar2.realized_profit_ttc_isk).toBeNull();
+
+      // 3. Consolidated Multi-Character view
+      const summaryAll = roiService.getSummary({ character_ids: [CHAR_ID, OTHER_CHAR_ID] });
+      expect(summaryAll.total_sales_volume).toBe(200);
+      expect(summaryAll.allocated_sales_volume).toBe(100);
+      expect(summaryAll.unallocated_sales_volume).toBe(100);
+      expect(summaryAll.volume_coverage_percent).toBe(50); // 100 / 200
+
+      // Financial consolidation:
+      // Total CA: 1,000 + 5,000,000 = 5,001,000 ISK
+      expect(summaryAll.gross_revenue_total_isk).toBe(5001000);
+      // Allocated CA: 1,000 ISK
+      expect(summaryAll.gross_revenue_allocated_isk).toBe(1000);
+      // Unallocated CA: 5,000,000 ISK
+      expect(summaryAll.gross_revenue_unallocated_isk).toBe(5000000);
+      // Financial coverage: 1,000 / 5,001,000 * 100 = 0.019996... -> 0.02%
+      expect(summaryAll.financial_coverage_percent).toBe(0.02);
+      expect(summaryAll.coverage_status).toBe('PARTIAL');
+      // Profit proven: only Char 1's 500 ISK
+      expect(summaryAll.realized_profit_ttc_isk).toBe(500);
+    });
+  });
 });
 

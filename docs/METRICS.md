@@ -29,6 +29,15 @@ Toutes les métriques produites par l'application sont déterministes, auditable
 - **Formule** :
   $$Cash\_Flow_{net} = \sum \text{Encaissements Ventes Nets} - \sum \text{Dépenses Achats Brutes} - \sum \text{Frais \& Taxes Journal}$$
 
+### 1.6. Rapprochement Fiscal Déterministe & Imputation des Taxes de Vente TTC
+- **Principe d'unicité (1-to-1)** : Chaque écriture de taxe `transaction_tax` / `market_tax` du grand livre est attribuée à au plus une seule transaction de vente.
+- **Invariance comptable stricte** : $\sum \text{Taxes attribuées aux ventes} \le \sum \text{Taxes réelles uniques du grand livre}$.
+- **Attribution en 3 passes** :
+  1. *Passe 1 (Exacte & Directe)* : Correspondance directe `context_id == transaction_id` ou référence directe `journalRefId`.
+  2. *Passe 2 (Séquentielle CCP M+1)* : Succession directe de journal (`taxJn.journalId == mktJn.journalId + 1`) avec cohérence temporelle (même seconde) et cohérence arithmétique de taux.
+  3. *Passe 3 (Corrélation bijective)* : Appariement déterministe 1-to-1 par cohorte temporelle et taux sans réutilisation d'écritures fiscales.
+- **Gestion de l'incertitude** : Toute vente non couverte par une taxe prouvée est qualifiée `UNMATCHED` avec taxe numérique nulle (0 ISK) dans le net provisoire tout en conservant le détail dans `taxReconciliation`.
+
 ---
 
 ## 2. Métriques de Capital & Patrimoine

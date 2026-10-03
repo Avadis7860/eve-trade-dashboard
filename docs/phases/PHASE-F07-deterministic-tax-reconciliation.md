@@ -175,4 +175,4 @@ De plus, l'observation fréquente de la relation séquentielle `taxJns.journalId
 
 ## 12. Statut
 
-**Planifiée** (Dépend de F06).
+**Validée** (100% des tests TEST-F07-01 à TEST-F07-07 au vert, invariance comptable prouvée, O(1) reads sous volume 10 000+ items).

@@ -2,6 +2,14 @@
  * Domain types and contracts for the Sales & Purchases Ledger (Grand Livre)
  */
 
+export interface TaxReconciliationDetail {
+  status: 'EXACT_MATCH' | 'SEQUENTIAL_M_PLUS_1' | 'CORRELATED_BIJECTIVE' | 'UNMATCHED' | 'AMBIGUOUS';
+  matchedJournalId?: number;
+  taxAmount: number;
+  taxRate?: number;
+  justification: string;
+}
+
 export interface CharacterTransaction {
   id: string; // Composite key: `${characterId}:${transactionId}`
   characterId: number;
@@ -24,6 +32,7 @@ export interface CharacterTransaction {
   tax?: number; // Resolved transaction tax from ESI journal
   brokerFee?: number; // Resolved broker fee from ESI journal
   netValue?: number; // Total value net of taxes and broker fees (TTC)
+  taxReconciliation?: TaxReconciliationDetail;
 }
 
 export interface CharacterWalletJournalEntry {

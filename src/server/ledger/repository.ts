@@ -5,8 +5,10 @@ import type {
   PaginatedLedgerResult,
   LedgerSummary,
   LedgerFilterOptions,
+  TaxReconciliationDetail,
 } from './types.ts';
 import { makeJournalEntryKey } from './types.ts';
+import { TaxReconciliationEngine } from './taxReconciler.ts';
 import { StorageManager, DurableFileDatabaseAdapter } from '../storage/database.ts';
 import type { IDatabaseAdapter } from '../storage/types.ts';
 
@@ -42,6 +44,11 @@ export class PersistentLedgerRepository implements ILedgerRepository {
   private transactions: Map<string, CharacterTransaction> = new Map();
   private journalEntries: Map<string, CharacterWalletJournalEntry> = new Map();
 
+  // Tax reconciliation cache
+  private taxReconciliations: Map<string, TaxReconciliationDetail> = new Map();
+  private txRelatedJournalEntries: Map<string, CharacterWalletJournalEntry[]> = new Map();
+  private isReconciliationDirty: boolean = true;
+
   // Secondary indexes for sub-millisecond filtering on 50k+ items
   private txByCharacter: Map<number, Set<string>> = new Map();
   private txByType: Map<number, Set<string>> = new Map();
@@ -53,6 +60,31 @@ export class PersistentLedgerRepository implements ILedgerRepository {
     if (this.adapter) {
       this.loadFromStorage();
     }
+  }
+
+  private ensureReconciliation(): void {
+    if (!this.isReconciliationDirty) return;
+    if (this.journalEntries.size === 0) {
+      this.taxReconciliations.clear();
+      this.txRelatedJournalEntries.clear();
+      for (const tx of this.transactions.values()) {
+        const txKey = this.makeTxKey(tx.characterId, tx.transactionId);
+        this.taxReconciliations.set(txKey, {
+          status: 'UNMATCHED',
+          taxAmount: 0,
+          justification: tx.isBuy ? 'Buy transaction: sales tax not applicable' : 'No matching tax journal entry found in ledger',
+        });
+      }
+      this.isReconciliationDirty = false;
+      return;
+    }
+    const result = TaxReconciliationEngine.reconcile(
+      Array.from(this.transactions.values()),
+      Array.from(this.journalEntries.values())
+    );
+    this.taxReconciliations = result.reconciliations;
+    this.txRelatedJournalEntries = result.transactionJournalEntries;
+    this.isReconciliationDirty = false;
   }
 
   private loadFromStorage(): void {
@@ -163,6 +195,8 @@ export class PersistentLedgerRepository implements ILedgerRepository {
       }
     }
 
+    this.isReconciliationDirty = true;
+    this.ensureReconciliation();
     this.syncToStorage();
     return { inserted, updated };
   }
@@ -177,98 +211,37 @@ export class PersistentLedgerRepository implements ILedgerRepository {
   public getJournalEntriesForTransaction(
     characterId: number,
     transactionId: number,
-    journalRefId?: number,
-    txDate?: string,
-    txTotalValue?: number,
-    isBuy?: boolean
+    _journalRefId?: number,
+    _txDate?: string,
+    _txTotalValue?: number,
+    _isBuy?: boolean
   ): { tax: number; brokerFee: number; entries: CharacterWalletJournalEntry[] } {
-    let tax = 0;
+    this.ensureReconciliation();
+    const txKey = this.makeTxKey(characterId, transactionId);
+    const taxRec = this.taxReconciliations.get(txKey);
+    const tax = taxRec?.taxAmount || 0;
+
+    const entries: CharacterWalletJournalEntry[] = this.txRelatedJournalEntries.get(txKey) || [];
+
     let brokerFee = 0;
-    let dedicatedTaxFound = false;
-    let fallbackTax = 0;
-    const entries: CharacterWalletJournalEntry[] = [];
-
-    const charJnKeys = this.jnByCharacter.get(characterId);
-    if (!charJnKeys || charJnKeys.size === 0) {
-      return { tax: 0, brokerFee: 0, entries: [] };
-    }
-
-    for (const key of charJnKeys) {
-      const jn = this.journalEntries.get(key);
-      if (!jn) continue;
-
-      const matchesTxId = jn.contextId !== undefined && Number(jn.contextId) === Number(transactionId);
-      const matchesRefId = journalRefId !== undefined && Number(jn.journalId) === Number(journalRefId);
-      const matchesContextRef = jn.contextId !== undefined && journalRefId !== undefined && Number(jn.contextId) === Number(journalRefId);
-      const isTaxRef = jn.refType === 'transaction_tax' || jn.refType === 'market_tax' || jn.refType === 'contract_sales_tax' || jn.contextIdType === 'transaction_tax';
-      const isBrokerRef = jn.refType === 'brokers_fee' || jn.refType === 'broker_fee' || jn.refType === 'contract_brokers_fee' || jn.contextIdType === 'broker_fee';
-
-      if (matchesTxId || matchesRefId || matchesContextRef) {
-        if (isTaxRef) {
-          const taxAmt = jn.tax !== undefined && jn.tax > 0 ? jn.tax : Math.abs(jn.amount || 0);
-          tax += taxAmt;
-          dedicatedTaxFound = true;
-          entries.push(jn);
-        } else if (isBrokerRef) {
-          const feeAmt = Math.abs(jn.amount || 0);
-          brokerFee += feeAmt;
-          entries.push(jn);
-        } else if (jn.refType === 'market_transaction') {
-          if (jn.tax !== undefined && jn.tax > 0) {
-            fallbackTax = jn.tax;
-          }
-          entries.push(jn);
-        } else if (jn.tax !== undefined && jn.tax > 0) {
-          fallbackTax = jn.tax;
-          entries.push(jn);
-        }
+    for (let i = 0; i < entries.length; i++) {
+      const jn = entries[i];
+      if (TaxReconciliationEngine.isBrokerFeeJournalEntry(jn)) {
+        brokerFee += Math.abs(jn.amount || 0);
       }
     }
 
-    if (!dedicatedTaxFound && isBuy === false) {
-      const txTime = txDate ? new Date(txDate).getTime() : 0;
-      for (const key of charJnKeys) {
-        const jn = this.journalEntries.get(key);
-        if (!jn) continue;
-
-        const isTaxRef = jn.refType === 'transaction_tax' || jn.refType === 'market_tax' || jn.refType === 'contract_sales_tax';
-        if (!isTaxRef) continue;
-
-        const isAdjacentId = journalRefId !== undefined && Math.abs(jn.journalId - journalRefId) <= 10;
-        const jnTime = new Date(jn.date).getTime();
-        const isTimeMatch = txTime > 0 && Math.abs(jnTime - txTime) <= 3000;
-
-        if (isAdjacentId || isTimeMatch) {
-          const taxAmt = jn.tax !== undefined && jn.tax > 0 ? jn.tax : Math.abs(jn.amount || 0);
-          if (txTotalValue !== undefined && txTotalValue > 0) {
-            const ratio = taxAmt / txTotalValue;
-            if (ratio >= 0.02 && ratio <= 0.12) {
-              tax += taxAmt;
-              dedicatedTaxFound = true;
-              entries.push(jn);
-              break;
-            }
-          } else {
-            tax += taxAmt;
-            dedicatedTaxFound = true;
-            entries.push(jn);
-            break;
-          }
-        }
-      }
-    }
-
-    if (!dedicatedTaxFound && fallbackTax > 0) {
-      tax += fallbackTax;
-    }
-
-    tax = Math.round((tax + Number.EPSILON) * 100) / 100;
-    brokerFee = Math.round((brokerFee + Number.EPSILON) * 100) / 100;
-
-    return { tax, brokerFee, entries };
+    return {
+      tax: Math.round((tax + Number.EPSILON) * 100) / 100,
+      brokerFee: Math.round((brokerFee + Number.EPSILON) * 100) / 100,
+      entries,
+    };
   }
 
   public enrichTransaction(tx: CharacterTransaction): CharacterTransaction {
+    this.ensureReconciliation();
+    const txKey = this.makeTxKey(tx.characterId, tx.transactionId);
+    const taxRec = this.taxReconciliations.get(txKey);
     const { tax, brokerFee } = this.getJournalEntriesForTransaction(
       tx.characterId,
       tx.transactionId,
@@ -286,6 +259,7 @@ export class PersistentLedgerRepository implements ILedgerRepository {
       tax,
       brokerFee,
       netValue,
+      taxReconciliation: taxRec,
     };
   }
 
@@ -447,6 +421,8 @@ export class PersistentLedgerRepository implements ILedgerRepository {
       }
     }
 
+    this.isReconciliationDirty = true;
+    this.ensureReconciliation();
     this.syncToStorage();
     return { inserted, updated };
   }
@@ -758,6 +734,9 @@ export class PersistentLedgerRepository implements ILedgerRepository {
     this.txByLocation.clear();
     this.jnByCharacter.clear();
     this.jnByCorporation.clear();
+    this.taxReconciliations.clear();
+    this.txRelatedJournalEntries.clear();
+    this.isReconciliationDirty = true;
     this.syncToStorage();
   }
 
@@ -793,6 +772,7 @@ export class PersistentLedgerRepository implements ILedgerRepository {
       this.jnByCharacter.delete(characterId);
     }
 
+    this.isReconciliationDirty = true;
     this.syncToStorage();
   }
 
@@ -814,6 +794,9 @@ export class PersistentLedgerRepository implements ILedgerRepository {
     this.txByLocation.clear();
     this.jnByCharacter.clear();
     this.jnByCorporation.clear();
+    this.taxReconciliations.clear();
+    this.txRelatedJournalEntries.clear();
+    this.isReconciliationDirty = true;
 
     for (const tx of data.transactions) {
       const key = tx.id || this.makeTxKey(tx.characterId, tx.transactionId);

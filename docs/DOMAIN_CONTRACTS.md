@@ -47,3 +47,9 @@ Pour tout article dans une station ou structure donnée :
 - Les allocations manuelles définies par l'utilisateur sont prioritaires et verrouillées face au FIFO automatique.
 - Les frais de courtage d'achat, de vente et les taxes SCC sont imputés proportionnellement aux quantités allouées.
 - **Aucun double comptage** : Un frais prélevé sur le journal de portefeuille n'est pas recomptabilisé une seconde fois.
+
+## 7. Rapprochement Fiscal & Attribution Unique des Taxes
+- **Attribution exclusive (1-to-1)** : Une entrée de taxe `transaction_tax` / `market_tax` ne peut être imputée qu'à une seule transaction de vente au maximum.
+- **Contrat de traçabilité** : Chaque transaction de vente enrichie expose un objet `taxReconciliation` avec `status` (`EXACT_MATCH`, `SEQUENTIAL_M_PLUS_1`, `CORRELATED_BIJECTIVE`, `UNMATCHED`, `AMBIGUOUS`), `matchedJournalId`, `taxAmount`, `taxRate` et `justification`.
+- **Invariance arithmétique** : $\sum \text{Taxes attribuées aux ventes} \le \sum \text{Taxes réelles uniques du grand livre}$.
+- **Absence de taxe fictive** : Toute vente non associée à une taxe prouvée est marquée `UNMATCHED` avec une taxe numérique de 0 ISK dans le net provisoire.

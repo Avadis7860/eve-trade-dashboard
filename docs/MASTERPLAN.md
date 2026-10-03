@@ -35,7 +35,8 @@ Un seul chantier actif, une phase, une branche, un PR. Jamais sur main. Petits l
 | F08 | Modélisation et attribution des frais de courtage (cycle de vie ordres & FIFO) | F07 | Terminé |
 | F09 | Réconciliation financière TTC et cohérence des indicateurs (Couverture CA vs Volume) | F08 | Terminé |
 | F10 | Reconstitution historique, recalcul et qualification financière finale | F09 | Planifiée |
-| H03 | Hardening UX, performance et release finale | 00–12, F01–F10 | Planifiée |
+| F11 | Persistance des sessions multi-personnages et résilience iframe Google AI Studio | F10 | Planifiée |
+| H03 | Hardening UX, performance et release finale | 00–12, F01–F11 | Planifiée |
 
 Voir également le rapport complet d'audit post-Phase 12 [`docs/AUDIT-POST-PHASE-12.md`](AUDIT-POST-PHASE-12.md), le rapport d'investigation financière [`docs/AUDIT-TASK-55-FINANCIAL-RECONCILIATION.md`](AUDIT-TASK-55-FINANCIAL-RECONCILIATION.md) et la feuille de route détaillée [`docs/MASTERPLAN-ASSURANCE-FIABILITE.md`](MASTERPLAN-ASSURANCE-FIABILITE.md).
 

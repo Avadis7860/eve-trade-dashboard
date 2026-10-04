@@ -25,7 +25,7 @@ La série **F01 à F04** constitue le plan d'action méthodique et borné pour r
 | **F01** | [Cycle de Vie Sync, Annulation Réelle & Persistance Asynchrone](phases/PHASE-F01-sync-concurrency-lifecycle.md) | **Critique (S0)** | S0-2, S0-3, S0-4, S1-4 | Post-Phase 12 | **Terminé** |
 | **F02** | [Intégrité du Stockage, Anti-Écrasement & Vérité des Données](phases/PHASE-F02-data-integrity-storage.md) | **Critique (S0)** | S0-1, S0-5, S1-3, S2-2 | F01 | **Terminé** |
 | **F03** | [Invariants Financiers, Détection Chronologique & Valorisation FIFO](phases/PHASE-F03-financial-inventory-invariants.md) | **Majeure (S1)** | S1-1, S1-2, S2-3, S2-4 | F01, F02 | **Terminé** |
-| **F04** | [Preuves de Qualification Réelles : PostgreSQL CI & Tests E2E Navigateur](phases/PHASE-F04-testing-ci-real-postgres-e2e.md) | **Majeure (S1)** | S1-5, S2-1 | F01–F03 | **Prête à démarrer** |
+| **F04** | [Preuves de Qualification Réelles : PostgreSQL CI & Tests E2E Navigateur](phases/PHASE-F04-testing-ci-real-postgres-e2e.md) | **Majeure (S1)** | S1-5, S2-1 | F01–F03 | **Terminé** |
 | **F05** | [Exhaustivité et Vérité des Journaux de Corporation](phases/PHASE-F05-corporation-journal-completeness.md) | **Critique (S0)** | Troncature maxPages=3, faux COMPLETE, perte 27% taxes | F04 | **Planifiée** |
 | **F06** | [Identité Canonique et Déduplication des Journaux Corporation](phases/PHASE-F06-corporation-journal-deduplication.md) | **Critique (S0)** | Duplication multi-personnages, frais multipliés par N | F05 | **Planifiée** |
 | **F07** | [Rapprochement Fiscal Déterministe et Attribution Unique](phases/PHASE-F07-deterministic-tax-reconciliation.md) | **Majeure (S1)** | Sur-attribution taxes, break heuristique 3s, pattern M+1 | F06 | **Planifiée** |

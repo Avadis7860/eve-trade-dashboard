@@ -62,7 +62,7 @@ export async function createApp() {
     res.json({
       name: 'EVE Trade Dashboard',
       description: 'EVE Online trade dashboard',
-      phase: 'PHASE-F03-financial-inventory-invariants',
+      phase: 'PHASE-F04-testing-ci-real-postgres-e2e',
       status: 'operational',
     });
   });

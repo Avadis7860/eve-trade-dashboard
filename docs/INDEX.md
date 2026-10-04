@@ -46,7 +46,7 @@
 - [F01 Cycle de vie sync, annulation réelle et persistance asynchrone](phases/PHASE-F01-sync-concurrency-lifecycle.md) — *Terminé*
 - [F02 Intégrité du stockage, anti-écrasement et vérité des données](phases/PHASE-F02-data-integrity-storage.md) — *Terminé*
 - [F03 Invariants financiers, détection chronologique et valorisation FIFO](phases/PHASE-F03-financial-inventory-invariants.md) — *Terminé*
-- [F04 Preuves de qualification réelles : PostgreSQL CI et tests E2E navigateur](phases/PHASE-F04-testing-ci-real-postgres-e2e.md) — *En attente base réelle*
+- [F04 Preuves de qualification réelles : PostgreSQL CI et tests E2E navigateur](phases/PHASE-F04-testing-ci-real-postgres-e2e.md) — *Terminé (F04-A SQL réel & F04-B Playwright Chromium)*
 - [F05 Exhaustivité et vérité des journaux de corporation](phases/PHASE-F05-corporation-journal-completeness.md) — *Terminé*
 - [F06 Identité canonique et déduplication des journaux de corporation](phases/PHASE-F06-corporation-journal-deduplication.md) — *Terminé*
 - [F07 Rapprochement fiscal déterministe et attribution unique](phases/PHASE-F07-deterministic-tax-reconciliation.md) — *Terminé*

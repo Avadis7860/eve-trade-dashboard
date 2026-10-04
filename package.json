@@ -9,6 +9,8 @@
     "lint": "eslint src/ server.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:integration": "vitest run src/server/storage/postgres.real.test.ts",
+    "test:e2e": "playwright test",
     "bench": "tsx scripts/baseline-bench.ts",
     "bench:baseline": "tsx scripts/baseline-bench.ts",
     "start": "NODE_ENV=production tsx server.ts"
@@ -28,6 +30,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.20.0",
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/vite": "^4.0.6",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.2.0",
@@ -44,6 +47,7 @@
     "eslint": "^9.20.1",
     "globals": "^15.14.0",
     "jsdom": "^26.0.0",
+    "pg-mem": "^3.0.14",
     "supertest": "^7.3.0",
     "tailwindcss": "^4.0.6",
     "tsx": "^4.19.2",

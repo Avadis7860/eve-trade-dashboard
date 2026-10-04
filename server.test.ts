@@ -22,7 +22,7 @@ describe('Server API Endpoints', () => {
 
     const infoRes = await request(app).get('/api/info');
     expect(infoRes.status).toBe(200);
-    expect(infoRes.body.phase).toBe('PHASE-F03-financial-inventory-invariants');
+    expect(infoRes.body.phase).toBe('PHASE-F04-testing-ci-real-postgres-e2e');
 
     const metricsRes = await request(app).get('/api/system/metrics');
     expect(metricsRes.status).toBe(200);

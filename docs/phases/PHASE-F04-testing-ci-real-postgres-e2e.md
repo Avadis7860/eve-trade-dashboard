@@ -33,10 +33,10 @@ L'audit technique post-Phase 12 a mis en évidence des lacunes dans la chaîne d
    Validation du seuil de performance : 50 000 transactions indexées requêtées en moins de 50ms sur instance PostgreSQL réelle.
 
 ## 5. Tests Obligatoires & Scénarios de Validation
-- [ ] Exécution réussie de `npm run test:integration` avec migration complète et rollback ACID sur base PostgreSQL réelle.
-- [ ] Exécution réussie des 11 parcours utilisateurs dans Chromium via `npx playwright test`.
-- [ ] Test d'intégrité de l'export CSV et de la chaîne de texte générée pour EVE Multibuy dans le presse-papier.
-- [ ] Vérification que la CI exécute typecheck, lint, tests unitaires, intégration SQL et E2E avant tout merge.
+- [x] (F04-A) Exécution réussie de `npm run test:integration` avec 7 migrations DDL séquentielles, batch inserts `$1..$N`, contraintes d'unicité, aggregations SQL et rollback ACID sur moteur PostgreSQL réel (`src/server/storage/postgres.real.test.ts`).
+- [x] (F04-B) Exécution réussie des 11 parcours utilisateurs dans Chromium via `npm run test:e2e` (`src/e2e/browser/journeys.spec.ts`).
+- [x] Test d'intégrité de l'export CSV et de la chaîne de texte générée pour EVE Multibuy dans le presse-papier.
+- [x] Vérification que la CI exécute typecheck, lint, tests unitaires, intégration SQL et E2E avant tout merge.
 
 ## 6. Critères d'Entrée & de Sortie
 - **Entrée :** Validation et merge de la Phase F03. Branche dédiée `feature/F04-testing-ci-real-postgres-e2e`.

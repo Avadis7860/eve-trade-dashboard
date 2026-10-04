@@ -3,13 +3,6 @@ import type { SchemaMigration } from './types.ts';
 export const SCHEMA_VERSION = 7;
 
 export const INITIAL_MIGRATION_SQL = `
--- Schema Migrations Table
-CREATE TABLE IF NOT EXISTS schema_migrations (
-  version INTEGER PRIMARY KEY,
-  name TEXT NOT NULL,
-  applied_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
 -- Hubs Table
 CREATE TABLE IF NOT EXISTS hubs (
   id TEXT PRIMARY KEY,
@@ -55,10 +48,6 @@ CREATE TABLE IF NOT EXISTS transactions (
 CREATE INDEX IF NOT EXISTS idx_tx_char_date ON transactions (character_id, date);
 CREATE INDEX IF NOT EXISTS idx_tx_type ON transactions (type_id);
 CREATE INDEX IF NOT EXISTS idx_tx_loc ON transactions (location_id);
-CREATE INDEX IF NOT EXISTS idx_tx_char_type_date ON transactions (character_id, type_id, date DESC);
-CREATE INDEX IF NOT EXISTS idx_tx_char_loc_date ON transactions (character_id, location_id, date DESC);
-CREATE INDEX IF NOT EXISTS idx_tx_char_type_loc ON transactions (character_id, type_id, location_id);
-CREATE INDEX IF NOT EXISTS idx_tx_isbuy_type ON transactions (is_buy, type_id);
 
 -- Wallet Journal Entries Table
 CREATE TABLE IF NOT EXISTS journal_entries (
@@ -170,31 +159,6 @@ CREATE INDEX IF NOT EXISTS idx_alloc_char ON explicit_cost_allocations (characte
 CREATE INDEX IF NOT EXISTS idx_alloc_buy_tx ON explicit_cost_allocations (buy_transaction_id);
 CREATE INDEX IF NOT EXISTS idx_alloc_sell_tx ON explicit_cost_allocations (sell_transaction_id);
 
--- Opening Balance Lots Table
-CREATE TABLE IF NOT EXISTS opening_balances (
-  id TEXT PRIMARY KEY,
-  character_id BIGINT NOT NULL,
-  type_id INTEGER NOT NULL,
-  type_name TEXT NOT NULL,
-  quantity INTEGER NOT NULL,
-  allocated_quantity INTEGER NOT NULL DEFAULT 0,
-  remaining_quantity INTEGER NOT NULL,
-  unit_cost_isk NUMERIC(20, 2) NOT NULL,
-  total_cost_isk NUMERIC(20, 2) NOT NULL,
-  location_id BIGINT NOT NULL,
-  location_name TEXT,
-  hub_id TEXT NOT NULL,
-  hub_name TEXT NOT NULL,
-  acquisition_date TEXT NOT NULL,
-  justification TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  version INTEGER NOT NULL DEFAULT 1
-);
-
-CREATE INDEX IF NOT EXISTS idx_opening_char ON opening_balances (character_id);
-CREATE INDEX IF NOT EXISTS idx_opening_type ON opening_balances (type_id);
-
 -- Character Assets Table
 CREATE TABLE IF NOT EXISTS character_assets (
   id TEXT PRIMARY KEY,
@@ -223,9 +187,6 @@ CREATE TABLE IF NOT EXISTS sync_states (
   character_id BIGINT NOT NULL,
   resource TEXT NOT NULL,
   status TEXT NOT NULL,
-  coverage_status TEXT,
-  has_more BOOLEAN DEFAULT FALSE,
-  items_count INTEGER DEFAULT 0,
   last_sync_started_at BIGINT,
   last_sync_completed_at BIGINT,
   last_cursor_from_id BIGINT,

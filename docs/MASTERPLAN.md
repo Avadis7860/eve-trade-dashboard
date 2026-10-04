@@ -28,7 +28,7 @@ Un seul chantier actif, une phase, une branche, un PR. Jamais sur main. Petits l
 | F01 | Cycle de vie sync, annulation réelle et persistance asynchrone | 00–12, R00–R08 | Terminé |
 | F02 | Intégrité du stockage, anti-écrasement et vérité des données | F01 | Terminé |
 | F03 | Invariants financiers, détection chronologique et valorisation FIFO | F01, F02 | Terminé |
-| F04 | Preuves de qualification réelles : PostgreSQL CI et tests E2E navigateur | F01–F03 | En attente base réelle |
+| F04 | Preuves de qualification réelles : PostgreSQL CI et tests E2E navigateur | F01–F03 | Terminé |
 | F05 | Exhaustivité et vérité des journaux de corporation (pagination et statuts) | F03 | Terminé |
 | F06 | Identité canonique et déduplication des journaux de corporation multi-personnages | F05 | Terminé |
 | F07 | Rapprochement fiscal déterministe et attribution unique (M+1 & non-duplication) | F06 | Terminé |

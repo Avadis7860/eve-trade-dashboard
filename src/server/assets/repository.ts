@@ -423,8 +423,9 @@ export class PostgresAssetsRepository implements IAssetsRepository {
     let sql = 'SELECT * FROM character_assets';
     const params: unknown[] = [];
     if (characterIds && characterIds.length > 0) {
-      sql += ' WHERE character_id = ANY($1)';
-      params.push(characterIds);
+      const placeholders = characterIds.map((_, idx) => `$${idx + 1}`).join(', ');
+      sql += ` WHERE character_id IN (${placeholders})`;
+      params.push(...characterIds);
     } else if (characterId !== undefined) {
       sql += ' WHERE character_id = $1';
       params.push(characterId);
@@ -447,8 +448,10 @@ export class PostgresAssetsRepository implements IAssetsRepository {
       params.push(locationId);
     }
     if (characterIds && characterIds.length > 0) {
-      sql += ` AND character_id = ANY($${paramIndex++})`;
-      params.push(characterIds);
+      const placeholders = characterIds.map((_, idx) => `$${paramIndex + idx}`).join(', ');
+      sql += ` AND character_id IN (${placeholders})`;
+      params.push(...characterIds);
+      paramIndex += characterIds.length;
     }
 
     const res = await this.adapter.query<{ stock: string }>(sql, params);
@@ -461,14 +464,17 @@ export class PostgresAssetsRepository implements IAssetsRepository {
 
   public async getStockBreakdownAsync(typeId: number, characterIds?: number[]): Promise<AssetStockCheck> {
     let sql = `
-      SELECT location_id, COALESCE(location_name, 'Location #' || location_id) as location_name, SUM(quantity) as quantity
+      SELECT location_id, COALESCE(location_name, 'Location #' || location_id::text) as location_name, SUM(quantity) as quantity
       FROM character_assets
       WHERE type_id = $1
     `;
     const params: unknown[] = [typeId];
+    let paramIndex = 2;
     if (characterIds && characterIds.length > 0) {
-      sql += ' AND character_id = ANY($2)';
-      params.push(characterIds);
+      const placeholders = characterIds.map((_, idx) => `$${paramIndex + idx}`).join(', ');
+      sql += ` AND character_id IN (${placeholders})`;
+      params.push(...characterIds);
+      paramIndex += characterIds.length;
     }
     sql += ' GROUP BY location_id, location_name';
 
@@ -503,8 +509,9 @@ export class PostgresAssetsRepository implements IAssetsRepository {
     `;
     const params: unknown[] = [];
     if (characterIds && characterIds.length > 0) {
-      sql += ' WHERE character_id = ANY($1)';
-      params.push(characterIds);
+      const placeholders = characterIds.map((_, idx) => `$${idx + 1}`).join(', ');
+      sql += ` WHERE character_id IN (${placeholders})`;
+      params.push(...characterIds);
     } else if (characterId !== undefined) {
       sql += ' WHERE character_id = $1';
       params.push(characterId);

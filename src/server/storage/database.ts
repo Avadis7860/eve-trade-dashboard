@@ -226,10 +226,12 @@ export class PostgresDatabaseAdapter implements IDatabaseAdapter {
   private pool: pg.Pool;
   private isConnected = false;
 
-  constructor(connectionString: string | pg.PoolConfig) {
-    if (typeof connectionString === 'string') {
+  constructor(connectionOrPool: string | pg.PoolConfig | pg.Pool) {
+    if (connectionOrPool && typeof connectionOrPool === 'object' && 'connect' in connectionOrPool && typeof (connectionOrPool as pg.Pool).connect === 'function') {
+      this.pool = connectionOrPool as pg.Pool;
+    } else if (typeof connectionOrPool === 'string') {
       this.pool = new Pool({
-        connectionString,
+        connectionString: connectionOrPool,
         ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: true } : undefined,
         connectionTimeoutMillis: 10000,
         idleTimeoutMillis: 30000,
@@ -240,7 +242,7 @@ export class PostgresDatabaseAdapter implements IDatabaseAdapter {
         connectionTimeoutMillis: 10000,
         idleTimeoutMillis: 30000,
         max: 20,
-        ...connectionString,
+        ...(connectionOrPool as pg.PoolConfig),
       });
     }
 
@@ -263,7 +265,7 @@ export class PostgresDatabaseAdapter implements IDatabaseAdapter {
           CREATE TABLE IF NOT EXISTS schema_migrations (
             version INTEGER PRIMARY KEY,
             name TEXT NOT NULL,
-            applied_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            applied_at TEXT
           );
         `);
 

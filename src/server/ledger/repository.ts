@@ -1257,8 +1257,10 @@ export class PostgresLedgerRepository implements ILedgerRepository {
     let paramIndex = 1;
 
     if (characterIds && characterIds.length > 0) {
-      conditions.push(`character_id = ANY($${paramIndex++})`);
-      params.push(characterIds);
+      const placeholders = characterIds.map((_, idx) => `$${paramIndex + idx}`).join(', ');
+      conditions.push(`character_id IN (${placeholders})`);
+      params.push(...characterIds);
+      paramIndex += characterIds.length;
     } else if (characterId !== undefined) {
       conditions.push(`character_id = $${paramIndex++}`);
       params.push(characterId);
@@ -1287,8 +1289,10 @@ export class PostgresLedgerRepository implements ILedgerRepository {
     let paramIndex = 1;
 
     if (characterIds && characterIds.length > 0) {
-      conditions.push(`character_id = ANY($${paramIndex++})`);
-      params.push(characterIds);
+      const placeholders = characterIds.map((_, idx) => `$${paramIndex + idx}`).join(', ');
+      conditions.push(`character_id IN (${placeholders})`);
+      params.push(...characterIds);
+      paramIndex += characterIds.length;
     } else if (characterId !== undefined) {
       conditions.push(`character_id = $${paramIndex++}`);
       params.push(characterId);
@@ -1491,8 +1495,9 @@ export class PostgresLedgerRepository implements ILedgerRepository {
     `;
     const params: unknown[] = [];
     if (characterIds && characterIds.length > 0) {
-      sql += ' WHERE character_id = ANY($1)';
-      params.push(characterIds);
+      const placeholders = characterIds.map((_, idx) => `$${idx + 1}`).join(', ');
+      sql += ` WHERE character_id IN (${placeholders})`;
+      params.push(...characterIds);
     } else if (characterId !== undefined) {
       sql += ' WHERE character_id = $1';
       params.push(characterId);
@@ -1537,13 +1542,13 @@ export class PostgresLedgerRepository implements ILedgerRepository {
 
   public async getFilterOptionsAsync(characterId: number): Promise<LedgerFilterOptions> {
     const typesRes = await this.adapter.query<{ id: number; name: string; count: string }>(
-      `SELECT type_id as id, COALESCE(type_name, 'Item #' || type_id) as name, COUNT(*) as count
+      `SELECT type_id as id, COALESCE(type_name, 'Item #' || type_id::text) as name, COUNT(*) as count
        FROM transactions WHERE character_id = $1 GROUP BY type_id, type_name ORDER BY name ASC`,
       [characterId]
     );
 
     const locationsRes = await this.adapter.query<{ id: string; name: string; count: string }>(
-      `SELECT location_id as id, COALESCE(location_name, 'Location #' || location_id) as name, COUNT(*) as count
+      `SELECT location_id as id, COALESCE(location_name, 'Location #' || location_id::text) as name, COUNT(*) as count
        FROM transactions WHERE character_id = $1 GROUP BY location_id, location_name ORDER BY name ASC`,
       [characterId]
     );

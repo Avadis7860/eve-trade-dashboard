@@ -5,7 +5,9 @@ import type { IOrdersRepository } from '../orders/repository.ts';
 import { defaultOrdersRepository } from '../orders/repository.ts';
 import { HubsRepository, hubsRepository } from '../hubs/repository.ts';
 import { RoiRepository, roiRepository } from '../roi/repository.ts';
-import type { OpeningBalanceLot } from '../roi/types.ts';
+import type { ExplicitCostAllocation, OpeningBalanceLot } from '../roi/types.ts';
+import type { CharacterTransaction, CharacterWalletJournalEntry } from '../ledger/types.ts';
+import type { CharacterOrderSnapshot, RestockItem } from '../orders/types.ts';
 import type { IAssetsRepository } from '../assets/repository.ts';
 import { defaultAssetsRepository } from '../assets/repository.ts';
 import type { ISyncRepository } from '../sync/repository.ts';
@@ -48,10 +50,10 @@ export class BackupRestoreService {
    * If authorizedCharacterIds is provided, strictly filters records to those characters.
    */
   public exportBackup(authorizedCharacterIds?: number[]): AppBackupSnapshot {
-    const ledgerData = this.ledgerRepo.dumpData();
-    const ordersData = this.ordersRepo.dumpData();
+    const ledgerData = this.ledgerRepo.dumpData() as { transactions: CharacterTransaction[]; journalEntries: CharacterWalletJournalEntry[] };
+    const ordersData = this.ordersRepo.dumpData() as { snapshots: CharacterOrderSnapshot[]; restockItems: RestockItem[] };
     const hubsData = this.hubsRepo.dumpData();
-    const roiData = this.roiRepo.dumpData();
+    const roiData = this.roiRepo.dumpData() as { allocations: ExplicitCostAllocation[]; openingBalances?: OpeningBalanceLot[] };
     const assetsData = this.assetsRepo.dumpData();
     const syncData = this.syncRepo.dumpData();
 
@@ -378,10 +380,10 @@ export class BackupRestoreService {
   public auditDataIntegrity(): DataIntegrityReport {
     const issues: DataIntegrityIssue[] = [];
 
-    const ledgerData = this.ledgerRepo.dumpData();
-    const ordersData = this.ordersRepo.dumpData();
+    const ledgerData = this.ledgerRepo.dumpData() as { transactions: CharacterTransaction[]; journalEntries: CharacterWalletJournalEntry[] };
+    const ordersData = this.ordersRepo.dumpData() as { snapshots: CharacterOrderSnapshot[]; restockItems: RestockItem[] };
     const hubsData = this.hubsRepo.dumpData();
-    const roiData = this.roiRepo.dumpData();
+    const roiData = this.roiRepo.dumpData() as { allocations: ExplicitCostAllocation[]; openingBalances?: OpeningBalanceLot[] };
     const assetsData = this.assetsRepo.dumpData();
 
     // 1. Audit Ledger

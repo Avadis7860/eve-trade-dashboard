@@ -10,6 +10,7 @@ import { StorageManager, DurableFileDatabaseAdapter } from '../storage/database.
 import type { IDatabaseAdapter } from '../storage/types.ts';
 
 export interface IOrdersRepository {
+  init?(): Promise<void>;
   saveOrderSnapshots(snapshots: CharacterOrderSnapshot[]): { inserted: number; updated: number };
   getOrders(filters: OrderQueryFilters): { items: CharacterOrderSnapshot[]; total: number; page: number; pageSize: number; totalPages: number };
   getOrderById(characterId: number, orderId: number): CharacterOrderSnapshot | null;
@@ -390,11 +391,7 @@ export class InMemoryOrdersRepository extends PersistentOrdersRepository {}
  * transactions and B-Tree indexed access.
  */
 export class PostgresOrdersRepository implements IOrdersRepository {
-  private fallbackMemory: PersistentOrdersRepository;
-
-  constructor(private adapter: IDatabaseAdapter) {
-    this.fallbackMemory = new PersistentOrdersRepository(null);
-  }
+  constructor(private adapter: IDatabaseAdapter) {}
 
   private mapRowToOrder(row: Record<string, unknown>): CharacterOrderSnapshot {
     const charId = Number(row.character_id);
@@ -456,9 +453,7 @@ export class PostgresOrdersRepository implements IOrdersRepository {
   }
 
   public saveOrderSnapshots(snapshots: CharacterOrderSnapshot[]): { inserted: number; updated: number } {
-    this.fallbackMemory.saveOrderSnapshots(snapshots);
-    this.saveOrderSnapshotsAsync(snapshots).catch(() => {});
-    return { inserted: snapshots.length, updated: 0 };
+    return this.saveOrderSnapshotsAsync(snapshots) as unknown as { inserted: number; updated: number };
   }
 
   public async saveOrderSnapshotsAsync(snapshots: CharacterOrderSnapshot[]): Promise<{ inserted: number; updated: number }> {
@@ -543,7 +538,13 @@ export class PostgresOrdersRepository implements IOrdersRepository {
     pageSize: number;
     totalPages: number;
   } {
-    return this.fallbackMemory.getOrders(filters);
+    return this.getOrdersAsync(filters) as unknown as {
+      items: CharacterOrderSnapshot[];
+      total: number;
+      page: number;
+      pageSize: number;
+      totalPages: number;
+    };
   }
 
   public async getOrdersAsync(filters: OrderQueryFilters): Promise<{
@@ -639,7 +640,7 @@ export class PostgresOrdersRepository implements IOrdersRepository {
   }
 
   public getOrderById(characterId: number, orderId: number): CharacterOrderSnapshot | null {
-    return this.fallbackMemory.getOrderById(characterId, orderId);
+    return this.getOrderByIdAsync(characterId, orderId) as unknown as (CharacterOrderSnapshot | null);
   }
 
   public async getOrderByIdAsync(characterId: number, orderId: number): Promise<CharacterOrderSnapshot | null> {
@@ -652,7 +653,7 @@ export class PostgresOrdersRepository implements IOrdersRepository {
   }
 
   public getOrdersForCharacter(characterId: number): CharacterOrderSnapshot[] {
-    return this.fallbackMemory.getOrdersForCharacter(characterId);
+    return this.getOrdersForCharacterAsync(characterId) as unknown as CharacterOrderSnapshot[];
   }
 
   public async getOrdersForCharacterAsync(characterId: number): Promise<CharacterOrderSnapshot[]> {
@@ -664,7 +665,7 @@ export class PostgresOrdersRepository implements IOrdersRepository {
   }
 
   public getSummary(characterId: number): OrderSummaryMetrics {
-    return this.fallbackMemory.getSummary(characterId);
+    return this.getSummaryAsync(characterId) as unknown as OrderSummaryMetrics;
   }
 
   public async getSummaryAsync(characterId: number): Promise<OrderSummaryMetrics> {
@@ -705,7 +706,7 @@ export class PostgresOrdersRepository implements IOrdersRepository {
     currentActiveOrderIds: Set<number>,
     observedAt: number
   ): number {
-    return this.fallbackMemory.markMissingOrdersAsDisappeared(characterId, currentActiveOrderIds, observedAt);
+    return this.markMissingOrdersAsDisappearedAsync(characterId, currentActiveOrderIds, observedAt) as unknown as number;
   }
 
   public async markMissingOrdersAsDisappearedAsync(
@@ -736,7 +737,7 @@ export class PostgresOrdersRepository implements IOrdersRepository {
   }
 
   public getRestockItems(characterId: number): RestockItem[] {
-    return this.fallbackMemory.getRestockItems(characterId);
+    return this.getRestockItemsAsync(characterId) as unknown as RestockItem[];
   }
 
   public async getRestockItemsAsync(characterId: number): Promise<RestockItem[]> {
@@ -748,7 +749,7 @@ export class PostgresOrdersRepository implements IOrdersRepository {
   }
 
   public getRestockItemById(characterId: number, itemId: string): RestockItem | null {
-    return this.fallbackMemory.getRestockItemById(characterId, itemId);
+    return this.getRestockItemByIdAsync(characterId, itemId) as unknown as (RestockItem | null);
   }
 
   public async getRestockItemByIdAsync(characterId: number, itemId: string): Promise<RestockItem | null> {
@@ -761,9 +762,7 @@ export class PostgresOrdersRepository implements IOrdersRepository {
   }
 
   public createRestockItem(dto: CreateRestockItemDto): RestockItem {
-    const created = this.fallbackMemory.createRestockItem(dto);
-    this.createRestockItemAsync(dto).catch(() => {});
-    return created;
+    return this.createRestockItemAsync(dto) as unknown as RestockItem;
   }
 
   public async createRestockItemAsync(dto: CreateRestockItemDto): Promise<RestockItem> {
@@ -827,9 +826,7 @@ export class PostgresOrdersRepository implements IOrdersRepository {
     itemId: string,
     updates: UpdateRestockItemDto
   ): RestockItem | null {
-    const updated = this.fallbackMemory.updateRestockItem(characterId, itemId, updates);
-    this.updateRestockItemAsync(characterId, itemId, updates).catch(() => {});
-    return updated;
+    return this.updateRestockItemAsync(characterId, itemId, updates) as unknown as (RestockItem | null);
   }
 
   public async updateRestockItemAsync(
@@ -873,9 +870,7 @@ export class PostgresOrdersRepository implements IOrdersRepository {
   }
 
   public deleteRestockItem(characterId: number, itemId: string): boolean {
-    const deleted = this.fallbackMemory.deleteRestockItem(characterId, itemId);
-    this.deleteRestockItemAsync(characterId, itemId).catch(() => {});
-    return deleted;
+    return this.deleteRestockItemAsync(characterId, itemId) as unknown as boolean;
   }
 
   public async deleteRestockItemAsync(characterId: number, itemId: string): Promise<boolean> {
@@ -887,7 +882,6 @@ export class PostgresOrdersRepository implements IOrdersRepository {
   }
 
   public clearCharacter(characterId: number): void {
-    this.fallbackMemory.clearCharacter(characterId);
     this.clearCharacterAsync(characterId).catch(() => {});
   }
 
@@ -897,12 +891,41 @@ export class PostgresOrdersRepository implements IOrdersRepository {
   }
 
   public dumpData(): { snapshots: CharacterOrderSnapshot[]; restockItems: RestockItem[] } {
-    return this.fallbackMemory.dumpData();
+    return this.dumpDataAsync() as unknown as { snapshots: CharacterOrderSnapshot[]; restockItems: RestockItem[] };
+  }
+
+  public async dumpDataAsync(): Promise<{ snapshots: CharacterOrderSnapshot[]; restockItems: RestockItem[] }> {
+    const snapRes = await this.adapter.query('SELECT * FROM order_snapshots');
+    const restockRes = await this.adapter.query('SELECT * FROM restock_items');
+    return {
+      snapshots: snapRes.rows.map((r) => this.mapRowToOrder(r)),
+      restockItems: restockRes.rows.map((r) => this.mapRowToRestock(r)),
+    };
   }
 
   public restoreData(data: { snapshots: CharacterOrderSnapshot[]; restockItems: RestockItem[] }): void {
-    this.fallbackMemory.restoreData(data);
-    this.saveOrderSnapshotsAsync(data.snapshots).catch(() => {});
+    this.restoreDataAsync(data).catch(() => {});
+  }
+
+  public async restoreDataAsync(data: { snapshots: CharacterOrderSnapshot[]; restockItems: RestockItem[] }): Promise<void> {
+    await this.saveOrderSnapshotsAsync(data.snapshots);
+    for (const r of data.restockItems) {
+      await this.createRestockItemAsync({
+        characterId: r.characterId,
+        typeId: r.typeId,
+        typeName: r.typeName,
+        targetBuyHubId: r.targetBuyHubId,
+        targetBuyHubName: r.targetBuyHubName,
+        sellHubId: r.sellHubId,
+        sellHubName: r.sellHubName,
+        suggestedQuantity: r.suggestedQuantity,
+        targetQuantity: r.targetQuantity,
+        estimatedBuyUnitPrice: r.estimatedBuyUnitPrice,
+        justification: r.justification,
+        linkedOrderId: r.linkedOrderId,
+        notes: r.notes,
+      });
+    }
   }
 }
 

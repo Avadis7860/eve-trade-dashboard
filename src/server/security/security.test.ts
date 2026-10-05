@@ -345,5 +345,55 @@ describe('PHASE-H01 — Security Hardening Test Suite', () => {
       expect(sanitized).not.toContain('secret_pkce_verifier_999');
       expect(sanitized).toContain('[REDACTED]');
     });
+
+    it('TEST-G01-06: rejects POST requests with malformed Origin header without custom header', () => {
+      let statusCode = 0;
+      let errorBody = {};
+
+      const mockReq = {
+        method: 'POST',
+        headers: {
+          origin: 'invalid-uri-scheme::malformed',
+          host: 'localhost:3000',
+        },
+        path: '/api/roi/reconcile',
+      } as unknown as Request;
+
+      const mockRes = {
+        status: (code: number) => {
+          statusCode = code;
+          return {
+            json: (data: unknown) => {
+              errorBody = data as Record<string, unknown>;
+            },
+          };
+        },
+      } as unknown as Response;
+
+      csrfProtectionMiddleware(mockReq, mockRes, () => {});
+
+      expect(statusCode).toBe(403);
+      expect((errorBody as { error: string }).error).toContain('CSRF');
+    });
+
+    it('TEST-G01-07: createApp fails fast in production mode if encryption key is missing', async () => {
+      const originalEnv = process.env.NODE_ENV;
+      const originalKey = process.env.SESSION_ENCRYPTION_KEY;
+      const originalSecret = process.env.SESSION_SECRET;
+
+      try {
+        process.env.NODE_ENV = 'production';
+        delete process.env.SESSION_ENCRYPTION_KEY;
+        delete process.env.SESSION_SECRET;
+
+        await expect(createApp()).rejects.toThrow(
+          /SESSION_ENCRYPTION_KEY.*strictly required in production/
+        );
+      } finally {
+        process.env.NODE_ENV = originalEnv;
+        if (originalKey !== undefined) process.env.SESSION_ENCRYPTION_KEY = originalKey;
+        if (originalSecret !== undefined) process.env.SESSION_SECRET = originalSecret;
+      }
+    });
   });
 });

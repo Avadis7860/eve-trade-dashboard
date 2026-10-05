@@ -14,10 +14,12 @@ import { TaxReconciliationEngine } from './taxReconciler.ts';
 import { BrokerFeeReconciliationEngine } from './brokerFeeReconciler.ts';
 import type { IOrdersRepository } from '../orders/repository.ts';
 import { defaultOrdersRepository } from '../orders/repository.ts';
+import type { CharacterOrderSnapshot } from '../orders/types.ts';
 import { StorageManager, DurableFileDatabaseAdapter } from '../storage/database.ts';
 import type { IDatabaseAdapter } from '../storage/types.ts';
 
 export interface ILedgerRepository {
+  init?(): Promise<void>;
   reset?(): void;
   saveTransactions(transactions: CharacterTransaction[]): { inserted: number; updated: number };
   getTransactions(filters: LedgerQueryFilters): PaginatedLedgerResult<CharacterTransaction>;
@@ -320,7 +322,7 @@ export class PersistentLedgerRepository implements ILedgerRepository {
       }
     }
     const ordersRepo = this.ordersRepo || defaultOrdersRepository;
-    const orders = (ordersRepo ? ordersRepo.dumpData().snapshots : []).filter((o) => !filterSet || filterSet.has(o.characterId));
+    const orders = (ordersRepo ? ordersRepo.dumpData().snapshots : []).filter((o: CharacterOrderSnapshot) => !filterSet || filterSet.has(o.characterId));
     const result = BrokerFeeReconciliationEngine.reconcile(txs, jns, orders);
     return result.summary;
   }
@@ -937,10 +939,13 @@ export class InMemoryLedgerRepository extends PersistentLedgerRepository {}
  * ACID transactions and B-Tree indexed access.
  */
 export class PostgresLedgerRepository implements ILedgerRepository {
-  private fallbackMemory: PersistentLedgerRepository;
+  private ordersRepo?: IOrdersRepository;
 
-  constructor(private adapter: IDatabaseAdapter) {
-    this.fallbackMemory = new PersistentLedgerRepository(null);
+  constructor(
+    private adapter: IDatabaseAdapter,
+    ordersRepo?: IOrdersRepository
+  ) {
+    this.ordersRepo = ordersRepo;
   }
 
   private mapRowToTx(row: Record<string, unknown>): CharacterTransaction {
@@ -1010,7 +1015,6 @@ export class PostgresLedgerRepository implements ILedgerRepository {
   }
 
   public reset(): void {
-    this.fallbackMemory.reset();
     this.resetAsync().catch(() => {});
   }
 
@@ -1020,9 +1024,7 @@ export class PostgresLedgerRepository implements ILedgerRepository {
   }
 
   public saveTransactions(transactions: CharacterTransaction[]): { inserted: number; updated: number } {
-    this.fallbackMemory.saveTransactions(transactions);
-    this.saveTransactionsAsync(transactions).catch(() => {});
-    return { inserted: transactions.length, updated: 0 };
+    return this.saveTransactionsAsync(transactions) as unknown as { inserted: number; updated: number };
   }
 
   public async saveTransactionsAsync(transactions: CharacterTransaction[]): Promise<{ inserted: number; updated: number }> {
@@ -1092,7 +1094,7 @@ export class PostgresLedgerRepository implements ILedgerRepository {
   }
 
   public getTransactions(filters: LedgerQueryFilters): PaginatedLedgerResult<CharacterTransaction> {
-    return this.fallbackMemory.getTransactions(filters);
+    return this.getTransactionsAsync(filters) as unknown as PaginatedLedgerResult<CharacterTransaction>;
   }
 
   public async getTransactionsAsync(filters: LedgerQueryFilters): Promise<PaginatedLedgerResult<CharacterTransaction>> {
@@ -1203,7 +1205,7 @@ export class PostgresLedgerRepository implements ILedgerRepository {
   }
 
   public getAllTransactions(characterId?: number, characterIds?: number[]): CharacterTransaction[] {
-    return this.fallbackMemory.getAllTransactions(characterId, characterIds);
+    return this.getAllTransactionsAsync(characterId, characterIds) as unknown as CharacterTransaction[];
   }
 
   public async getAllTransactionsAsync(characterId?: number, characterIds?: number[]): Promise<CharacterTransaction[]> {
@@ -1222,11 +1224,11 @@ export class PostgresLedgerRepository implements ILedgerRepository {
   }
 
   public getHistoricalBuyLots(characterId?: number, characterIds?: number[], typeId?: number): CharacterTransaction[] {
-    return this.fallbackMemory.getHistoricalBuyLots(characterId, characterIds, typeId);
+    return this.getHistoricalBuyLotsAsync(characterId, characterIds, typeId) as unknown as CharacterTransaction[];
   }
 
   public getTransactionsByTypeId(typeId: number, characterId?: number, characterIds?: number[]): CharacterTransaction[] {
-    return this.fallbackMemory.getTransactionsByTypeId(typeId, characterId, characterIds);
+    return this.getTransactionsByTypeIdAsync(typeId, characterId, characterIds) as unknown as CharacterTransaction[];
   }
 
   public async getTransactionsByTypeIdAsync(typeId: number, characterId?: number, characterIds?: number[]): Promise<CharacterTransaction[]> {
@@ -1248,7 +1250,7 @@ export class PostgresLedgerRepository implements ILedgerRepository {
   }
 
   public getLastActivityDates(characterId?: number, characterIds?: number[]): Map<string, number> {
-    return this.fallbackMemory.getLastActivityDates(characterId, characterIds);
+    return this.getLastActivityDatesAsync(characterId, characterIds) as unknown as Map<string, number>;
   }
 
   public async getLastActivityDatesAsync(characterId?: number, characterIds?: number[]): Promise<Map<string, number>> {
@@ -1309,7 +1311,7 @@ export class PostgresLedgerRepository implements ILedgerRepository {
   }
 
   public getTransactionById(characterId: number, transactionId: number): CharacterTransaction | null {
-    return this.fallbackMemory.getTransactionById(characterId, transactionId);
+    return this.getTransactionByIdAsync(characterId, transactionId) as unknown as (CharacterTransaction | null);
   }
 
   public async getTransactionByIdAsync(characterId: number, transactionId: number): Promise<CharacterTransaction | null> {
@@ -1329,18 +1331,59 @@ export class PostgresLedgerRepository implements ILedgerRepository {
     txTotalValue?: number,
     isBuy?: boolean
   ): { tax: number; brokerFee: number; entries: CharacterWalletJournalEntry[] } {
-    return this.fallbackMemory.getJournalEntriesForTransaction(
-      characterId,
-      transactionId,
-      journalRefId,
-      txDate,
-      txTotalValue,
-      isBuy
+    return this.getJournalEntriesForTransactionAsync(characterId, transactionId, journalRefId, txDate, txTotalValue, isBuy) as unknown as { tax: number; brokerFee: number; entries: CharacterWalletJournalEntry[] };
+  }
+
+  public async getJournalEntriesForTransactionAsync(
+    characterId: number,
+    transactionId: number,
+    _journalRefId?: number,
+    _txDate?: string,
+    _txTotalValue?: number,
+    _isBuy?: boolean
+  ): Promise<{ tax: number; brokerFee: number; entries: CharacterWalletJournalEntry[] }> {
+    const tx = await this.getTransactionByIdAsync(characterId, transactionId);
+    const jnRes = await this.adapter.query(
+      'SELECT * FROM journal_entries WHERE character_id = $1',
+      [characterId]
     );
+    const jnList = jnRes.rows.map((r) => this.mapRowToJournal(r));
+    const txList = tx ? [tx] : [];
+
+    const taxResult = TaxReconciliationEngine.reconcile(txList, jnList);
+    const ordersRepo = this.ordersRepo || defaultOrdersRepository;
+    let ordersList: CharacterOrderSnapshot[] = [];
+    if (ordersRepo) {
+      if ((ordersRepo as unknown as { getOrdersForCharacterAsync?(cid: number): Promise<CharacterOrderSnapshot[]> }).getOrdersForCharacterAsync) {
+        ordersList = await (ordersRepo as unknown as { getOrdersForCharacterAsync(cid: number): Promise<CharacterOrderSnapshot[]> }).getOrdersForCharacterAsync(characterId);
+      } else {
+        ordersList = ordersRepo.getOrdersForCharacter(characterId);
+      }
+    }
+    const brokerResult = BrokerFeeReconciliationEngine.reconcile(txList, jnList, ordersList);
+
+    const txKey = `${characterId}:${transactionId}`;
+    const taxRec = taxResult.reconciliations.get(txKey);
+    const brokerRec = brokerResult.reconciliations.get(txKey);
+
+    const taxEntries = taxResult.transactionJournalEntries.get(txKey) || [];
+    const brokerEntries = brokerResult.transactionJournalEntries.get(txKey) || [];
+    const mergedEntries = [...taxEntries];
+    for (const b of brokerEntries) {
+      if (!mergedEntries.some((e) => (e.id || e.journalId) === (b.id || b.journalId))) {
+        mergedEntries.push(b);
+      }
+    }
+
+    return {
+      tax: taxRec?.taxAmount || 0,
+      brokerFee: brokerRec?.allocatedFeeAmount || 0,
+      entries: mergedEntries,
+    };
   }
 
   public countTransactions(characterId: number): number {
-    return this.fallbackMemory.countTransactions(characterId);
+    return this.countTransactionsAsync(characterId) as unknown as number;
   }
 
   public async countTransactionsAsync(characterId: number): Promise<number> {
@@ -1352,9 +1395,7 @@ export class PostgresLedgerRepository implements ILedgerRepository {
   }
 
   public saveJournalEntries(entries: CharacterWalletJournalEntry[]): { inserted: number; updated: number } {
-    this.fallbackMemory.saveJournalEntries(entries);
-    this.saveJournalEntriesAsync(entries).catch(() => {});
-    return { inserted: entries.length, updated: 0 };
+    return this.saveJournalEntriesAsync(entries) as unknown as { inserted: number; updated: number };
   }
 
   public async saveJournalEntriesAsync(entries: CharacterWalletJournalEntry[]): Promise<{ inserted: number; updated: number }> {
@@ -1420,7 +1461,7 @@ export class PostgresLedgerRepository implements ILedgerRepository {
     page = 1,
     pageSize = 50
   ): { items: CharacterWalletJournalEntry[]; total: number } {
-    return this.fallbackMemory.getJournalEntries(characterId, page, pageSize);
+    return this.getJournalEntriesAsync(characterId, page, pageSize) as unknown as { items: CharacterWalletJournalEntry[]; total: number };
   }
 
   public async getJournalEntriesAsync(
@@ -1453,7 +1494,7 @@ export class PostgresLedgerRepository implements ILedgerRepository {
   }
 
   public getJournalEntryById(characterId: number, journalId: number): CharacterWalletJournalEntry | null {
-    return this.fallbackMemory.getJournalEntryById(characterId, journalId);
+    return this.getJournalEntryByIdAsync(characterId, journalId) as unknown as (CharacterWalletJournalEntry | null);
   }
 
   public async getJournalEntryByIdAsync(characterId: number, journalId: number): Promise<CharacterWalletJournalEntry | null> {
@@ -1466,15 +1507,49 @@ export class PostgresLedgerRepository implements ILedgerRepository {
   }
 
   public getBrokerFeeSummary(characterId?: number, characterIds?: number[]): BrokerFeeReconciliationSummary {
-    return this.fallbackMemory.getBrokerFeeSummary(characterId, characterIds);
+    return this.getBrokerFeeSummaryAsync(characterId, characterIds) as unknown as BrokerFeeReconciliationSummary;
+  }
+
+  public async getBrokerFeeSummaryAsync(characterId?: number, characterIds?: number[]): Promise<BrokerFeeReconciliationSummary> {
+    const txs = await this.getAllTransactionsAsync(characterId, characterIds);
+    let jnSql = 'SELECT * FROM journal_entries';
+    const jnParams: unknown[] = [];
+    if (characterIds && characterIds.length > 0) {
+      jnSql += ' WHERE character_id = ANY($1)';
+      jnParams.push(characterIds);
+    } else if (characterId !== undefined) {
+      jnSql += ' WHERE character_id = $1';
+      jnParams.push(characterId);
+    }
+    const jnRes = await this.adapter.query(jnSql, jnParams);
+    const jns = jnRes.rows.map((r) => this.mapRowToJournal(r));
+    const ordersRepo = this.ordersRepo || defaultOrdersRepository;
+    const orders: CharacterOrderSnapshot[] = [];
+    if (ordersRepo) {
+      if (characterIds && characterIds.length > 0) {
+        for (const cid of characterIds) {
+          const charOrders = (ordersRepo as unknown as { getOrdersForCharacterAsync?(c: number): Promise<CharacterOrderSnapshot[]> }).getOrdersForCharacterAsync
+            ? await (ordersRepo as unknown as { getOrdersForCharacterAsync(c: number): Promise<CharacterOrderSnapshot[]> }).getOrdersForCharacterAsync(cid)
+            : ordersRepo.getOrdersForCharacter(cid);
+          orders.push(...charOrders);
+        }
+      } else if (characterId !== undefined) {
+        const charOrders = (ordersRepo as unknown as { getOrdersForCharacterAsync?(c: number): Promise<CharacterOrderSnapshot[]> }).getOrdersForCharacterAsync
+          ? await (ordersRepo as unknown as { getOrdersForCharacterAsync(c: number): Promise<CharacterOrderSnapshot[]> }).getOrdersForCharacterAsync(characterId)
+          : ordersRepo.getOrdersForCharacter(characterId);
+        orders.push(...charOrders);
+      }
+    }
+    const result = BrokerFeeReconciliationEngine.reconcile(txs, jns, orders);
+    return result.summary;
   }
 
   public setOrdersRepository(ordersRepo: IOrdersRepository): void {
-    this.fallbackMemory.setOrdersRepository(ordersRepo);
+    this.ordersRepo = ordersRepo;
   }
 
   public getSummary(characterId?: number, characterIds?: number[]): LedgerSummary {
-    return this.fallbackMemory.getSummary(characterId, characterIds);
+    return this.getSummaryAsync(characterId, characterIds) as unknown as LedgerSummary;
   }
 
   public async getSummaryAsync(characterId?: number, characterIds?: number[]): Promise<LedgerSummary> {
@@ -1537,7 +1612,7 @@ export class PostgresLedgerRepository implements ILedgerRepository {
   }
 
   public getFilterOptions(characterId: number): LedgerFilterOptions {
-    return this.fallbackMemory.getFilterOptions(characterId);
+    return this.getFilterOptionsAsync(characterId) as unknown as LedgerFilterOptions;
   }
 
   public async getFilterOptionsAsync(characterId: number): Promise<LedgerFilterOptions> {
@@ -1560,7 +1635,6 @@ export class PostgresLedgerRepository implements ILedgerRepository {
   }
 
   public clearCharacter(characterId: number): void {
-    this.fallbackMemory.clearCharacter(characterId);
     this.clearCharacterAsync(characterId).catch(() => {});
   }
 
@@ -1570,13 +1644,25 @@ export class PostgresLedgerRepository implements ILedgerRepository {
   }
 
   public dumpData(): { transactions: CharacterTransaction[]; journalEntries: CharacterWalletJournalEntry[] } {
-    return this.fallbackMemory.dumpData();
+    return this.dumpDataAsync() as unknown as { transactions: CharacterTransaction[]; journalEntries: CharacterWalletJournalEntry[] };
+  }
+
+  public async dumpDataAsync(): Promise<{ transactions: CharacterTransaction[]; journalEntries: CharacterWalletJournalEntry[] }> {
+    const txRes = await this.adapter.query('SELECT * FROM transactions');
+    const jnRes = await this.adapter.query('SELECT * FROM journal_entries');
+    return {
+      transactions: txRes.rows.map((r) => this.mapRowToTx(r)),
+      journalEntries: jnRes.rows.map((r) => this.mapRowToJournal(r)),
+    };
   }
 
   public restoreData(data: { transactions: CharacterTransaction[]; journalEntries: CharacterWalletJournalEntry[] }): void {
-    this.fallbackMemory.restoreData(data);
-    this.saveTransactionsAsync(data.transactions).catch(() => {});
-    this.saveJournalEntriesAsync(data.journalEntries).catch(() => {});
+    this.restoreDataAsync(data).catch(() => {});
+  }
+
+  public async restoreDataAsync(data: { transactions: CharacterTransaction[]; journalEntries: CharacterWalletJournalEntry[] }): Promise<void> {
+    await this.saveTransactionsAsync(data.transactions);
+    await this.saveJournalEntriesAsync(data.journalEntries);
   }
 }
 

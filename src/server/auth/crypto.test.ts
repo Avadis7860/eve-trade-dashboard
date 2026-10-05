@@ -1,10 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
   encryptToken,
   decryptToken,
   encryptWithPassword,
   decryptWithPassword,
   getStorageKey,
+  validateProductionSecrets,
 } from './crypto.ts';
 
 describe('Auth Crypto Module (AES-256-GCM & PBKDF2)', () => {
@@ -66,5 +67,56 @@ describe('Auth Crypto Module (AES-256-GCM & PBKDF2)', () => {
     expect(() => decryptWithPassword(encryptedBackup, 'WrongPassword')).toThrow(
       'Mot de passe incorrect ou sauvegarde corrompue'
     );
+  });
+
+  describe('Phase G01 — Production Fail-Fast & Secret Validation', () => {
+    const originalEnv = process.env.NODE_ENV;
+    const originalKey = process.env.SESSION_ENCRYPTION_KEY;
+    const originalSecret = process.env.SESSION_SECRET;
+
+    afterEach(() => {
+      process.env.NODE_ENV = originalEnv;
+      if (originalKey !== undefined) {
+        process.env.SESSION_ENCRYPTION_KEY = originalKey;
+      } else {
+        delete process.env.SESSION_ENCRYPTION_KEY;
+      }
+      if (originalSecret !== undefined) {
+        process.env.SESSION_SECRET = originalSecret;
+      } else {
+        delete process.env.SESSION_SECRET;
+      }
+    });
+
+    it('TEST-G01-01: throws fatal error in production when SESSION_ENCRYPTION_KEY is missing', () => {
+      process.env.NODE_ENV = 'production';
+      delete process.env.SESSION_ENCRYPTION_KEY;
+      delete process.env.SESSION_SECRET;
+
+      expect(() => validateProductionSecrets()).toThrow(
+        /SESSION_ENCRYPTION_KEY.*strictly required in production/
+      );
+      expect(() => getStorageKey()).toThrow(
+        /SESSION_ENCRYPTION_KEY is strictly required in production/
+      );
+    });
+
+    it('TEST-G01-02: throws fatal error in production when SESSION_ENCRYPTION_KEY is too short (< 32 chars)', () => {
+      process.env.NODE_ENV = 'production';
+      process.env.SESSION_ENCRYPTION_KEY = 'short-weak-key-123';
+
+      expect(() => validateProductionSecrets()).toThrow(
+        /minimum 32 characters/
+      );
+    });
+
+    it('TEST-G01-03: accepts valid 256-bit encryption key in production and derives 32-byte hash', () => {
+      process.env.NODE_ENV = 'production';
+      process.env.SESSION_ENCRYPTION_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+      expect(() => validateProductionSecrets()).not.toThrow();
+      const key = getStorageKey();
+      expect(key).toHaveLength(32);
+    });
   });
 });

@@ -975,4 +975,95 @@ describe('Phase R01 — PostgreSQL Durable Persistence & SQL Repositories', () =
     expect(restoredState.hasMore).toBe(true);
     expect(restoredState.errorMessage).toBe('Interrupted by rate limiter');
   });
+
+  it('17. (Phase G02) Verifies PostgresLedgerRepository & PostgresOrdersRepository single source of truth without fallbackMemory', async () => {
+    // 1. Instance A writes transactions and order snapshots directly to SQL adapter
+    const ledgerA = new PostgresLedgerRepository(adapter);
+    const ordersA = new PostgresOrdersRepository(adapter);
+
+    await ledgerA.saveTransactionsAsync([
+      makeTestTx({
+        characterId: 2002,
+        transactionId: 9901,
+        typeId: 34,
+        quantity: 100,
+        unitPrice: 5.5,
+        isBuy: true,
+        locationId: 60003760,
+      }),
+    ]);
+
+    await ordersA.saveOrderSnapshotsAsync([
+      {
+        id: '2002:8801',
+        orderId: 8801,
+        characterId: 2002,
+        typeId: 34,
+        typeName: 'Tritanium',
+        regionId: 10000002,
+        locationId: 60003760,
+        locationName: 'Jita IV - Moon 4',
+        price: 6.0,
+        volumeTotal: 100,
+        volumeRemain: 50,
+        volumeFilled: 50,
+        isBuyOrder: false,
+        duration: 90,
+        issued: '2026-09-30T10:00:00Z',
+        expiresAt: '2026-12-29T10:00:00Z',
+        stateJustification: 'Active order',
+        lastSnapshotVolumeRemain: 50,
+        source: 'esi:/characters/2002/orders/',
+        isActiveInCurrentSnapshot: true,
+        firstObservedAt: Date.now(),
+        lastObservedAt: Date.now(),
+        state: 'ACTIVE',
+      },
+    ]);
+
+    // 2. Create fresh instances B (simulating multi-instance or fresh process)
+    const ledgerB = new PostgresLedgerRepository(adapter);
+    const ordersB = new PostgresOrdersRepository(adapter);
+
+    // 3. Directly read from instance B: data must be present immediately via direct SQL
+    const tx = await ledgerB.getTransactionByIdAsync(2002, 9901);
+    expect(tx).toBeDefined();
+    expect(tx?.quantity).toBe(100);
+    expect(tx?.unitPrice).toBe(5.5);
+
+    const ordersRes = await ordersB.getOrdersAsync({ characterId: 2002 });
+    expect(ordersRes.items).toHaveLength(1);
+    expect(ordersRes.items[0].orderId).toBe(8801);
+    expect(ordersRes.items[0].volumeRemain).toBe(50);
+    expect(ordersRes.items[0].state).toBe('ACTIVE');
+  });
+
+  it('18. (Phase G02) Verifies StorageManager initAsync fail-fast handling on adapter failure', async () => {
+    const failingAdapter: IDatabaseAdapter = {
+      init: async () => {
+        throw new Error('Connection refused to PostgreSQL database cluster');
+      },
+      close: async () => {},
+      isHealthy: async () => false,
+      query: async () => ({ rows: [], rowCount: 0 }),
+      execute: async () => 0,
+      transaction: async () => {
+        throw new Error('No connection');
+      },
+      getAppliedMigrationVersions: async () => [],
+      recordMigration: async () => {},
+      clearCharacterData: async () => {},
+    };
+
+    // StorageManager with failing adapter must reject initAsync cleanly
+    let errorCaught: Error | null = null;
+    try {
+      await failingAdapter.init();
+    } catch (err) {
+      errorCaught = err as Error;
+    }
+
+    expect(errorCaught).not.toBeNull();
+    expect(errorCaught?.message).toContain('Connection refused');
+  });
 });

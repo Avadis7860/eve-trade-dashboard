@@ -5,12 +5,14 @@ import {
   UnsoldInventoryItem,
 } from './types.ts';
 import { defaultLedgerRepository, type ILedgerRepository } from '../ledger/repository.ts';
+import type { CharacterTransaction } from '../ledger/types.ts';
 import { hubsService } from '../hubs/service.ts';
 import { roundIsk } from './calculator.ts';
 import { StorageManager, DurableFileDatabaseAdapter } from '../storage/database.ts';
 import type { IDatabaseAdapter } from '../storage/types.ts';
 
 export interface IRoiRepository {
+  init?(): Promise<void>;
   reset(): void;
   listAllocations(characterId?: number, characterIds?: number[]): ExplicitCostAllocation[];
   getAllocation(id: string): ExplicitCostAllocation | undefined;
@@ -501,14 +503,10 @@ export class InMemoryRoiRepository extends PersistentRoiRepository {}
  * parameterized queries and FIFO allocation management.
  */
 export class PostgresRoiRepository implements IRoiRepository {
-  private fallbackMemory: PersistentRoiRepository;
-
   constructor(
     private ledgerRepo: ILedgerRepository = defaultLedgerRepository,
     private adapter: IDatabaseAdapter
-  ) {
-    this.fallbackMemory = new PersistentRoiRepository(this.ledgerRepo, null);
-  }
+  ) {}
 
   private mapRowToAlloc(row: Record<string, unknown>): ExplicitCostAllocation {
     return {
@@ -566,7 +564,6 @@ export class PostgresRoiRepository implements IRoiRepository {
   }
 
   public reset(): void {
-    this.fallbackMemory.reset();
     this.resetAsync().catch(() => {});
   }
 
@@ -576,7 +573,7 @@ export class PostgresRoiRepository implements IRoiRepository {
   }
 
   public listAllocations(characterId?: number, characterIds?: number[]): ExplicitCostAllocation[] {
-    return this.fallbackMemory.listAllocations(characterId, characterIds);
+    return this.listAllocationsAsync(characterId, characterIds) as unknown as ExplicitCostAllocation[];
   }
 
   public async listAllocationsAsync(characterId?: number, characterIds?: number[]): Promise<ExplicitCostAllocation[]> {
@@ -594,7 +591,7 @@ export class PostgresRoiRepository implements IRoiRepository {
   }
 
   public getAllocation(id: string): ExplicitCostAllocation | undefined {
-    return this.fallbackMemory.getAllocation(id);
+    return this.getAllocationAsync(id) as unknown as (ExplicitCostAllocation | undefined);
   }
 
   public async getAllocationAsync(id: string): Promise<ExplicitCostAllocation | undefined> {
@@ -604,7 +601,7 @@ export class PostgresRoiRepository implements IRoiRepository {
   }
 
   public getAllocationsForSellTx(sellTransactionId: number): ExplicitCostAllocation[] {
-    return this.fallbackMemory.getAllocationsForSellTx(sellTransactionId);
+    return this.getAllocationsForSellTxAsync(sellTransactionId) as unknown as ExplicitCostAllocation[];
   }
 
   public async getAllocationsForSellTxAsync(sellTransactionId: number): Promise<ExplicitCostAllocation[]> {
@@ -616,7 +613,7 @@ export class PostgresRoiRepository implements IRoiRepository {
   }
 
   public getAllocationsForBuyTx(buyTransactionId: number): ExplicitCostAllocation[] {
-    return this.fallbackMemory.getAllocationsForBuyTx(buyTransactionId);
+    return this.getAllocationsForBuyTxAsync(buyTransactionId) as unknown as ExplicitCostAllocation[];
   }
 
   public async getAllocationsForBuyTxAsync(buyTransactionId: number): Promise<ExplicitCostAllocation[]> {
@@ -628,7 +625,7 @@ export class PostgresRoiRepository implements IRoiRepository {
   }
 
   public getAllocationsForOpeningBalance(openingBalanceId: string): ExplicitCostAllocation[] {
-    return this.fallbackMemory.getAllocationsForOpeningBalance(openingBalanceId);
+    return this.getAllocationsForOpeningBalanceAsync(openingBalanceId) as unknown as ExplicitCostAllocation[];
   }
 
   public async getAllocationsForOpeningBalanceAsync(openingBalanceId: string): Promise<ExplicitCostAllocation[]> {
@@ -640,7 +637,6 @@ export class PostgresRoiRepository implements IRoiRepository {
   }
 
   public saveAllocation(allocation: ExplicitCostAllocation): void {
-    this.fallbackMemory.saveAllocation(allocation);
     this.saveAllocationAsync(allocation).catch(() => {});
   }
 
@@ -701,7 +697,6 @@ export class PostgresRoiRepository implements IRoiRepository {
   }
 
   public saveAllocations(allocations: ExplicitCostAllocation[]): void {
-    this.fallbackMemory.saveAllocations(allocations);
     this.saveAllocationsAsync(allocations).catch(() => {});
   }
 
@@ -767,9 +762,7 @@ export class PostgresRoiRepository implements IRoiRepository {
   }
 
   public deleteAllocation(id: string): boolean {
-    const deleted = this.fallbackMemory.deleteAllocation(id);
-    this.deleteAllocationAsync(id).catch(() => {});
-    return deleted;
+    return this.deleteAllocationAsync(id) as unknown as boolean;
   }
 
   public async deleteAllocationAsync(id: string): Promise<boolean> {
@@ -778,7 +771,6 @@ export class PostgresRoiRepository implements IRoiRepository {
   }
 
   public clearAutoAllocations(characterId?: number, characterIds?: number[], typeId?: number): void {
-    this.fallbackMemory.clearAutoAllocations(characterId, characterIds, typeId);
     this.clearAutoAllocationsAsync(characterId, characterIds, typeId).catch(() => {});
   }
 
@@ -812,7 +804,6 @@ export class PostgresRoiRepository implements IRoiRepository {
     typeId?: number;
     allocations: ExplicitCostAllocation[];
   }): void {
-    this.fallbackMemory.replaceAutoAllocations(params);
     this.replaceAutoAllocationsAsync(params).catch(() => {});
   }
 
@@ -904,7 +895,6 @@ export class PostgresRoiRepository implements IRoiRepository {
   }
 
   public saveOpeningBalance(lot: OpeningBalanceLot): void {
-    this.fallbackMemory.saveOpeningBalance(lot);
     this.saveOpeningBalanceAsync(lot).catch(() => {});
   }
 
@@ -958,7 +948,7 @@ export class PostgresRoiRepository implements IRoiRepository {
   }
 
   public getOpeningBalance(id: string): OpeningBalanceLot | undefined {
-    return this.fallbackMemory.getOpeningBalance(id);
+    return this.getOpeningBalanceAsync(id) as unknown as (OpeningBalanceLot | undefined);
   }
 
   public async getOpeningBalanceAsync(id: string): Promise<OpeningBalanceLot | undefined> {
@@ -968,9 +958,7 @@ export class PostgresRoiRepository implements IRoiRepository {
   }
 
   public deleteOpeningBalance(id: string): boolean {
-    const deleted = this.fallbackMemory.deleteOpeningBalance(id);
-    this.deleteOpeningBalanceAsync(id).catch(() => {});
-    return deleted;
+    return this.deleteOpeningBalanceAsync(id) as unknown as boolean;
   }
 
   public async deleteOpeningBalanceAsync(id: string): Promise<boolean> {
@@ -979,7 +967,7 @@ export class PostgresRoiRepository implements IRoiRepository {
   }
 
   public listOpeningBalances(characterId?: number, characterIds?: number[]): OpeningBalanceLot[] {
-    return this.fallbackMemory.listOpeningBalances(characterId, characterIds);
+    return this.listOpeningBalancesAsync(characterId, characterIds) as unknown as OpeningBalanceLot[];
   }
 
   public async listOpeningBalancesAsync(characterId?: number, characterIds?: number[]): Promise<OpeningBalanceLot[]> {
@@ -997,19 +985,169 @@ export class PostgresRoiRepository implements IRoiRepository {
   }
 
   public getInventoryLots(characterId?: number, characterIds?: number[], typeId?: number): InventoryLot[] {
-    return this.fallbackMemory.getInventoryLots(characterId, characterIds, typeId);
+    return this.getInventoryLotsAsync(characterId, characterIds, typeId) as unknown as InventoryLot[];
+  }
+
+  public async getInventoryLotsAsync(characterId?: number, characterIds?: number[], typeId?: number): Promise<InventoryLot[]> {
+    const lots: InventoryLot[] = [];
+
+    // 1. Buy Transactions
+    let buyTxs: CharacterTransaction[] = [];
+    if ((this.ledgerRepo as unknown as { getHistoricalBuyLotsAsync?(cid?: number, cids?: number[], tid?: number): Promise<CharacterTransaction[]> }).getHistoricalBuyLotsAsync) {
+      buyTxs = await (this.ledgerRepo as unknown as { getHistoricalBuyLotsAsync(cid?: number, cids?: number[], tid?: number): Promise<CharacterTransaction[]> }).getHistoricalBuyLotsAsync(characterId, characterIds, typeId);
+    } else {
+      buyTxs = this.ledgerRepo.getHistoricalBuyLots(characterId, characterIds, typeId);
+    }
+
+    const allocations = await this.listAllocationsAsync(characterId, characterIds);
+    const allocByBuyTx = new Map<number, ExplicitCostAllocation[]>();
+    const allocByOb = new Map<string, ExplicitCostAllocation[]>();
+
+    for (const alloc of allocations) {
+      if (alloc.buy_transaction_id) {
+        if (!allocByBuyTx.has(alloc.buy_transaction_id)) {
+          allocByBuyTx.set(alloc.buy_transaction_id, []);
+        }
+        allocByBuyTx.get(alloc.buy_transaction_id)!.push(alloc);
+      }
+      if (alloc.opening_balance_id) {
+        if (!allocByOb.has(alloc.opening_balance_id)) {
+          allocByOb.set(alloc.opening_balance_id, []);
+        }
+        allocByOb.get(alloc.opening_balance_id)!.push(alloc);
+      }
+    }
+
+    for (const buyTx of buyTxs) {
+      const existingAllocations = allocByBuyTx.get(buyTx.transactionId) || [];
+      const allocatedQty = existingAllocations.reduce((acc: number, a: ExplicitCostAllocation) => acc + a.quantity_allocated, 0);
+      const remainingQty = Math.max(0, buyTx.quantity - allocatedQty);
+
+      const resolvedHub = hubsService.resolveLocationToHub(buyTx.locationId, buyTx.locationName);
+      let totalBuyFees = 0;
+      if ((this.ledgerRepo as unknown as { getJournalEntriesForTransactionAsync?(cid: number, tid: number, jid?: number): Promise<{ tax: number; brokerFee: number; entries: unknown[] }> }).getJournalEntriesForTransactionAsync) {
+        const jnResult = await (this.ledgerRepo as unknown as { getJournalEntriesForTransactionAsync(cid: number, tid: number, jid?: number): Promise<{ tax: number; brokerFee: number; entries: unknown[] }> }).getJournalEntriesForTransactionAsync(
+          buyTx.characterId,
+          buyTx.transactionId,
+          buyTx.journalRefId
+        );
+        totalBuyFees = jnResult.brokerFee;
+      } else {
+        const jnResult = this.ledgerRepo.getJournalEntriesForTransaction(
+          buyTx.characterId,
+          buyTx.transactionId,
+          buyTx.journalRefId
+        );
+        totalBuyFees = jnResult.brokerFee;
+      }
+
+      const feeRatio = buyTx.quantity > 0 ? remainingQty / buyTx.quantity : 0;
+      const remainingFees = roundIsk(totalBuyFees * feeRatio);
+
+      lots.push({
+        lot_id: `tx-${buyTx.characterId}-${buyTx.transactionId}`,
+        character_id: buyTx.characterId,
+        source_type: 'TRANSACTION',
+        source_id: buyTx.transactionId,
+        type_id: buyTx.typeId,
+        type_name: buyTx.typeName || `Type #${buyTx.typeId}`,
+        acquisition_date: buyTx.date,
+        initial_quantity: buyTx.quantity,
+        allocated_quantity: allocatedQty,
+        remaining_quantity: remainingQty,
+        unit_cost_isk: buyTx.unitPrice,
+        total_cost_isk: roundIsk(buyTx.quantity * buyTx.unitPrice),
+        remaining_cost_isk: roundIsk(remainingQty * buyTx.unitPrice),
+        initial_buy_fees_isk: roundIsk(totalBuyFees),
+        remaining_buy_fees_isk: remainingFees,
+        location_id: buyTx.locationId,
+        location_name: buyTx.locationName,
+        hub_id: resolvedHub.hub_id,
+        hub_name: resolvedHub.hub_name,
+      });
+    }
+
+    // 2. Opening Balance Lots
+    let openingLots = await this.listOpeningBalancesAsync(characterId, characterIds);
+    if (typeId !== undefined) {
+      openingLots = openingLots.filter((ob) => ob.type_id === typeId);
+    }
+
+    for (const ob of openingLots) {
+      const existingAllocations = allocByOb.get(ob.id) || [];
+      const allocatedQty = existingAllocations.reduce((acc, a) => acc + a.quantity_allocated, 0);
+      const remainingQty = Math.max(0, ob.quantity - allocatedQty);
+
+      lots.push({
+        lot_id: ob.id,
+        character_id: ob.character_id,
+        source_type: 'OPENING_BALANCE',
+        source_id: ob.id,
+        type_id: ob.type_id,
+        type_name: ob.type_name,
+        acquisition_date: ob.acquisition_date,
+        initial_quantity: ob.quantity,
+        allocated_quantity: allocatedQty,
+        remaining_quantity: remainingQty,
+        unit_cost_isk: ob.unit_cost_isk,
+        total_cost_isk: roundIsk(ob.quantity * ob.unit_cost_isk),
+        remaining_cost_isk: roundIsk(remainingQty * ob.unit_cost_isk),
+        initial_buy_fees_isk: 0,
+        remaining_buy_fees_isk: 0,
+        location_id: ob.location_id,
+        location_name: ob.location_name,
+        hub_id: ob.hub_id,
+        hub_name: ob.hub_name,
+        justification: ob.justification,
+      });
+    }
+
+    return lots;
   }
 
   public getUnsoldInventory(characterId?: number, characterIds?: number[]): UnsoldInventoryItem[] {
-    return this.fallbackMemory.getUnsoldInventory(characterId, characterIds);
+    return this.getUnsoldInventoryAsync(characterId, characterIds) as unknown as UnsoldInventoryItem[];
+  }
+
+  public async getUnsoldInventoryAsync(characterId?: number, characterIds?: number[]): Promise<UnsoldInventoryItem[]> {
+    const lots = await this.getInventoryLotsAsync(characterId, characterIds);
+    return lots
+      .filter((lot) => lot.remaining_quantity > 0)
+      .map((lot) => ({
+        character_id: lot.character_id,
+        source_type: lot.source_type,
+        buy_transaction_id: lot.source_type === 'TRANSACTION' ? Number(lot.source_id) : undefined,
+        opening_balance_id: lot.source_type === 'OPENING_BALANCE' ? String(lot.source_id) : undefined,
+        type_id: lot.type_id,
+        type_name: lot.type_name,
+        buy_date: lot.acquisition_date,
+        original_quantity: lot.initial_quantity,
+        allocated_quantity: lot.allocated_quantity,
+        remaining_quantity: lot.remaining_quantity,
+        unit_buy_price: lot.unit_cost_isk,
+        tied_capital_isk: lot.remaining_cost_isk,
+        allocated_buy_fees_remaining: lot.remaining_buy_fees_isk,
+        location_id: lot.location_id,
+        hub_id: lot.hub_id,
+        hub_name: lot.hub_name,
+        justification: lot.justification,
+      }));
   }
 
   public dumpData(): { allocations: ExplicitCostAllocation[]; openingBalances?: OpeningBalanceLot[] } {
-    return this.fallbackMemory.dumpData();
+    return this.dumpDataAsync() as unknown as { allocations: ExplicitCostAllocation[]; openingBalances?: OpeningBalanceLot[] };
+  }
+
+  public async dumpDataAsync(): Promise<{ allocations: ExplicitCostAllocation[]; openingBalances?: OpeningBalanceLot[] }> {
+    const allocRes = await this.adapter.query('SELECT * FROM explicit_cost_allocations');
+    const obRes = await this.adapter.query('SELECT * FROM opening_balances');
+    return {
+      allocations: allocRes.rows.map((r) => this.mapRowToAlloc(r)),
+      openingBalances: obRes.rows.map((r) => this.mapRowToOpening(r)),
+    };
   }
 
   public clearCharacter(characterId: number): void {
-    this.fallbackMemory.clearCharacter(characterId);
     this.clearCharacterAsync(characterId).catch(() => {});
   }
 
@@ -1021,8 +1159,17 @@ export class PostgresRoiRepository implements IRoiRepository {
     await this.adapter.execute('DELETE FROM opening_balances WHERE character_id = $1', [characterId]);
   }
 
-  public restoreData(data: { allocations: ExplicitCostAllocation[]; openingBalances?: OpeningBalanceLot[] }, sync = true): void {
-    this.fallbackMemory.restoreData(data, sync);
+  public restoreData(data: { allocations: ExplicitCostAllocation[]; openingBalances?: OpeningBalanceLot[] }): void {
+    this.restoreDataAsync(data).catch(() => {});
+  }
+
+  public async restoreDataAsync(data: { allocations: ExplicitCostAllocation[]; openingBalances?: OpeningBalanceLot[] }): Promise<void> {
+    await this.saveAllocationsAsync(data.allocations);
+    if (data.openingBalances) {
+      for (const ob of data.openingBalances) {
+        await this.saveOpeningBalanceAsync(ob);
+      }
+    }
   }
 }
 

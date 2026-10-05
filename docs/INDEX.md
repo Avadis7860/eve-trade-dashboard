@@ -5,6 +5,7 @@
 | Audit technique approfondi Post-Phase 12 | [AUDIT-POST-PHASE-12](AUDIT-POST-PHASE-12.md) |
 | Audit Task-55 : Fiabilité Financière & Réconciliation TTC | [AUDIT-TASK-55-FINANCIAL-RECONCILIATION](AUDIT-TASK-55-FINANCIAL-RECONCILIATION.md) |
 | Masterplan Assurance Fiabilité & Traçabilité | [MASTERPLAN-ASSURANCE-FIABILITE](MASTERPLAN-ASSURANCE-FIABILITE.md) |
+| Roadmap Post-F11 — Fiabilisation Finale & Release (Série G) | [ROADMAP-OFFICIELLE-FIABILISATION-POST-F11](ROADMAP-OFFICIELLE-FIABILISATION-POST-F11.md) |
 | Plan et statut des phases | [MASTERPLAN](MASTERPLAN.md) |
 | Roadmap Fiabilité & Performance | [MASTERPLAN-RELIABILITY-PERFORMANCE](MASTERPLAN-RELIABILITY-PERFORMANCE.md) |
 | Audit produit existant & modèle cible | [PRODUCT_REDESIGN_AUDIT](PRODUCT_REDESIGN_AUDIT.md) |
@@ -55,8 +56,15 @@
 - [F10 Reconstitution historique, recalcul et qualification financière](phases/PHASE-F10-historical-financial-recovery.md) — *Terminé*
 - [F11 Persistance des sessions multi-personnages et résilience iframe](phases/PHASE-F11-multi-character-session-persistence.md) — *Terminé*
 
-## Release Finale
-- [H03 Hardening UX, performance et release](phases/PHASE-H03-quality-release.md) — *Planifiée (après série F complète)*
+## Release Finale & Hardening
+- [H03 Hardening UX, performance et release](phases/PHASE-H03-quality-release.md) — *Terminé / Archivé*
+
+## Roadmap Finale de Fiabilisation & Production (Série G)
+- [G01 Sécurité de Production & Intégrité Authentification](phases/PHASE-G01-security-auth-integrity.md) — *Terminé*
+- [G02 Persistance PostgreSQL Unique & Bootstrap Asynchrone](phases/PHASE-G02-postgres-single-source-bootstrap.md) — *Planifiée*
+- [G03 Concurrence Distribuée & Synchronisation ESI](phases/PHASE-G03-distributed-esi-sync-leases.md) — *Planifiée*
+- [G04 Cohérence Opérationnelle, Backup & Observabilité](phases/PHASE-G04-corp-deduplication-backup-probes.md) — *Planifiée*
+- [G05 Qualification CI Réelle, Disaster Recovery & Release Ready](phases/PHASE-G05-real-ci-e2e-release-ready.md) — *Planifiée*
 
 ## Roadmap Historique — Fiabilité & Performance (R00–R08)
 - [R00 Baseline, mesure et gel fonctionnel](phases/PHASE-R00-baseline.md) — *Terminé*

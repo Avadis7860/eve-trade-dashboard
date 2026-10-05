@@ -2,7 +2,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import type { Express } from 'express';
 import request from 'supertest';
-import { createApp } from './server.ts';
+import { createApp, bootstrapApp } from './server.ts';
+import { StorageManager } from './src/server/storage/database.ts';
 
 describe('Server API Endpoints', () => {
   let app: Express;
@@ -45,6 +46,45 @@ describe('Server API Endpoints', () => {
 
     const analyticsTsRes = await request(app).get('/api/analytics/timeseries');
     expect(analyticsTsRes.status).toBe(401);
+  });
+
+  it('Phase G02: bootstrapApp performs ordered async startup and logs lifecycle stages', async () => {
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => {
+      logs.push(args.join(' '));
+      originalLog(...args);
+    };
+
+    try {
+      const res = await bootstrapApp();
+      expect(res.app).toBeDefined();
+
+      const dbConnectedIdx = logs.findIndex((l) => l.includes('[Bootstrap] DB Connected'));
+      const migrationsIdx = logs.findIndex((l) => l.includes('[Bootstrap] Migrations Applied'));
+      const servicesReadyIdx = logs.findIndex((l) => l.includes('[Bootstrap] Services Ready'));
+
+      expect(dbConnectedIdx).toBeGreaterThanOrEqual(0);
+      expect(migrationsIdx).toBeGreaterThanOrEqual(dbConnectedIdx);
+      expect(servicesReadyIdx).toBeGreaterThanOrEqual(migrationsIdx);
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  it('Phase G02: fails fast during bootstrap if database connection fails', async () => {
+    const originalManager = StorageManager.getInstance();
+    const originalConfig = originalManager.getConfig();
+    try {
+      StorageManager.resetInstance({
+        engine: 'postgres',
+        databaseUrl: 'postgresql://invalid_user:invalid_pass@127.0.0.1:54329/nonexistent_db?connect_timeout=1',
+      });
+
+      await expect(bootstrapApp()).rejects.toThrow();
+    } finally {
+      StorageManager.resetInstance(originalConfig);
+    }
   });
 });
 

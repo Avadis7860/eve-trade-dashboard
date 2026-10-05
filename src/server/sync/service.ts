@@ -174,10 +174,10 @@ export class SyncService {
                 };
               });
 
-              const saveResult = this.ledgerRepo.saveTransactions(transactions);
+              const saveResult = await this.ledgerRepo.saveTransactions(transactions);
               newCount += saveResult.inserted;
 
-              const totalPersisted = this.ledgerRepo.countTransactions(characterId);
+              const totalPersisted = await this.ledgerRepo.countTransactions(characterId);
               await this.syncRepo.updateSyncStateAsync(characterId, resource, {
                 lastSuccessfulId: lowestId,
                 totalRecords: totalPersisted,
@@ -189,7 +189,7 @@ export class SyncService {
         }
       );
 
-      const totalPersisted = this.ledgerRepo.countTransactions(characterId);
+      const totalPersisted = await this.ledgerRepo.countTransactions(characterId);
       const finalStatus = paginated.status;
 
       await this.syncRepo.updateSyncStateAsync(characterId, resource, {
@@ -220,7 +220,7 @@ export class SyncService {
       };
     } catch (err) {
       const errorMsg = (err as Error).message || 'Sync failed unexpectedly';
-      const totalPersisted = this.ledgerRepo.countTransactions(characterId);
+      const totalPersisted = await this.ledgerRepo.countTransactions(characterId);
 
       await this.syncRepo.updateSyncStateAsync(characterId, resource, {
         status: 'ERROR',
@@ -326,11 +326,11 @@ export class SyncService {
                 observedByCharacterIds: [characterId],
               }));
 
-              const saveResult = this.ledgerRepo.saveJournalEntries(entries);
+              const saveResult = await this.ledgerRepo.saveJournalEntries(entries);
               newCount += saveResult.inserted;
             }
 
-            const currentTotal = this.ledgerRepo.getJournalEntries(characterId, 1, 1).total;
+            const currentTotal = (await this.ledgerRepo.getJournalEntries(characterId, 1, 1)).total;
             await this.syncRepo.updateSyncStateAsync(characterId, resource, {
               lastPage: page,
               totalRecords: currentTotal,
@@ -341,7 +341,7 @@ export class SyncService {
         }
       );
 
-      const journalResult = this.ledgerRepo.getJournalEntries(characterId, 1, 1);
+      const journalResult = await this.ledgerRepo.getJournalEntries(characterId, 1, 1);
       const totalPersisted = journalResult.total;
       const finalStatus = paginated.status;
 
@@ -373,7 +373,7 @@ export class SyncService {
       };
     } catch (err) {
       const errorMsg = (err as Error).message || 'Journal sync failed';
-      const journalResult = this.ledgerRepo.getJournalEntries(characterId, 1, 1);
+      const journalResult = await this.ledgerRepo.getJournalEntries(characterId, 1, 1);
 
       await this.syncRepo.updateSyncStateAsync(characterId, resource, {
         status: 'ERROR',
@@ -472,7 +472,7 @@ export class SyncService {
       const snapshots: CharacterOrderSnapshot[] = [];
 
       for (const raw of rawActive) {
-        const existing = this.ordersRepo.getOrderById(characterId, raw.order_id);
+        const existing = await this.ordersRepo.getOrderById(characterId, raw.order_id);
         const classification = evaluateOrderLifecycle(raw, existing || undefined, false);
         const expiresAt = calculateExpirationIso(raw.issued, raw.duration);
 
@@ -507,7 +507,7 @@ export class SyncService {
 
       // 6. Build snapshots for historical orders (confirmations of completion / cancellation / expiration)
       for (const raw of rawHistory) {
-        const existing = this.ordersRepo.getOrderById(characterId, raw.order_id);
+        const existing = await this.ordersRepo.getOrderById(characterId, raw.order_id);
         const classification = evaluateOrderLifecycle(raw, existing || undefined, true);
         const expiresAt = calculateExpirationIso(raw.issued, raw.duration);
 
@@ -541,12 +541,12 @@ export class SyncService {
       }
 
       // 7. Save snapshots
-      const saveResult = this.ordersRepo.saveOrderSnapshots(snapshots);
+      const saveResult = await this.ordersRepo.saveOrderSnapshots(snapshots);
 
       // 8. Mark missing previously-active orders as DISAPPEARED_UNCONFIRMED
-      this.ordersRepo.markMissingOrdersAsDisappeared(characterId, activeOrderIds, observedAt);
+      await this.ordersRepo.markMissingOrdersAsDisappeared(characterId, activeOrderIds, observedAt);
 
-      const totalTracked = this.ordersRepo.getOrdersForCharacter(characterId).length;
+      const totalTracked = (await this.ordersRepo.getOrdersForCharacter(characterId)).length;
       const finalStatus = historyFailed ? 'PARTIAL' : 'COMPLETE';
       const coverageStatus = historyFailed ? 'PARTIAL' : 'COMPLETE';
 
@@ -576,7 +576,7 @@ export class SyncService {
       };
     } catch (err) {
       const errorMsg = (err as Error).message || 'Orders sync failed';
-      const totalTracked = this.ordersRepo.getOrdersForCharacter(characterId).length;
+      const totalTracked = (await this.ordersRepo.getOrdersForCharacter(characterId)).length;
 
       await this.syncRepo.updateSyncStateAsync(characterId, resource, {
         status: 'ERROR',
@@ -1039,7 +1039,7 @@ export class SyncService {
                     division: divisionNumber,
                     observedByCharacterIds: [characterId],
                   }));
-                  const saveRes = this.ledgerRepo.saveJournalEntries(entries);
+                  const saveRes = await this.ledgerRepo.saveJournalEntries(entries);
                   newJournalPersisted += saveRes.inserted;
                 }
               },
@@ -1102,7 +1102,7 @@ export class SyncService {
       }
 
       const hasMoreOverall = Object.values(divisionStatuses).some((d) => d.hasMore);
-      const journalTotal = this.ledgerRepo.getJournalEntries(characterId, 1, 1).total;
+      const journalTotal = (await this.ledgerRepo.getJournalEntries(characterId, 1, 1)).total;
       const totalPersistedCount = journalTotal > 0 ? journalTotal : (totalJournalFetched + divisions.length);
 
       await this.syncRepo.updateSyncStateAsync(characterId, resource, {

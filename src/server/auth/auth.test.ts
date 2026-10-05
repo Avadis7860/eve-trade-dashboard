@@ -558,4 +558,90 @@ describe('Phase F11 — Qualifications Réelles & Critères de Sortie', () => {
     expect(restoredSession?.characters[9001].characterName).toBe('Fleet Commander Alpha');
     expect(restoredSession?.characters[9002].characterName).toBe('Fleet Scout Beta');
   });
+
+  describe('Phase G01 — Single-Flight OAuth & Production Route Hardening', () => {
+    it('TEST-G01-04: single-flight OAuth deduplication: 50 concurrent requests trigger exactly ONE token refresh call to CCP', async () => {
+      let callCount = 0;
+      const mockFetch = vi.fn().mockImplementation(async () => {
+        callCount++;
+        // Introduce small async delay to ensure all 50 concurrent calls overlap
+        await new Promise((r) => setTimeout(r, 20));
+        return {
+          ok: true,
+          json: async (): Promise<EveTokenResponse> => ({
+            access_token: 'single_flight_fresh_access_token',
+            token_type: 'Bearer',
+            expires_in: 1200,
+            refresh_token: 'single_flight_fresh_refresh_token',
+          }),
+        };
+      });
+
+      const singleFlightAuthService = new AuthService(
+        { clientId: 'test_client', clientSecret: 'test_secret' },
+        store,
+        mockFetch as unknown as typeof fetch
+      );
+
+      const expiredTs = Date.now() - 60000;
+      const session = store.createSession({
+        characterId: 888001,
+        characterName: 'High Concurrency Pilot',
+        scopes: ['publicData'],
+        accessToken: 'expired_access_token',
+        refreshToken: 'valid_refresh_token_to_coalesce',
+        expiresAt: expiredTs,
+      });
+
+      // Launch 50 concurrent requests simultaneously
+      const promises = Array.from({ length: 50 }, () =>
+        singleFlightAuthService.getValidSession(session.sessionId)
+      );
+
+      const results = await Promise.all(promises);
+
+      // Verify all 50 callers received the valid refreshed session
+      expect(results).toHaveLength(50);
+      for (const res of results) {
+        expect(res).not.toBeNull();
+        expect(res?.accessToken).toBe('single_flight_fresh_access_token');
+        expect(res?.refreshToken).toBe('single_flight_fresh_refresh_token');
+        expect(res?.expiresAt).toBeGreaterThan(Date.now());
+      }
+
+      // Assert that CCP token endpoint was invoked EXACTLY ONCE
+      expect(callCount).toBe(1);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('TEST-G01-05: physical route lock: E2E test routes return HTTP 404 in production environment', async () => {
+      const originalEnv = process.env.NODE_ENV;
+      try {
+        process.env.NODE_ENV = 'production';
+        process.env.SESSION_ENCRYPTION_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+        const prodApp = express();
+        prodApp.use(cookieParser());
+        prodApp.use(express.json());
+        prodApp.use('/api/auth', createAuthRouter(authService));
+
+        const resSession = await request(prodApp)
+          .post('/api/auth/e2e-session')
+          .send({ characterId: 999 });
+        expect(resSession.status).toBe(404);
+
+        const resSeed = await request(prodApp)
+          .post('/api/auth/e2e-seed')
+          .send({});
+        expect(resSeed.status).toBe(404);
+
+        const resReset = await request(prodApp)
+          .post('/api/auth/e2e-reset')
+          .send({});
+        expect(resReset.status).toBe(404);
+      } finally {
+        process.env.NODE_ENV = originalEnv;
+      }
+    });
+  });
 });

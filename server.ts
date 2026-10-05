@@ -1,9 +1,12 @@
 import express, { type Request, type Response } from 'express';
+import type { Server } from 'node:http';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { StorageManager } from './src/server/storage/database.ts';
 import { createAuthRouter } from './src/server/auth/router.ts';
+import { validateProductionSecrets } from './src/server/auth/crypto.ts';
 import { createEsiRouter } from './src/server/esi/router.ts';
 import { createLedgerRouter } from './src/server/ledger/router.ts';
 import { createOrdersRouter } from './src/server/orders/router.ts';
@@ -22,6 +25,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export async function createApp() {
+  // Fail-fast cryptographic verification in production
+  validateProductionSecrets();
+
   const app = express();
   app.disable('x-powered-by');
 
@@ -138,6 +144,46 @@ export async function createApp() {
   return app;
 }
 
+export interface BootstrapResult {
+  app: express.Express;
+  server?: Server;
+}
+
+/**
+ * Ordered asynchronous application bootstrap:
+ * Configuration -> Connexion DB -> Migrations SQL -> Services Init -> Store Init -> app.listen()
+ */
+export async function bootstrapApp(port?: number, host?: string): Promise<BootstrapResult> {
+  // Fail-fast cryptographic verification in production
+  validateProductionSecrets();
+
+  // 1. DB Connected & Migrations Applied
+  const storage = StorageManager.getInstance();
+  await storage.initAsync();
+  console.log('[Bootstrap] DB Connected');
+  console.log('[Bootstrap] Migrations Applied');
+
+  // 2. Services Init & Store Init
+  console.log('[Bootstrap] Services Ready');
+
+  // 3. Create Express Application
+  const app = await createApp();
+
+  if (port !== undefined) {
+    const bindHost = host || '0.0.0.0';
+    return new Promise((resolve, reject) => {
+      const server = app.listen(port, bindHost, () => {
+        console.log(`[Bootstrap] Listening on port ${port}`);
+        console.log(`[EVE Trade Dashboard] Server running on http://${bindHost}:${port}`);
+        resolve({ app, server });
+      });
+      server.on('error', reject);
+    });
+  }
+
+  return { app };
+}
+
 // Start server when executed directly
 const isDirectExecution =
   process.env.NODE_ENV !== 'test' &&
@@ -145,13 +191,9 @@ const isDirectExecution =
   process.argv[1] === fileURLToPath(import.meta.url);
 
 if (isDirectExecution) {
-  createApp().then((app) => {
-    const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
-    const HOST = '0.0.0.0';
-    app.listen(PORT, HOST, () => {
-      console.log(`[EVE Trade Dashboard] Server running on http://${HOST}:${PORT}`);
-    });
-  }).catch((err) => {
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+  const HOST = '0.0.0.0';
+  bootstrapApp(PORT, HOST).catch((err) => {
     console.error('Failed to start server:', err);
     process.exit(1);
   });

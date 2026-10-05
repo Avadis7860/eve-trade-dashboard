@@ -4,7 +4,7 @@ import { roiRepository } from './repository';
 import { ledgerRepository } from '../ledger/repository';
 import { hubsRepository } from '../hubs/repository';
 import type { CharacterTransaction, CharacterWalletJournalEntry } from '../ledger/types';
-import type { ExplicitCostAllocation } from './types';
+import type { ExplicitCostAllocation, InventoryLot } from './types';
 import { RoiCalculator, roundIsk, roundPercent } from './calculator';
 
 describe('ROI TTC & Financial Metrics Module', () => {
@@ -790,8 +790,8 @@ describe('ROI TTC & Financial Metrics Module', () => {
 
     roiRepository.saveAllocations([alloc1, alloc2]);
     const stored = roiRepository.listAllocations(CHAR_ID);
-    expect(stored.some((a) => a.id === 'test-alloc-1')).toBe(true);
-    expect(stored.some((a) => a.id === 'test-alloc-2')).toBe(true);
+    expect(stored.some((a: ExplicitCostAllocation) => a.id === 'test-alloc-1')).toBe(true);
+    expect(stored.some((a: ExplicitCostAllocation) => a.id === 'test-alloc-2')).toBe(true);
   });
 
   describe('Phase R02 Mandatory Tests — Exhaustive Inventory & Historical Buy Lots (> 500 Items)', () => {
@@ -870,15 +870,15 @@ describe('ROI TTC & Financial Metrics Module', () => {
       expect(inventoryLots.length).toBe(1200);
 
       // First 750 lots should be fully allocated
-      const fullyAllocatedLots = inventoryLots.filter((lot) => lot.remaining_quantity === 0 && lot.allocated_quantity === 10);
+      const fullyAllocatedLots = inventoryLots.filter((lot: InventoryLot) => lot.remaining_quantity === 0 && lot.allocated_quantity === 10);
       expect(fullyAllocatedLots.length).toBe(750);
 
       // Remaining 450 lots must be untouched with 10 units remaining
-      const unallocatedLots = inventoryLots.filter((lot) => lot.remaining_quantity === 10 && lot.allocated_quantity === 0);
+      const unallocatedLots = inventoryLots.filter((lot: InventoryLot) => lot.remaining_quantity === 10 && lot.allocated_quantity === 0);
       expect(unallocatedLots.length).toBe(450);
 
       // Sum of remaining quantities must be exactly 4,500 units
-      const totalRemainingQty = inventoryLots.reduce((acc, lot) => acc + lot.remaining_quantity, 0);
+      const totalRemainingQty = inventoryLots.reduce((acc: number, lot: InventoryLot) => acc + lot.remaining_quantity, 0);
       expect(totalRemainingQty).toBe(4500);
     });
 
@@ -941,9 +941,9 @@ describe('ROI TTC & Financial Metrics Module', () => {
       const lots = roiRepository.getInventoryLots(charId, undefined, TRITANIUM_TYPE_ID);
       expect(lots.length).toBe(2500);
 
-      const remainingLots = lots.filter((l) => l.remaining_quantity > 0);
+      const remainingLots = lots.filter((l: InventoryLot) => l.remaining_quantity > 0);
       expect(remainingLots.length).toBe(1000); // 2500 - 1500 = 1000 lots remaining
-      const totalRemainingQty = remainingLots.reduce((acc, l) => acc + l.remaining_quantity, 0);
+      const totalRemainingQty = remainingLots.reduce((acc: number, l: InventoryLot) => acc + l.remaining_quantity, 0);
       expect(totalRemainingQty).toBe(10000);
     });
   });
@@ -1194,8 +1194,8 @@ describe('ROI TTC & Financial Metrics Module', () => {
       roiService.autoReconcileFifo({ characterId: CHAR_ID });
       const initialAllocations = roiRepository.listAllocations(CHAR_ID);
       expect(initialAllocations.length).toBe(2);
-      expect(initialAllocations.some((a) => a.type_id === PLEX_TYPE_ID)).toBe(true);
-      expect(initialAllocations.some((a) => a.type_id === TRITANIUM_TYPE_ID)).toBe(true);
+      expect(initialAllocations.some((a: ExplicitCostAllocation) => a.type_id === PLEX_TYPE_ID)).toBe(true);
+      expect(initialAllocations.some((a: ExplicitCostAllocation) => a.type_id === TRITANIUM_TYPE_ID)).toBe(true);
 
       // Now run targeted reconciliation on Tritanium ONLY
       const tritResult = roiService.autoReconcileFifo({ characterId: CHAR_ID, typeId: TRITANIUM_TYPE_ID });
@@ -1204,11 +1204,11 @@ describe('ROI TTC & Financial Metrics Module', () => {
       // CRITICAL CONTRACT: PLEX allocations MUST NOT be deleted!
       const afterTargetedAllocations = roiRepository.listAllocations(CHAR_ID);
       expect(afterTargetedAllocations.length).toBe(2);
-      const plexAlloc = afterTargetedAllocations.find((a) => a.type_id === PLEX_TYPE_ID);
+      const plexAlloc = afterTargetedAllocations.find((a: ExplicitCostAllocation) => a.type_id === PLEX_TYPE_ID);
       expect(plexAlloc).toBeDefined();
       expect(plexAlloc?.sell_transaction_id).toBe(102);
 
-      const tritAlloc = afterTargetedAllocations.find((a) => a.type_id === TRITANIUM_TYPE_ID);
+      const tritAlloc = afterTargetedAllocations.find((a: ExplicitCostAllocation) => a.type_id === TRITANIUM_TYPE_ID);
       expect(tritAlloc).toBeDefined();
       expect(tritAlloc?.sell_transaction_id).toBe(202);
     });

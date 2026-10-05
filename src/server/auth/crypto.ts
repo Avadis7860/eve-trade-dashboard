@@ -1,14 +1,32 @@
 import crypto from 'node:crypto';
 
 /**
+ * Validates that cryptographic secrets are strictly configured in production.
+ * Throws a fatal error if missing or too weak.
+ */
+export function validateProductionSecrets(): void {
+  if (process.env.NODE_ENV === 'production') {
+    const key = process.env.SESSION_ENCRYPTION_KEY || process.env.SESSION_SECRET;
+    if (!key || key.trim().length < 32) {
+      throw new Error('FATAL: SESSION_ENCRYPTION_KEY (minimum 32 characters / 256-bit) is strictly required in production environment');
+    }
+  }
+}
+
+/**
  * Derives a consistent 32-byte AES-256 key from a secret string or environment variable.
  */
 export function getStorageKey(providedKey?: string): Buffer {
-  const secret =
-    providedKey ||
-    process.env.SESSION_ENCRYPTION_KEY ||
-    process.env.SESSION_SECRET ||
-    'eve-trade-dashboard-session-master-secret-key-32b';
+  if (providedKey) {
+    return crypto.createHash('sha256').update(providedKey).digest();
+  }
+  const secret = process.env.SESSION_ENCRYPTION_KEY || process.env.SESSION_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('FATAL: SESSION_ENCRYPTION_KEY is strictly required in production environment');
+    }
+    return crypto.createHash('sha256').update('eve-trade-dashboard-session-master-secret-key-32b').digest();
+  }
   return crypto.createHash('sha256').update(secret).digest();
 }
 

@@ -488,6 +488,8 @@ export class StorageManager {
   private static instance: StorageManager;
   private adapter: IDatabaseAdapter;
   private config: StorageConfig;
+  private initPromise: Promise<void> | null = null;
+  private isInitialized = false;
 
   private constructor(config?: Partial<StorageConfig>) {
     const databaseUrl = config?.databaseUrl || process.env.DATABASE_URL;
@@ -506,8 +508,37 @@ export class StorageManager {
   public static getInstance(config?: Partial<StorageConfig>): StorageManager {
     if (!StorageManager.instance) {
       StorageManager.instance = new StorageManager(config);
-      StorageManager.instance.getAdapter().init();
+      // Synchronously initialize file adapter if applicable
+      if (StorageManager.instance.getAdapter() instanceof DurableFileDatabaseAdapter) {
+        (StorageManager.instance.getAdapter() as DurableFileDatabaseAdapter).init();
+      }
     }
+    return StorageManager.instance;
+  }
+
+  public async initAsync(): Promise<void> {
+    if (this.isInitialized) return;
+    if (!this.initPromise) {
+      this.initPromise = (async () => {
+        try {
+          await this.adapter.init();
+          this.isInitialized = true;
+          logger.info(`[Storage] Database adapter initialized successfully (engine: ${this.config.engine}).`);
+        } catch (err) {
+          logger.error(`[Storage] Failed to initialize database adapter: ${(err as Error).message}`);
+          throw err;
+        }
+      })();
+    }
+    await this.initPromise;
+  }
+
+  public static async resetInstanceAsync(config?: Partial<StorageConfig>): Promise<StorageManager> {
+    if (StorageManager.instance) {
+      await StorageManager.instance.getAdapter().close();
+    }
+    StorageManager.instance = new StorageManager(config);
+    await StorageManager.instance.initAsync();
     return StorageManager.instance;
   }
 
@@ -516,7 +547,9 @@ export class StorageManager {
       StorageManager.instance.getAdapter().close();
     }
     StorageManager.instance = new StorageManager(config);
-    StorageManager.instance.getAdapter().init();
+    if (StorageManager.instance.getAdapter() instanceof DurableFileDatabaseAdapter) {
+      (StorageManager.instance.getAdapter() as DurableFileDatabaseAdapter).init();
+    }
     return StorageManager.instance;
   }
 
@@ -526,6 +559,10 @@ export class StorageManager {
 
   public getConfig(): StorageConfig {
     return { ...this.config };
+  }
+
+  public isReady(): boolean {
+    return this.isInitialized;
   }
 }
 

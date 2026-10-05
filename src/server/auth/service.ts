@@ -96,6 +96,9 @@ export class AuthService {
   private customConfig?: Partial<AuthConfig>;
   private sessionStore: SessionStore;
   private fetchFn: typeof fetch;
+  private inFlightCharacterRefreshes = new Map<number, Promise<string | null>>();
+  private inFlightSessionRefreshes = new Map<string, Promise<UserSession>>();
+  private inFlightValidSessionRequests = new Map<string, Promise<UserSession | null>>();
 
   constructor(
     config?: Partial<AuthConfig>,
@@ -246,103 +249,129 @@ export class AuthService {
    * Refreshes an expired access token using the session's refresh token
    */
   public async refreshSessionTokens(session: UserSession): Promise<UserSession> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Host': 'login.eveonline.com',
-    };
-
-    const bodyParams = new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: session.refreshToken,
-    });
-
-    if (this.config.clientSecret) {
-      headers['Authorization'] = `Basic ${Buffer.from(`${this.config.clientId}:${this.config.clientSecret}`).toString('base64')}`;
-    } else {
-      bodyParams.set('client_id', this.config.clientId);
+    if (this.inFlightSessionRefreshes.has(session.sessionId)) {
+      return this.inFlightSessionRefreshes.get(session.sessionId)!;
     }
 
-    const response = await this.fetchFn(this.config.tokenBaseUrl, {
-      method: 'POST',
-      headers,
-      body: bodyParams.toString(),
-    });
+    const refreshPromise = (async () => {
+      try {
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Host': 'login.eveonline.com',
+        };
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      this.sessionStore.deleteSession(session.sessionId);
-      throw new Error(`Token refresh failed (HTTP ${response.status}): ${errorText}`);
-    }
+        const bodyParams = new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: session.refreshToken,
+        });
 
-    const tokens: EveTokenResponse = await response.json();
-    const expiresAt = Date.now() + tokens.expires_in * 1000;
-    const newRefreshToken = tokens.refresh_token || session.refreshToken;
+        if (this.config.clientSecret) {
+          headers['Authorization'] = `Basic ${Buffer.from(`${this.config.clientId}:${this.config.clientSecret}`).toString('base64')}`;
+        } else {
+          bodyParams.set('client_id', this.config.clientId);
+        }
 
-    this.sessionStore.updateSessionTokens(
-      session.sessionId,
-      tokens.access_token,
-      newRefreshToken,
-      expiresAt
-    );
+        const response = await this.fetchFn(this.config.tokenBaseUrl, {
+          method: 'POST',
+          headers,
+          body: bodyParams.toString(),
+        });
 
-    return {
-      ...session,
-      accessToken: tokens.access_token,
-      refreshToken: newRefreshToken,
-      expiresAt,
-    };
+        if (!response.ok) {
+          const errorText = await response.text();
+          this.sessionStore.deleteSession(session.sessionId);
+          throw new Error(`Token refresh failed (HTTP ${response.status}): ${errorText}`);
+        }
+
+        const tokens: EveTokenResponse = await response.json();
+        const expiresAt = Date.now() + tokens.expires_in * 1000;
+        const newRefreshToken = tokens.refresh_token || session.refreshToken;
+
+        this.sessionStore.updateSessionTokens(
+          session.sessionId,
+          tokens.access_token,
+          newRefreshToken,
+          expiresAt
+        );
+
+        return {
+          ...session,
+          accessToken: tokens.access_token,
+          refreshToken: newRefreshToken,
+          expiresAt,
+        };
+      } finally {
+        this.inFlightSessionRefreshes.delete(session.sessionId);
+      }
+    })();
+
+    this.inFlightSessionRefreshes.set(session.sessionId, refreshPromise);
+    return refreshPromise;
   }
 
   /**
    * Refreshes tokens for a specific linked character in the session
    */
   public async refreshCharacterTokens(sessionId: string, characterId: number): Promise<string | null> {
-    const session = this.sessionStore.getSession(sessionId);
-    if (!session || !session.characters || !session.characters[characterId]) return null;
-
-    const char = session.characters[characterId];
-    if (!char.refreshToken) return null;
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Host': 'login.eveonline.com',
-    };
-
-    const bodyParams = new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: char.refreshToken,
-    });
-
-    if (this.config.clientSecret) {
-      headers['Authorization'] = `Basic ${Buffer.from(`${this.config.clientId}:${this.config.clientSecret}`).toString('base64')}`;
-    } else {
-      bodyParams.set('client_id', this.config.clientId);
+    if (this.inFlightCharacterRefreshes.has(characterId)) {
+      return this.inFlightCharacterRefreshes.get(characterId)!;
     }
 
-    const response = await this.fetchFn(this.config.tokenBaseUrl, {
-      method: 'POST',
-      headers,
-      body: bodyParams.toString(),
-    });
+    const refreshPromise = (async () => {
+      try {
+        const session = this.sessionStore.getSession(sessionId);
+        if (!session || !session.characters || !session.characters[characterId]) return null;
 
-    if (!response.ok) {
-      logger.warn(`[Auth] Token refresh failed for character ${characterId}`);
-      return null;
-    }
+        const char = session.characters[characterId];
+        if (!char.refreshToken) return null;
 
-    const tokens: EveTokenResponse = await response.json();
-    const expiresAt = Date.now() + tokens.expires_in * 1000;
-    const newRefreshToken = tokens.refresh_token || char.refreshToken;
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Host': 'login.eveonline.com',
+        };
 
-    this.sessionStore.updateSessionTokens(
-      sessionId,
-      tokens.access_token,
-      newRefreshToken,
-      expiresAt,
-      characterId
-    );
+        const bodyParams = new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: char.refreshToken,
+        });
 
-    return tokens.access_token;
+        if (this.config.clientSecret) {
+          headers['Authorization'] = `Basic ${Buffer.from(`${this.config.clientId}:${this.config.clientSecret}`).toString('base64')}`;
+        } else {
+          bodyParams.set('client_id', this.config.clientId);
+        }
+
+        const response = await this.fetchFn(this.config.tokenBaseUrl, {
+          method: 'POST',
+          headers,
+          body: bodyParams.toString(),
+        });
+
+        if (!response.ok) {
+          logger.warn(`[Auth] Token refresh failed for character ${characterId}`);
+          return null;
+        }
+
+        const tokens: EveTokenResponse = await response.json();
+        const expiresAt = Date.now() + tokens.expires_in * 1000;
+        const newRefreshToken = tokens.refresh_token || char.refreshToken;
+
+        this.sessionStore.updateSessionTokens(
+          sessionId,
+          tokens.access_token,
+          newRefreshToken,
+          expiresAt,
+          characterId
+        );
+
+        return tokens.access_token;
+      } finally {
+        this.inFlightCharacterRefreshes.delete(characterId);
+      }
+    })();
+
+    this.inFlightCharacterRefreshes.set(characterId, refreshPromise);
+    return refreshPromise;
   }
 
   /**
@@ -393,41 +422,54 @@ export class AuthService {
   public async getValidSession(sessionId: string): Promise<UserSession | null> {
     if (!sessionId) return null;
 
-    const session = this.sessionStore.getSession(sessionId);
-    if (!session) return null;
-
-    const now = Date.now();
-    let hasExpiredChar = (session.expiresAt <= now + 60000 && Boolean(session.refreshToken));
-    if (!hasExpiredChar && session.characters) {
-      for (const char of Object.values(session.characters)) {
-        if (char.expiresAt <= now + 60000 && Boolean(char.refreshToken)) {
-          hasExpiredChar = true;
-          break;
-        }
-      }
+    if (this.inFlightValidSessionRequests.has(sessionId)) {
+      return this.inFlightValidSessionRequests.get(sessionId)!;
     }
 
-    if (hasExpiredChar) {
+    const validSessionPromise = (async () => {
       try {
-        const refreshed = await this.refreshAllExpiredCharacters(session);
-        if (refreshed.expiresAt > now) {
-          return refreshed;
-        }
-        if (refreshed.characters) {
-          for (const char of Object.values(refreshed.characters)) {
-            if (char.expiresAt > now) {
-              return this.sessionStore.switchActiveCharacter(sessionId, char.characterId);
+        const session = this.sessionStore.getSession(sessionId);
+        if (!session) return null;
+
+        const now = Date.now();
+        let hasExpiredChar = (session.expiresAt <= now + 60000 && Boolean(session.refreshToken));
+        if (!hasExpiredChar && session.characters) {
+          for (const char of Object.values(session.characters)) {
+            if (char.expiresAt <= now + 60000 && Boolean(char.refreshToken)) {
+              hasExpiredChar = true;
+              break;
             }
           }
         }
-        return null;
-      } catch (err) {
-        logger.warn('[Auth] Automatic token refresh failed:', err);
-        return null;
-      }
-    }
 
-    return session;
+        if (hasExpiredChar) {
+          try {
+            const refreshed = await this.refreshAllExpiredCharacters(session);
+            if (refreshed.expiresAt > now) {
+              return refreshed;
+            }
+            if (refreshed.characters) {
+              for (const char of Object.values(refreshed.characters)) {
+                if (char.expiresAt > now) {
+                  return this.sessionStore.switchActiveCharacter(sessionId, char.characterId);
+                }
+              }
+            }
+            return null;
+          } catch (err) {
+            logger.warn('[Auth] Automatic token refresh failed:', err);
+            return null;
+          }
+        }
+
+        return session;
+      } finally {
+        this.inFlightValidSessionRequests.delete(sessionId);
+      }
+    })();
+
+    this.inFlightValidSessionRequests.set(sessionId, validSessionPromise);
+    return validSessionPromise;
   }
 
   /**

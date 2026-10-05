@@ -3,6 +3,7 @@ import { CapitalService, capitalService as defaultCapitalService } from './servi
 import { SessionStore, defaultSessionStore } from '../auth/sessionStore.ts';
 import type { UserSession } from '../auth/types.ts';
 import { validateCharacterSessionAccess } from '../middleware/security.ts';
+import { extractSessionId } from '../auth/router.ts';
 import type { PhysicalStockClassification, WalletSyncAndCapitalSettings, WalletSyncMode } from './types.ts';
 
 function parseWalletSettings(query: Request['query']): WalletSyncAndCapitalSettings | undefined {
@@ -48,7 +49,7 @@ export function createCapitalRouter(
 
   // Enforce session authentication
   router.use((req: Request, res: Response, next) => {
-    const sessionId = req.cookies?.eve_session_id;
+    const sessionId = extractSessionId(req);
     if (!sessionId) {
       res.status(401).json({ error: 'Session non authentifiée' });
       return;

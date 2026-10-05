@@ -2,6 +2,7 @@ import { generateCodeVerifier, generateCodeChallenge, generateState } from './pk
 import { extractAndValidateCharacterIdentity } from './jwt.ts';
 import { SessionStore, defaultSessionStore } from './sessionStore.ts';
 import type { AuthConfig, UserSession, EveTokenResponse, PublicSessionInfo } from './types.ts';
+import { encryptWithPassword, decryptWithPassword } from './crypto.ts';
 import { logger } from '../utils/logger.ts';
 
 export const DEFAULT_SCOPES = [
@@ -275,18 +276,19 @@ export class AuthService {
 
     const tokens: EveTokenResponse = await response.json();
     const expiresAt = Date.now() + tokens.expires_in * 1000;
+    const newRefreshToken = tokens.refresh_token || session.refreshToken;
 
     this.sessionStore.updateSessionTokens(
       session.sessionId,
       tokens.access_token,
-      tokens.refresh_token,
+      newRefreshToken,
       expiresAt
     );
 
     return {
       ...session,
       accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token,
+      refreshToken: newRefreshToken,
       expiresAt,
     };
   }
@@ -330,16 +332,59 @@ export class AuthService {
 
     const tokens: EveTokenResponse = await response.json();
     const expiresAt = Date.now() + tokens.expires_in * 1000;
+    const newRefreshToken = tokens.refresh_token || char.refreshToken;
 
     this.sessionStore.updateSessionTokens(
       sessionId,
       tokens.access_token,
-      tokens.refresh_token,
+      newRefreshToken,
       expiresAt,
       characterId
     );
 
     return tokens.access_token;
+  }
+
+  /**
+   * Refreshes all characters in the session whose access tokens are expiring (< 60s) or expired,
+   * with a bounded concurrency pool (max 4 concurrent HTTP requests to CCP).
+   */
+  public async refreshAllExpiredCharacters(session: UserSession, concurrency: number = 4): Promise<UserSession> {
+    const now = Date.now();
+    const charactersToRefresh: number[] = [];
+
+    // Collect all characters expiring within 60s
+    for (const char of Object.values(session.characters || {})) {
+      if (char.expiresAt <= now + 60000 && char.refreshToken) {
+        charactersToRefresh.push(char.characterId);
+      }
+    }
+
+    // Also check primary/active character
+    if (session.expiresAt <= now + 60000 && session.refreshToken && !charactersToRefresh.includes(session.activeCharacterId)) {
+      charactersToRefresh.push(session.activeCharacterId);
+    }
+
+    if (charactersToRefresh.length === 0) {
+      return session;
+    }
+
+    // Process in bounded chunks of `concurrency`
+    for (let i = 0; i < charactersToRefresh.length; i += concurrency) {
+      const chunk = charactersToRefresh.slice(i, i + concurrency);
+      await Promise.all(
+        chunk.map(async (charId) => {
+          try {
+            await this.refreshCharacterTokens(session.sessionId, charId);
+          } catch (err) {
+            logger.warn(`[Auth] Auto-refresh failed for character ${charId}: ${(err as Error).message}`);
+          }
+        })
+      );
+    }
+
+    const updated = this.sessionStore.getSession(session.sessionId);
+    return updated || session;
   }
 
   /**
@@ -351,12 +396,31 @@ export class AuthService {
     const session = this.sessionStore.getSession(sessionId);
     if (!session) return null;
 
-    // Check if token expires soon (within 60 seconds)
-    const isExpiringSoon = Date.now() >= session.expiresAt - 60000;
+    const now = Date.now();
+    let hasExpiredChar = (session.expiresAt <= now + 60000 && Boolean(session.refreshToken));
+    if (!hasExpiredChar && session.characters) {
+      for (const char of Object.values(session.characters)) {
+        if (char.expiresAt <= now + 60000 && Boolean(char.refreshToken)) {
+          hasExpiredChar = true;
+          break;
+        }
+      }
+    }
 
-    if (isExpiringSoon && session.refreshToken) {
+    if (hasExpiredChar) {
       try {
-        return await this.refreshSessionTokens(session);
+        const refreshed = await this.refreshAllExpiredCharacters(session);
+        if (refreshed.expiresAt > now) {
+          return refreshed;
+        }
+        if (refreshed.characters) {
+          for (const char of Object.values(refreshed.characters)) {
+            if (char.expiresAt > now) {
+              return this.sessionStore.switchActiveCharacter(sessionId, char.characterId);
+            }
+          }
+        }
+        return null;
       } catch (err) {
         logger.warn('[Auth] Automatic token refresh failed:', err);
         return null;
@@ -364,6 +428,158 @@ export class AuthService {
     }
 
     return session;
+  }
+
+  /**
+   * Exports fleet credentials for all characters in the session, encrypted with the user's password.
+   */
+  public exportFleetBackup(sessionId: string, password: string): { encryptedData: string; fleetCount: number } {
+    const session = this.sessionStore.getSession(sessionId);
+    if (!session) {
+      throw new Error('Session introuvable ou non authentifiée');
+    }
+
+    const characters = Object.values(session.characters || {});
+    if (characters.length === 0) {
+      throw new Error('Aucun personnage dans cette session');
+    }
+
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      fleetCount: characters.length,
+      characters: characters.map((c) => ({
+        characterId: c.characterId,
+        characterName: c.characterName,
+        refreshToken: c.refreshToken,
+        scopes: c.scopes,
+      })),
+    };
+
+    const encryptedData = encryptWithPassword(JSON.stringify(payload), password);
+    return {
+      encryptedData,
+      fleetCount: characters.length,
+    };
+  }
+
+  /**
+   * Imports a fleet backup encrypted with the user's password.
+   * Decrypts, validates every character's refresh token against CCP, and restores the full fleet session.
+   */
+  public async importFleetBackup(
+    encryptedData: string,
+    password: string,
+    existingSessionId?: string
+  ): Promise<UserSession> {
+    const jsonStr = decryptWithPassword(encryptedData, password);
+    let payload: {
+      version: number;
+      characters: Array<{
+        characterId: number;
+        characterName: string;
+        refreshToken: string;
+        scopes: string[];
+      }>;
+    };
+
+    try {
+      payload = JSON.parse(jsonStr);
+    } catch {
+      throw new Error('Données de sauvegarde corrompues ou format invalide');
+    }
+
+    if (!payload.characters || !Array.isArray(payload.characters) || payload.characters.length === 0) {
+      throw new Error('La sauvegarde ne contient aucun personnage valide');
+    }
+
+    let targetSessionId = existingSessionId;
+    let targetSession = targetSessionId ? this.sessionStore.getSession(targetSessionId) : null;
+
+    const restoredChars: Array<{
+      characterId: number;
+      characterName: string;
+      scopes: string[];
+      accessToken: string;
+      refreshToken: string;
+      expiresAt: number;
+    }> = [];
+
+    for (const char of payload.characters) {
+      try {
+        const bodyParams = new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: char.refreshToken,
+        });
+
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Host': 'login.eveonline.com',
+        };
+
+        if (this.config.clientSecret) {
+          headers['Authorization'] = `Basic ${Buffer.from(`${this.config.clientId}:${this.config.clientSecret}`).toString('base64')}`;
+        } else {
+          bodyParams.set('client_id', this.config.clientId);
+        }
+
+        const res = await this.fetchFn(this.config.tokenBaseUrl, {
+          method: 'POST',
+          headers,
+          body: bodyParams.toString(),
+        });
+
+        if (res.ok) {
+          const tokens: EveTokenResponse = await res.json();
+          restoredChars.push({
+            characterId: char.characterId,
+            characterName: char.characterName,
+            scopes: char.scopes,
+            accessToken: tokens.access_token,
+            refreshToken: tokens.refresh_token || char.refreshToken,
+            expiresAt: Date.now() + tokens.expires_in * 1000,
+          });
+        } else {
+          logger.warn(`[Auth] Failed to validate refresh_token for character ${char.characterName} (#${char.characterId}) during fleet import`);
+        }
+      } catch (err) {
+        logger.warn(`[Auth] Error validating token for character ${char.characterName}: ${(err as Error).message}`);
+      }
+    }
+
+    if (restoredChars.length === 0) {
+      throw new Error("Aucun jeton de la flotte n'a pu être validé auprès de CCP (tous révoqués ou invalides)");
+    }
+
+    const firstChar = restoredChars[0];
+
+    if (!targetSession) {
+      targetSession = this.sessionStore.createSession({
+        characterId: firstChar.characterId,
+        characterName: firstChar.characterName,
+        scopes: firstChar.scopes,
+        accessToken: firstChar.accessToken,
+        refreshToken: firstChar.refreshToken,
+        expiresAt: firstChar.expiresAt,
+        sessionId: targetSessionId,
+      });
+      targetSessionId = targetSession.sessionId;
+    }
+
+    for (const char of restoredChars) {
+      this.sessionStore.addOrUpdateCharacter(
+        targetSessionId!,
+        char,
+        char.characterId === firstChar.characterId
+      );
+    }
+
+    const finalSession = this.sessionStore.getSession(targetSessionId!);
+    if (!finalSession) {
+      throw new Error('Échec de la restauration de la session');
+    }
+
+    return finalSession;
   }
 
   /**

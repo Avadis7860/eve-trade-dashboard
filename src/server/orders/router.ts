@@ -4,8 +4,7 @@ import { AuthService } from '../auth/service.ts';
 import { defaultSessionStore } from '../auth/sessionStore.ts';
 import type { OrderLifecycleState, CreateRestockItemDto, UpdateRestockItemDto } from './types.ts';
 import { validateCharacterSessionAccess } from '../middleware/security.ts';
-
-const SESSION_COOKIE_NAME = 'eve_session_id';
+import { extractSessionId } from '../auth/router.ts';
 
 export function createOrdersRouter(
   ordersService: OrdersService = defaultOrdersService,
@@ -14,7 +13,7 @@ export function createOrdersRouter(
   const router = Router();
 
   const requireSession = async (req: Request, res: Response, next: () => void) => {
-    const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
+    const sessionId = extractSessionId(req);
     if (!sessionId) {
       res.status(401).json({ error: 'Authentication required' });
       return;

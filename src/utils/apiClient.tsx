@@ -397,8 +397,43 @@ export function useApiMutation<TData, TVariables = void>(
   };
 }
 
+export const SESSION_STORAGE_KEY = 'eve_active_session_id';
+
+export function getStoredSessionId(): string | null {
+  try {
+    return typeof localStorage !== 'undefined' ? localStorage.getItem(SESSION_STORAGE_KEY) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setStoredSessionId(sessionId: string | null): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (sessionId) {
+      localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+    } else {
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+    }
+  } catch {
+    // Gracefully ignore localStorage errors
+  }
+}
+
 export async function fetchJson<T>(url: string, init?: RequestInit & { signal?: AbortSignal }): Promise<T> {
-  const res = await fetch(url, init);
+  const headers = new Headers(init?.headers);
+  const storedSessionId = getStoredSessionId();
+  if (storedSessionId && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${storedSessionId}`);
+  }
+  if (storedSessionId && !headers.has('X-Session-ID')) {
+    headers.set('X-Session-ID', storedSessionId);
+  }
+
+  const res = await fetch(url, {
+    ...init,
+    headers,
+  });
   if (!res.ok) {
     let errorDetail = `HTTP ${res.status} ${res.statusText}`;
     try {

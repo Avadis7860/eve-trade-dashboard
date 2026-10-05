@@ -10,7 +10,23 @@ import type { CharacterTransaction } from '../ledger/types.ts';
 import type { CharacterOrderSnapshot } from '../orders/types.ts';
 import type { CharacterAsset } from '../assets/types.ts';
 
-const SESSION_COOKIE_NAME = 'eve_session_id';
+export const SESSION_COOKIE_NAME = 'eve_session_id';
+
+export function extractSessionId(req: Request): string | undefined {
+  if (req.cookies?.[SESSION_COOKIE_NAME]) {
+    return req.cookies[SESSION_COOKIE_NAME];
+  }
+  const authHeader = req.headers['authorization'];
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.slice(7).trim();
+    if (token) return token;
+  }
+  const customHeader = req.headers['x-session-id'];
+  if (typeof customHeader === 'string' && customHeader.trim()) {
+    return customHeader.trim();
+  }
+  return undefined;
+}
 
 function getCookieOptions(req: Request) {
   const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https' || process.env.NODE_ENV === 'production';
@@ -62,7 +78,7 @@ export function createAuthRouter(authService: AuthService = new AuthService()): 
         }
       }
 
-      const existingSessionId = req.cookies?.[SESSION_COOKIE_NAME];
+      const existingSessionId = extractSessionId(req);
       const { url } = authService.createLoginUrl(overrideCallback, existingSessionId);
       if (req.query.format === 'json') {
         res.json({ url });
@@ -97,11 +113,11 @@ export function createAuthRouter(authService: AuthService = new AuthService()): 
     }
 
     try {
-      const existingSessionId = req.cookies?.[SESSION_COOKIE_NAME];
+      const existingSessionId = extractSessionId(req);
       const session = await authService.handleCallback(code, state, existingSessionId);
 
       res.cookie(SESSION_COOKIE_NAME, session.sessionId, getCookieOptions(req));
-      res.redirect('/?auth=success');
+      res.redirect(`/?auth=success&session_id=${encodeURIComponent(session.sessionId)}`);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Authentication failed';
       logger.error('Authentication callback error:', message);
@@ -113,7 +129,7 @@ export function createAuthRouter(authService: AuthService = new AuthService()): 
    * Session endpoint: returns currently authenticated character and linked characters
    */
   router.get('/session', async (req: Request, res: Response) => {
-    const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
+    const sessionId = extractSessionId(req);
     if (!sessionId) {
       res.json(authService.getPublicSessionInfo(null));
       return;
@@ -127,14 +143,17 @@ export function createAuthRouter(authService: AuthService = new AuthService()): 
       return;
     }
 
-    res.json(authService.getPublicSessionInfo(session));
+    res.json({
+      ...authService.getPublicSessionInfo(session),
+      sessionId: session.sessionId,
+    });
   });
 
   /**
    * Switch active character endpoint
    */
   router.post('/switch', (req: Request, res: Response) => {
-    const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
+    const sessionId = extractSessionId(req);
     const { characterId } = req.body;
     if (!sessionId || !characterId) {
       res.status(400).json({ error: 'sessionId and characterId are required' });
@@ -147,14 +166,17 @@ export function createAuthRouter(authService: AuthService = new AuthService()): 
       return;
     }
 
-    res.json(authService.getPublicSessionInfo(session));
+    res.json({
+      ...authService.getPublicSessionInfo(session),
+      sessionId: session.sessionId,
+    });
   });
 
   /**
    * Unlink a character from session
    */
   router.delete('/character/:characterId', (req: Request, res: Response) => {
-    const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
+    const sessionId = extractSessionId(req);
     const characterId = Number(req.params.characterId);
     if (!sessionId || isNaN(characterId)) {
       res.status(400).json({ error: 'characterId valide requis' });
@@ -168,20 +190,80 @@ export function createAuthRouter(authService: AuthService = new AuthService()): 
       return;
     }
 
-    res.json(authService.getPublicSessionInfo(session));
+    res.json({
+      ...authService.getPublicSessionInfo(session),
+      sessionId: session.sessionId,
+    });
   });
 
   /**
    * Logout endpoint: invalidates session and clears cookie
    */
   router.post('/logout', (req: Request, res: Response) => {
-    const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
+    const sessionId = extractSessionId(req);
     if (sessionId) {
       authService.logout(sessionId);
     }
 
     res.clearCookie(SESSION_COOKIE_NAME, getClearCookieOptions(req));
     res.json({ success: true });
+  });
+
+  /**
+   * Fleet Keychain Export endpoint: exports all characters in session encrypted with user password
+   */
+  router.post('/fleet/export', (req: Request, res: Response) => {
+    const sessionId = extractSessionId(req);
+    if (!sessionId) {
+      res.status(401).json({ error: 'Session non authentifiée' });
+      return;
+    }
+
+    const { password } = req.body || {};
+    if (!password || typeof password !== 'string' || password.trim().length === 0) {
+      res.status(400).json({ error: 'Un mot de passe est obligatoire pour chiffrer le trousseau de flotte' });
+      return;
+    }
+
+    try {
+      const exportResult = authService.exportFleetBackup(sessionId, password);
+      res.json({
+        success: true,
+        filename: 'eve-fleet-backup.enc',
+        ...exportResult,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Erreur lors de l'export du trousseau";
+      res.status(400).json({ error: message });
+    }
+  });
+
+  /**
+   * Fleet Keychain Import endpoint: decrypts, validates tokens with CCP, and restores all characters
+   */
+  router.post('/fleet/import', async (req: Request, res: Response) => {
+    const existingSessionId = extractSessionId(req);
+    const { encryptedData, password } = req.body || {};
+
+    if (!encryptedData || !password) {
+      res.status(400).json({ error: 'Fichier chiffré et mot de passe requis' });
+      return;
+    }
+
+    try {
+      const session = await authService.importFleetBackup(encryptedData, password, existingSessionId);
+      res.cookie(SESSION_COOKIE_NAME, session.sessionId, getCookieOptions(req));
+      res.json({
+        success: true,
+        sessionId: session.sessionId,
+        restoredCharacters: Object.keys(session.characters || {}).length,
+        ...authService.getPublicSessionInfo(session),
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Échec de l'import du trousseau";
+      logger.warn('[Auth] Fleet import failed:', message);
+      res.status(400).json({ error: message });
+    }
   });
 
   /**
@@ -207,7 +289,10 @@ export function createAuthRouter(authService: AuthService = new AuthService()): 
     });
 
     res.cookie(SESSION_COOKIE_NAME, session.sessionId, getCookieOptions(req));
-    res.json(authService.getPublicSessionInfo(session));
+    res.json({
+      ...authService.getPublicSessionInfo(session),
+      sessionId: session.sessionId,
+    });
   });
 
   router.post('/e2e-seed', (_req: Request, res: Response) => {

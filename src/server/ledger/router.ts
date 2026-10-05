@@ -10,7 +10,7 @@ import { hubsService } from '../hubs/service.ts';
 import { ledgerRepository } from './repository.ts';
 import { validateCharacterSessionAccess } from '../middleware/security.ts';
 
-const SESSION_COOKIE_NAME = 'eve_session_id';
+import { extractSessionId } from '../auth/router.ts';
 
 export function createLedgerRouter(
   ledgerService: LedgerService = defaultLedgerService,
@@ -24,7 +24,7 @@ export function createLedgerRouter(
    * Middleware to enforce valid character session
    */
   const requireSession = async (req: Request, res: Response, next: () => void) => {
-    const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
+    const sessionId = extractSessionId(req);
     if (!sessionId) {
       res.status(401).json({ error: 'Authentication required' });
       return;

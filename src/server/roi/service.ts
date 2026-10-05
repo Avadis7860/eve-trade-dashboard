@@ -487,6 +487,10 @@ export class RoiService {
     }
 
     // 4. Sort sales chronologically
+    const existingAutoAllocations = this.repo
+      .listAllocations(params.characterId, params.characterIds)
+      .filter((a) => a.reconciliation_mode === 'FIFO_AUTOMATIC');
+
     const sales = transactions
       .filter((t) => !t.isBuy)
       .sort((a, b) => {
@@ -562,7 +566,20 @@ export class RoiService {
         const buyHub = hubsService.resolveLocationToHub(lot.locationId, lot.locationName);
         const sellHub = hubsService.resolveLocationToHub(sale.locationId, sale.locationName);
 
-        const allocId = `fifo-${sale.transactionId}-${lot.sourceId}-${Date.now()}-${allocationsCreated}`;
+        const existingAlloc = existingAutoAllocations.find(
+          (a) =>
+            a.sell_transaction_id === sale.transactionId &&
+            (lot.sourceType === 'TRANSACTION'
+              ? a.buy_transaction_id === Number(lot.sourceId)
+              : a.opening_balance_id === String(lot.sourceId)) &&
+            a.quantity_allocated === allocQty
+        );
+
+        const allocId =
+          existingAlloc?.id ||
+          `fifo-${sale.characterId}-${sale.transactionId}-${lot.characterId}-${lot.sourceId}-${allocationsCreated}`;
+        const createdAt = existingAlloc?.created_at || (sale.date || new Date().toISOString());
+        const updatedAt = existingAlloc?.updated_at || (sale.date || new Date().toISOString());
         const allocatedBuyCost = roundIsk(allocQty * lot.unitPrice);
 
         const record: ExplicitCostAllocation = {
@@ -590,8 +607,8 @@ export class RoiService {
           sell_hub_id: sellHub.hub_id,
           sell_hub_name: sellHub.hub_name,
           reconciliation_mode: 'FIFO_AUTOMATIC',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+          created_at: createdAt,
+          updated_at: updatedAt,
           notes: lot.sourceType === 'OPENING_BALANCE'
             ? `FIFO sur stock d'ouverture (Perso #${lot.characterId})`
             : lot.characterId === sale.characterId

@@ -3,8 +3,7 @@ import { roiService } from './service.ts';
 import { defaultSessionStore, SessionStore } from '../auth/sessionStore.ts';
 import type { UserSession } from '../auth/types.ts';
 import { validateCharacterSessionAccess } from '../middleware/security.ts';
-
-const SESSION_COOKIE_NAME = 'eve_session_id';
+import { extractSessionId } from '../auth/router.ts';
 
 export function createRoiRouter(
   sessionStore: SessionStore = defaultSessionStore
@@ -12,7 +11,7 @@ export function createRoiRouter(
   const router = Router();
 
   const requireSession = (req: Request, res: Response, next: () => void) => {
-    const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
+    const sessionId = extractSessionId(req);
     if (!sessionId) {
       res.status(401).json({ error: 'Session non authentifiée' });
       return;

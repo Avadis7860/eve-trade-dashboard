@@ -13,6 +13,7 @@
     "test:e2e": "playwright test",
     "bench": "tsx scripts/baseline-bench.ts",
     "bench:baseline": "tsx scripts/baseline-bench.ts",
+    "db:recalculate-financials": "tsx scripts/recalculate-financials.ts",
     "start": "NODE_ENV=production tsx server.ts"
   },
   "dependencies": {

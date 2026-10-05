@@ -174,9 +174,9 @@ Utilisateur / Navigateur              Serveur Node / Auth               CCP EVE 
 
 ## 7. Critères de Sortie de Phase
 
-- [ ] Les sessions et leurs personnages liés persistent dans la base de données (`.data/` et PostgreSQL).
-- [ ] Les `refresh_token` sont chiffrés au repos via AES-256-GCM.
-- [ ] Le redémarrage du conteneur ne déconnecte plus les personnages.
-- [ ] Le transport hybride Cookie + Bearer Token résout les blocages dans l'iframe Google AI Studio.
-- [ ] La suite de tests unitaires et d'intégration dédiée (`auth.test.ts`, `sessionStore.test.ts`, `crypto.test.ts`) est 100 % au vert.
-- [ ] La documentation canonique (`docs/CODE_INDEX.md`, `docs/MASTERPLAN.md`, `docs/INDEX.md`) est synchronisée.
+- [x] Les sessions et leurs personnages liés persistent dans la base de données (`.data/` et PostgreSQL).
+- [x] Les `refresh_token` sont chiffrés au repos via AES-256-GCM.
+- [x] Le redémarrage du conteneur ne déconnecte plus les personnages.
+- [x] Le transport hybride Cookie + Bearer Token résout les blocages dans l'iframe Google AI Studio.
+- [x] La suite de tests unitaires et d'intégration dédiée (`auth.test.ts`, `sessionStore.test.ts`, `crypto.test.ts`) est 100 % au vert.
+- [x] La documentation canonique (`docs/CODE_INDEX.md`, `docs/MASTERPLAN.md`, `docs/INDEX.md`) est synchronisée.

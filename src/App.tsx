@@ -47,6 +47,7 @@ import {
   useQueryClient,
   useApiQuery,
   fetchJson,
+  setStoredSessionId,
 } from './utils/apiClient';
 
 export interface HealthStatus {
@@ -67,6 +68,7 @@ export interface CharacterSession {
 
 export interface AuthSessionResponse {
   authenticated: boolean;
+  sessionId?: string;
   character?: CharacterSession;
   characters?: CharacterSession[];
 }
@@ -944,15 +946,27 @@ function AppDashboard() {
     const urlParams = new URLSearchParams(window.location.search);
     const errorParam = urlParams.get('auth_error');
     const successParam = urlParams.get('auth');
+    const sessionIdParam = urlParams.get('session_id');
 
+    if (sessionIdParam) {
+      setStoredSessionId(sessionIdParam);
+    }
     if (errorParam) {
       setAuthError(decodeURIComponent(errorParam));
     }
-    if (successParam || errorParam) {
+    if (successParam || errorParam || sessionIdParam) {
       window.history.replaceState({}, document.title, window.location.pathname);
       queryClient.invalidateQueries(['auth']);
     }
   }, [queryClient]);
+
+  useEffect(() => {
+    if (sessionData?.sessionId) {
+      setStoredSessionId(sessionData.sessionId);
+    } else if (sessionData && !sessionData.authenticated) {
+      setStoredSessionId(null);
+    }
+  }, [sessionData]);
 
   const handleSwitchCharacter = async (characterId: number) => {
     try {
@@ -1006,9 +1020,11 @@ function AppDashboard() {
   const handleLogout = async () => {
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
-      queryClient.clear();
     } catch (err) {
       console.error('Logout failed:', err);
+    } finally {
+      setStoredSessionId(null);
+      queryClient.clear();
     }
   };
 

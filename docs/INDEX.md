@@ -52,8 +52,8 @@
 - [F07 Rapprochement fiscal déterministe et attribution unique](phases/PHASE-F07-deterministic-tax-reconciliation.md) — *Terminé*
 - [F08 Modélisation et attribution des frais de courtage](phases/PHASE-F08-broker-fee-attribution.md) — *Terminé*
 - [F09 Réconciliation financière TTC et cohérence des indicateurs](phases/PHASE-F09-ttc-financial-reconciliation.md) — *Terminé*
-- [F10 Reconstitution historique, recalcul et qualification financière](phases/PHASE-F10-historical-financial-recovery.md) — *Planifiée*
-- [F11 Persistance des sessions multi-personnages et résilience iframe](phases/PHASE-F11-multi-character-session-persistence.md) — *Planifiée*
+- [F10 Reconstitution historique, recalcul et qualification financière](phases/PHASE-F10-historical-financial-recovery.md) — *Terminé*
+- [F11 Persistance des sessions multi-personnages et résilience iframe](phases/PHASE-F11-multi-character-session-persistence.md) — *Terminé*
 
 ## Release Finale
 - [H03 Hardening UX, performance et release](phases/PHASE-H03-quality-release.md) — *Planifiée (après série F complète)*

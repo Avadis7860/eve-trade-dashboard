@@ -1,9 +1,13 @@
 import { Router, type Request, type Response } from 'express';
 import { BackupRestoreService, defaultBackupService } from './backupService.ts';
+import { FinancialRecoveryManager, defaultFinancialRecoveryManager } from '../ledger/recovery.ts';
 import { defaultSessionStore } from '../auth/sessionStore.ts';
 import type { AppBackupSnapshot } from './types.ts';
 
-export function createBackupRouter(backupService: BackupRestoreService = defaultBackupService): Router {
+export function createBackupRouter(
+  backupService: BackupRestoreService = defaultBackupService,
+  recoveryManager: FinancialRecoveryManager = defaultFinancialRecoveryManager
+): Router {
   const router = Router();
 
   /**
@@ -75,6 +79,34 @@ export function createBackupRouter(backupService: BackupRestoreService = default
 
     const report = backupService.auditDataIntegrity();
     return res.json(report);
+  });
+
+  /**
+   * POST /api/backup/recalculate
+   * Runs historical financial recovery and recalculation pipeline with audit diff
+   */
+  router.post('/recalculate', async (req: Request, res: Response) => {
+    const session = getSession(req);
+    if (!session) {
+      return res.status(401).json({ error: 'Session non authentifiée' });
+    }
+
+    const authorizedCharIds = session.characters
+      ? Object.keys(session.characters).map(Number)
+      : [session.activeCharacterId || session.characterId];
+
+    const { dryRun = true, strictCharacterIsolation = false } = req.body || {};
+
+    try {
+      const report = await recoveryManager.runRecovery({
+        dryRun: Boolean(dryRun),
+        characterIds: authorizedCharIds,
+        strictCharacterIsolation: Boolean(strictCharacterIsolation),
+      });
+      return res.json(report);
+    } catch (err) {
+      return res.status(500).json({ error: `Erreur de recalcul financier : ${(err as Error).message}` });
+    }
   });
 
   return router;

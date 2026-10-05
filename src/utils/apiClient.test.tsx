@@ -7,6 +7,9 @@ import {
   useApiQuery,
   useApiMutation,
   fetchJson,
+  getStoredSessionId,
+  setStoredSessionId,
+  SESSION_STORAGE_KEY,
 } from './apiClient';
 
 describe('QueryClient Core & Request Coalescing', () => {
@@ -286,5 +289,29 @@ describe('fetchJson helper', () => {
     } as Response);
 
     await expect(fetchJson('/api/error')).rejects.toThrow('Invalid parameters provided');
+  });
+
+  it('manages stored session ID in localStorage and attaches Authorization: Bearer and X-Session-ID headers', async () => {
+    setStoredSessionId('test_session_id_456');
+    expect(getStoredSessionId()).toBe('test_session_id_456');
+    expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBe('test_session_id_456');
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: 'authenticated' }),
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    await fetchJson('/api/auth/session');
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [, fetchInit] = mockFetch.mock.calls[0];
+    const headers = fetchInit?.headers as Headers;
+    expect(headers.get('Authorization')).toBe('Bearer test_session_id_456');
+    expect(headers.get('X-Session-ID')).toBe('test_session_id_456');
+
+    setStoredSessionId(null);
+    expect(getStoredSessionId()).toBeNull();
+    expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
   });
 });

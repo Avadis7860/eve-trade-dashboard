@@ -13,10 +13,29 @@ import { defaultMetricsCollector } from '../utils/metrics.ts';
 
 const { Pool } = pg;
 
+export interface StoredDurableCharacter {
+  characterId: number;
+  characterName: string;
+  scopes: string[];
+  encryptedRefreshToken: string;
+  encryptedAccessToken: string;
+  expiresAt: number;
+  createdAt: number;
+}
+
+export interface StoredDurableSession {
+  sessionId: string;
+  activeCharacterId: number;
+  createdAt: number;
+  updatedAt: number;
+  characters: Record<number, StoredDurableCharacter>;
+}
+
 export interface DurableDatabaseState {
   version: number;
   appliedMigrations: number[];
   data: AppBackupData;
+  sessions?: Record<string, StoredDurableSession>;
 }
 
 /**
@@ -47,6 +66,7 @@ export class DurableFileDatabaseAdapter implements IDatabaseAdapter {
         assets: { assets: [] },
         sync: { states: [] },
       },
+      sessions: {},
     };
   }
 
@@ -206,6 +226,19 @@ export class DurableFileDatabaseAdapter implements IDatabaseAdapter {
         (w) => w.characterId !== characterId && w.observedByCharacterId !== characterId
       );
     }
+    if (this.state.sessions) {
+      for (const [sessionId, sess] of Object.entries(this.state.sessions)) {
+        if (sess.characters && sess.characters[characterId]) {
+          delete sess.characters[characterId];
+          const remaining = Object.keys(sess.characters).map(Number);
+          if (remaining.length === 0) {
+            delete this.state.sessions[sessionId];
+          } else if (sess.activeCharacterId === characterId) {
+            sess.activeCharacterId = remaining[0];
+          }
+        }
+      }
+    }
     this.persist();
   }
 
@@ -319,6 +352,7 @@ export class PostgresDatabaseAdapter implements IDatabaseAdapter {
   private classifySqlOperation(sql: string): string {
     const trimmed = sql.trim().toLowerCase();
     if (trimmed.includes('from transactions') || trimmed.includes('into transactions')) return 'transactions_query';
+    if (trimmed.includes('from sessions') || trimmed.includes('into sessions') || trimmed.includes('session_characters')) return 'sessions_query';
     if (trimmed.includes('sum(') || trimmed.includes('count(') || trimmed.includes('group by')) return 'summary_aggregation';
     if (trimmed.includes('explicit_cost_allocations') || trimmed.includes('opening_balances')) return 'fifo_reconciliation';
     if (trimmed.includes('order_snapshots') || trimmed.includes('restock_items')) return 'orders_query';
@@ -422,6 +456,7 @@ export class PostgresDatabaseAdapter implements IDatabaseAdapter {
           await client.query('DELETE FROM character_assets WHERE character_id = $1', [characterId]);
           await client.query('DELETE FROM sync_states WHERE character_id = $1', [characterId]);
           await client.query('DELETE FROM wallet_snapshots WHERE character_id = $1 OR observed_by_character_id = $1', [characterId]);
+          await client.query('DELETE FROM session_characters WHERE character_id = $1', [characterId]);
         },
         transaction: async <R>(nestedFn: (a: IDatabaseAdapter) => Promise<R>) => nestedFn(txAdapter),
       };

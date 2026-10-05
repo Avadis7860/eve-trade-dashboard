@@ -1,10 +1,14 @@
 // @vitest-environment node
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import express from 'express';
+import cookieParser from 'cookie-parser';
+import request from 'supertest';
 import { generateCodeVerifier, generateCodeChallenge, generateState } from './pkce.ts';
 import { extractAndValidateCharacterIdentity } from './jwt.ts';
 import { SessionStore } from './sessionStore.ts';
 
 import { AuthService, DEFAULT_SCOPES } from './service.ts';
+import { createAuthRouter } from './router.ts';
 import type { EveTokenResponse } from './types.ts';
 
 // Helper to create a test JWT token
@@ -342,5 +346,216 @@ describe('Auth Module — AuthService SSO Flow', () => {
     expect(afterUnlink).not.toBeNull();
     expect(Object.keys(afterUnlink!.characters).length).toBe(1);
     expect(afterUnlink!.characters[22222222]).toBeUndefined();
+  });
+});
+
+describe('Phase F11 — Qualifications Réelles & Critères de Sortie', () => {
+  let store: SessionStore;
+  let authService: AuthService;
+  let app: express.Express;
+
+  beforeEach(() => {
+    store = new SessionStore();
+    authService = new AuthService(
+      { clientId: 'test_client', clientSecret: 'test_secret' },
+      store
+    );
+    app = express();
+    app.use(cookieParser());
+    app.use(express.json());
+    app.use('/api/auth', createAuthRouter(authService));
+  });
+
+  it("TEST-F11-02: auto-refresh silencieux des tokens expirés pour l'ensemble des personnages de la flotte", async () => {
+    const mockFetch = vi.fn().mockImplementation(async (_url, options) => {
+      const body = options?.body as string;
+      const params = new URLSearchParams(body);
+      const refreshToken = params.get('refresh_token');
+
+      return {
+        ok: true,
+        json: async (): Promise<EveTokenResponse> => ({
+          access_token: `refreshed_access_${refreshToken}`,
+          token_type: 'Bearer',
+          expires_in: 1200,
+          refresh_token: `new_refresh_${refreshToken}`,
+        }),
+      };
+    });
+
+    const multiAuthService = new AuthService(
+      { clientId: 'test_client', clientSecret: 'test_secret' },
+      store,
+      mockFetch as unknown as typeof fetch
+    );
+    const multiApp = express();
+    multiApp.use(cookieParser());
+    multiApp.use(express.json());
+    multiApp.use('/api/auth', createAuthRouter(multiAuthService));
+
+    const expiredTs = Date.now() - 300000; // expired 5 mins ago
+    const session = store.createSession({
+      characterId: 9001,
+      characterName: 'Fleet Leader',
+      scopes: ['publicData'],
+      accessToken: 'old_access_9001',
+      refreshToken: 'old_refresh_9001',
+      expiresAt: expiredTs,
+    });
+
+    store.addOrUpdateCharacter(
+      session.sessionId,
+      {
+        characterId: 9002,
+        characterName: 'Fleet Scout',
+        scopes: ['publicData'],
+        accessToken: 'old_access_9002',
+        refreshToken: 'old_refresh_9002',
+        expiresAt: expiredTs,
+      },
+      false
+    );
+
+    store.addOrUpdateCharacter(
+      session.sessionId,
+      {
+        characterId: 9003,
+        characterName: 'Fleet Hauler',
+        scopes: ['publicData'],
+        accessToken: 'old_access_9003',
+        refreshToken: 'old_refresh_9003',
+        expiresAt: expiredTs,
+      },
+      false
+    );
+
+    const res = await request(multiApp)
+      .get('/api/auth/session')
+      .set('Cookie', `eve_session_id=${session.sessionId}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.authenticated).toBe(true);
+    expect(res.body.characters).toHaveLength(3);
+
+    expect(mockFetch).toHaveBeenCalled();
+    const updatedSession = store.getSession(session.sessionId);
+    expect(updatedSession?.expiresAt).toBeGreaterThan(Date.now());
+    expect(updatedSession?.characters[9001].expiresAt).toBeGreaterThan(Date.now());
+    expect(updatedSession?.characters[9002].expiresAt).toBeGreaterThan(Date.now());
+    expect(updatedSession?.characters[9003].expiresAt).toBeGreaterThan(Date.now());
+  });
+
+  it('TEST-F11-03: transport Bearer sans cookie (Iframe Google AI Studio resilience)', async () => {
+    const session = store.createSession({
+      characterId: 9001,
+      characterName: 'Iframe Pilot',
+      scopes: ['publicData'],
+      accessToken: 'valid_access_token',
+      refreshToken: 'valid_refresh_token',
+      expiresAt: Date.now() + 1200000,
+    });
+
+    // 1. Request WITHOUT cookie but WITH Authorization: Bearer <sessionId>
+    const bearerRes = await request(app)
+      .get('/api/auth/session')
+      .set('Authorization', `Bearer ${session.sessionId}`);
+
+    expect(bearerRes.status).toBe(200);
+    expect(bearerRes.body.authenticated).toBe(true);
+    expect(bearerRes.body.character.characterId).toBe(9001);
+    expect(bearerRes.body.character.characterName).toBe('Iframe Pilot');
+    expect(bearerRes.body.sessionId).toBe(session.sessionId);
+
+    // 2. Request WITHOUT cookie but WITH X-Session-ID: <sessionId>
+    const customHeaderRes = await request(app)
+      .get('/api/auth/session')
+      .set('X-Session-ID', session.sessionId);
+
+    expect(customHeaderRes.status).toBe(200);
+    expect(customHeaderRes.body.authenticated).toBe(true);
+    expect(customHeaderRes.body.character.characterId).toBe(9001);
+  });
+
+  it('TEST-F11-05: export et import de trousseau de flotte chiffré', async () => {
+    const mockFetch = vi.fn().mockImplementation(async () => ({
+      ok: true,
+      json: async (): Promise<EveTokenResponse> => ({
+        access_token: 'valid_restored_access',
+        token_type: 'Bearer',
+        expires_in: 1200,
+        refresh_token: 'valid_restored_refresh',
+      }),
+    }));
+
+    const fleetAuthService = new AuthService(
+      { clientId: 'test_client', clientSecret: 'test_secret' },
+      store,
+      mockFetch as unknown as typeof fetch
+    );
+    const fleetApp = express();
+    fleetApp.use(cookieParser());
+    fleetApp.use(express.json());
+    fleetApp.use('/api/auth', createAuthRouter(fleetAuthService));
+
+    const session = store.createSession({
+      characterId: 9001,
+      characterName: 'Fleet Commander Alpha',
+      scopes: ['esi-wallet.read_character_wallet.v1'],
+      accessToken: 'access_alpha',
+      refreshToken: 'refresh_alpha',
+      expiresAt: Date.now() + 1200000,
+    });
+    store.addOrUpdateCharacter(session.sessionId, {
+      characterId: 9002,
+      characterName: 'Fleet Scout Beta',
+      scopes: ['esi-assets.read_assets.v1'],
+      accessToken: 'access_beta',
+      refreshToken: 'refresh_beta',
+      expiresAt: Date.now() + 1200000,
+    });
+
+    const password = 'CorrectFleetPassword2026!';
+    const exportRes = await request(fleetApp)
+      .post('/api/auth/fleet/export')
+      .set('Authorization', `Bearer ${session.sessionId}`)
+      .send({ password });
+
+    expect(exportRes.status).toBe(200);
+    expect(exportRes.body.success).toBe(true);
+    expect(exportRes.body.filename).toBe('eve-fleet-backup.enc');
+    expect(exportRes.body.fleetCount).toBe(2);
+    const encryptedPayload = exportRes.body.encryptedData;
+    expect(encryptedPayload).toBeDefined();
+
+    store.clearAll();
+    expect(store.getSession(session.sessionId)).toBeNull();
+
+    const wrongPassRes = await request(fleetApp)
+      .post('/api/auth/fleet/import')
+      .send({
+        encryptedData: encryptedPayload,
+        password: 'WrongPassword!',
+      });
+
+    expect(wrongPassRes.status).toBe(400);
+    expect(wrongPassRes.body.error).toContain('Mot de passe incorrect');
+
+    const importRes = await request(fleetApp)
+      .post('/api/auth/fleet/import')
+      .send({
+        encryptedData: encryptedPayload,
+        password: password,
+      });
+
+    expect(importRes.status).toBe(200);
+    expect(importRes.body.success).toBe(true);
+    expect(importRes.body.restoredCharacters).toBe(2);
+    expect(importRes.body.sessionId).toBeDefined();
+    expect(importRes.body.characters).toHaveLength(2);
+
+    const restoredSession = store.getSession(importRes.body.sessionId);
+    expect(restoredSession).not.toBeNull();
+    expect(restoredSession?.characters[9001].characterName).toBe('Fleet Commander Alpha');
+    expect(restoredSession?.characters[9002].characterName).toBe('Fleet Scout Beta');
   });
 });

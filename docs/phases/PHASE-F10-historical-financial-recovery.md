@@ -169,4 +169,4 @@ Une simple mise à jour du code ne suffit pas à assainir l'état persistant exi
 
 ## 12. Statut
 
-**Planifiée** (Dépend de F09).
+**Terminé** (Validé avec tests d'intégration TEST-F10-01 à TEST-F10-05, idempotence démontrée et script CLI db:recalculate-financials opérationnel).

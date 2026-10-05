@@ -3,9 +3,8 @@ import { OperationsService, defaultOperationsService } from './service.ts';
 import { AuthService } from '../auth/service.ts';
 import { defaultSessionStore } from '../auth/sessionStore.ts';
 import { validateCharacterSessionAccess } from '../middleware/security.ts';
+import { extractSessionId } from '../auth/router.ts';
 import type { OperationalStatus } from './types.ts';
-
-const SESSION_COOKIE_NAME = 'eve_session_id';
 
 export function createOperationsRouter(
   operationsService: OperationsService = defaultOperationsService,
@@ -14,7 +13,7 @@ export function createOperationsRouter(
   const router = Router();
 
   const requireSession = async (req: Request, res: Response, next: () => void) => {
-    const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
+    const sessionId = extractSessionId(req);
     if (!sessionId) {
       res.status(401).json({ error: 'Authentication required' });
       return;

@@ -1,6 +1,6 @@
 import type { SchemaMigration } from './types.ts';
 
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 export const INITIAL_MIGRATION_SQL = `
 -- Hubs Table
@@ -287,6 +287,31 @@ export const MIGRATIONS: SchemaMigration[] = [
     name: '007_sync_states_division_statuses',
     upSql: `
       ALTER TABLE sync_states ADD COLUMN IF NOT EXISTS division_statuses TEXT;
+    `,
+  },
+  {
+    version: 8,
+    name: '008_sessions_and_session_characters',
+    upSql: `
+      CREATE TABLE IF NOT EXISTS sessions (
+        session_id TEXT PRIMARY KEY,
+        active_character_id BIGINT NOT NULL,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS session_characters (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+        character_id BIGINT NOT NULL,
+        character_name TEXT NOT NULL,
+        scopes TEXT NOT NULL,
+        encrypted_refresh_token TEXT NOT NULL,
+        encrypted_access_token TEXT NOT NULL,
+        expires_at BIGINT NOT NULL,
+        created_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_session_chars_session ON session_characters (session_id);
+      CREATE INDEX IF NOT EXISTS idx_session_chars_char ON session_characters (character_id);
     `,
   },
 ];

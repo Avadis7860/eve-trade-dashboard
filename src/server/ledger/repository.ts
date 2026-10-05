@@ -899,7 +899,7 @@ export class PersistentLedgerRepository implements ILedgerRepository {
       this.indexTransaction(key, tx);
     }
     for (const jn of data.journalEntries) {
-      const key = makeJournalEntryKey(jn);
+      const key = jn.id || makeJournalEntryKey(jn);
       const normalizedJn: CharacterWalletJournalEntry = { ...jn, id: key };
       if (this.journalEntries.has(key)) {
         const existing = this.journalEntries.get(key)!;

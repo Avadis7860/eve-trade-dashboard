@@ -1,6 +1,6 @@
 # PHASE-H03 — Hardening UX, performance et release
 
-**Type :** hardening final · **Dépendances :** 00–12, H01–H02 · **État :** Planifiée
+**Type :** hardening final · **Dépendances :** 00–12, H01–H02 · **État :** Terminé / Archivé (intégré post-F11 / Série G)
 
 ---
 

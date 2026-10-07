@@ -141,8 +141,10 @@
 - `docs/UX_REDESIGN_BLUEPRINT.md` — Blueprint canonique de refonte UX/UI, architecture de l'information en 6 espaces de décision et modèle de fenêtrage intégré (tiroirs latéraux, fenêtres d'analyse Focus à 4 onglets, accordéons de preuve) — N/A
 - `docs/MASTERPLAN-RELIABILITY-PERFORMANCE.md` — Masterplan canonique de remise à niveau, fiabilisation et optimisation des performances (Phases R00 à R08) — N/A
 - `docs/phases/PHASE-R00-baseline.md` à `PHASE-R08-observability-production.md` — Cahiers de cadrage détaillés des 9 phases de remise à niveau — N/A
-- `README.md` — Documentation d'accueil et présentation complète du produit, guide d'installation pas-à-pas, index canonique des algorithmes et moteurs métier — N/A
-- `docs/INDEX.md` — Index canonique centralisé de la documentation, cartographie globale et statut exhaustif des phases de travail — N/A
+- `README.md` — Documentation d'accueil et présentation complète du produit, guide d'installation pas-à-pas et index canonique renvoyant vers la documentation détaillée — N/A
+- `docs/INDEX.md` — Index canonique centralisé de la documentation, cartographie globale et navigation générale — N/A
+- `docs/ALGORITHMS.md` — Spécification canonique complète des 8 algorithmes, formules mathématiques et fonctions métier clés — N/A
+- `docs/phases/README.md` — Répertoire canonique des 42 phases de développement, organisation par époques et suivi des statuts — N/A
 
 ## Tests
 - `src/server/operations/operations.test.ts` — Suite de tests complète pour le moteur d'opérations et de réapprovisionnement (Phase 11 & F03) : extraction chronologique déterministe du dernier prix d'achat unitaire indépendamment de l'ordre des transactions anti-chronologique ou mélangé (S1-1 fix), arbitrage strict transferts prioritaires vs achats de marché, scénarios 100% transfert / transfert partiel / 100% achat, déduction exacte des actifs libres locaux et ordres d'achat en cours, gestion des articles sans vitesse historique (`Vitesse historique non disponible`), calculs de volumes $m^3$, benchmarks de transport cargo et cycle de vie des statuts opérationnels (`SUGGESTED`, `PLANNED`, `IN_TRANSIT`, `COMPLETED`, `DISMISSED`).

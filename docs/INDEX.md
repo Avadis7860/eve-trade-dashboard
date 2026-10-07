@@ -25,6 +25,7 @@ Ce document constitue la porte d'entrée unique et la source de vérité pour la
 | Document | Domaine & Responsabilités |
 |---|---|
 | [ARCHITECTURE](ARCHITECTURE.md) | Architecture technique globale : monolithe modulaire, flux de données, couches applicatives |
+| [ALGORITHMS](ALGORITHMS.md) | Index canonique et spécification complète des 8 algorithmes et moteurs métier majeurs |
 | [DOMAIN_CONTRACTS](DOMAIN_CONTRACTS.md) | Invariants métier immuables : cycle de vie des ordres, lots FIFO, unicité des identités |
 | [METRICS](METRICS.md) | Définitions formelles et formules mathématiques : ROI TTC, COGS, vélocité, couverture |
 | [ESI_RESILIENCE](ESI_RESILIENCE.md) | Spécifications de la passerelle ESI : budgets d'erreurs CCP, cache 304, rate-limits, pagination |
@@ -37,6 +38,8 @@ Ce document constitue la porte d'entrée unique et la source de vérité pour la
 ---
 
 ## 3. Index Exhaustif des Phases de Travail
+
+Le détail complet de l'ensemble des phases et de leur gouvernance est consigné dans **[docs/phases/README.md](phases/README.md)**.
 
 ### Série Fondations & Socle Initial (Phases 00 à 06)
 - [Phase 00 — Fondations](phases/PHASE-00-foundation.md) — *Terminée* : Socle React 19, TypeScript strict, Express, outillage et pipeline de test.

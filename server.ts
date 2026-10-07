@@ -54,7 +54,21 @@ export async function createApp() {
   app.use(express.json({ limit: '20mb' }));
   app.use(csrfProtectionMiddleware);
 
-  // API Routes
+  // Health & Liveness/Readiness Probes
+  const systemRouter = createSystemRouter();
+  app.use('/health', systemRouter);
+  app.use('/api/health', systemRouter);
+  app.use('/api/system', systemRouter);
+
+  app.get('/health', (_req: Request, res: Response) => {
+    res.json({
+      status: 'ok',
+      service: 'eve-trade-dashboard',
+      timestamp: new Date().toISOString(),
+      version: '0.1.0',
+    });
+  });
+
   app.get('/api/health', (_req: Request, res: Response) => {
     res.json({
       status: 'ok',
@@ -68,7 +82,7 @@ export async function createApp() {
     res.json({
       name: 'EVE Trade Dashboard',
       description: 'EVE Online trade dashboard',
-      phase: 'PHASE-F04-testing-ci-real-postgres-e2e',
+      phase: 'PHASE-G04-corp-deduplication-backup-probes',
       status: 'operational',
     });
   });
@@ -91,9 +105,6 @@ export async function createApp() {
     req.url = '/login';
     authRouter(req, res, next);
   });
-
-  // System Observability & Diagnostics Router
-  app.use('/api/system', createSystemRouter());
 
   // ESI Gateway Router
   app.use('/api/esi', createEsiRouter());

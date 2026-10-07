@@ -114,6 +114,10 @@ export class AuthService {
     return { ...getAuthConfigFromEnv(), ...this.customConfig };
   }
 
+  public getSessionStore(): SessionStore {
+    return this.sessionStore;
+  }
+
   /**
    * Checks if required OAuth credentials are configured
    */

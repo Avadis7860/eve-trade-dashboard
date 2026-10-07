@@ -16,6 +16,8 @@ import {
   Settings,
   Shield,
   Users,
+  Upload,
+  RefreshCw,
 } from 'lucide-react';
 
 import { DashboardOverview } from './components/DashboardOverview';
@@ -34,6 +36,7 @@ import { HubsRoiView } from './components/HubsRoiView';
 import { CapitalView } from './components/CapitalView';
 import { JournalView } from './components/JournalView';
 import { EsiDiagnosticDrawer } from './components/drawers/EsiDiagnosticDrawer';
+import { ImportFleetModal } from './components/ImportFleetModal';
 
 import {
   loadPreferences,
@@ -47,6 +50,7 @@ import {
   useQueryClient,
   useApiQuery,
   fetchJson,
+  getStoredSessionId,
   setStoredSessionId,
 } from './utils/apiClient';
 
@@ -66,11 +70,22 @@ export interface CharacterSession {
   isActive?: boolean;
 }
 
+export interface SavedSessionMeta {
+  sessionId: string;
+  activeCharacterId: number;
+  activeCharacterName: string;
+  portraitUrl: string;
+  charactersCount: number;
+  characterNames: string[];
+  createdAt: number;
+}
+
 export interface AuthSessionResponse {
   authenticated: boolean;
   sessionId?: string;
   character?: CharacterSession;
   characters?: CharacterSession[];
+  savedSessions?: SavedSessionMeta[];
 }
 
 export interface AuthStatusResponse {
@@ -474,7 +489,7 @@ function AppDashboard() {
     isLoading: sessionLoading,
   } = useApiQuery<AuthSessionResponse>(
     ['auth', 'session'],
-    () => fetchJson('/api/auth/session'),
+    () => fetchJson('/api/auth/session?auto_resume=true'),
     { ttl: 30_000 }
   );
 
@@ -492,6 +507,9 @@ function AppDashboard() {
 
   const [showCharacterDropdown, setShowCharacterDropdown] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [showImportFleetModal, setShowImportFleetModal] = useState(false);
+  const [isResumingSession, setIsResumingSession] = useState(false);
+  const [isConnectingSso, setIsConnectingSso] = useState(false);
 
   // Active Tab View & 6 Decision Workspaces
   const [activeTab, setActiveTab] = useState<string>(
@@ -963,10 +981,102 @@ function AppDashboard() {
   useEffect(() => {
     if (sessionData?.sessionId) {
       setStoredSessionId(sessionData.sessionId);
-    } else if (sessionData && !sessionData.authenticated) {
-      setStoredSessionId(null);
     }
   }, [sessionData]);
+
+  // Listen for OAuth completion from popup bridge window
+  useEffect(() => {
+    const handleAuthMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'EVE_AUTH_SUCCESS') {
+        const sessionId = event.data.sessionId;
+        if (sessionId) {
+          setStoredSessionId(sessionId);
+        }
+        setAuthError(null);
+        queryClient.invalidateQueries(['auth']);
+        queryClient.invalidateQueries(['ledger']);
+        queryClient.invalidateQueries(['orders']);
+        queryClient.invalidateQueries(['capital']);
+        queryClient.invalidateQueries(['roi']);
+        queryClient.invalidateQueries(['analytics']);
+      } else if (event.data?.type === 'EVE_AUTH_ERROR') {
+        setAuthError(event.data.error || "Erreur d'authentification EVE Online");
+      }
+    };
+
+    window.addEventListener('message', handleAuthMessage);
+    return () => window.removeEventListener('message', handleAuthMessage);
+  }, [queryClient]);
+
+  const handleEveLogin = async (sessionIdToLink?: string) => {
+    if (isConnectingSso) return;
+    setIsConnectingSso(true);
+    setAuthError(null);
+    try {
+      const params = new URLSearchParams({ format: 'json' });
+      if (sessionIdToLink) {
+        params.set('session_id', sessionIdToLink);
+      }
+      const data = await fetchJson<{ url: string }>(`/api/auth/login?${params.toString()}`);
+      if (!data?.url) {
+        throw new Error("L'URL d'autorisation EVE SSO n'a pas pu être générée");
+      }
+
+      // Open CCP authorization URL directly in popup or new tab to avoid iframe restriction
+      const width = 640;
+      const height = 760;
+      const left = window.screenX + Math.max(0, (window.outerWidth - width) / 2);
+      const top = window.screenY + Math.max(0, (window.outerHeight - height) / 2);
+      const popup = window.open(
+        data.url,
+        'eve_sso_popup',
+        `width=${width},height=${height},left=${left},top=${top},status=no,toolbar=no,menubar=no`
+      );
+
+      if (!popup || popup.closed || typeof popup.closed === 'undefined') {
+        // Fallback if popup blocker is active
+        window.open(data.url, '_blank', 'noopener,noreferrer');
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Échec du lancement de la connexion EVE SSO';
+      setAuthError(message);
+    } finally {
+      setIsConnectingSso(false);
+    }
+  };
+
+  const handleResumeSession = async (targetSessionId?: string) => {
+    if (isResumingSession) return;
+    setIsResumingSession(true);
+    setAuthError(null);
+    try {
+      const res = await fetchJson<{
+        success: boolean;
+        sessionId: string;
+        character?: CharacterSession;
+        characters?: CharacterSession[];
+      }>('/api/auth/resume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(targetSessionId ? { sessionId: targetSessionId } : {}),
+      });
+
+      if (res.sessionId) {
+        setStoredSessionId(res.sessionId);
+      }
+      queryClient.invalidateQueries(['auth']);
+      queryClient.invalidateQueries(['ledger']);
+      queryClient.invalidateQueries(['orders']);
+      queryClient.invalidateQueries(['capital']);
+      queryClient.invalidateQueries(['roi']);
+      queryClient.invalidateQueries(['analytics']);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Échec de la reprise de session';
+      setAuthError(message);
+    } finally {
+      setIsResumingSession(false);
+    }
+  };
 
   const handleSwitchCharacter = async (characterId: number) => {
     try {
@@ -1307,13 +1417,15 @@ function AppDashboard() {
                     </div>
 
                     <div className="border-t border-slate-800 pt-2">
-                      <a
-                        href="/api/auth/login"
-                        className="w-full py-2 px-3 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky-300 text-xs font-semibold flex items-center justify-center gap-2 transition-colors"
+                      <button
+                        type="button"
+                        onClick={() => handleEveLogin(getStoredSessionId() || sessionData?.sessionId)}
+                        disabled={isConnectingSso}
+                        className="w-full py-2 px-3 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky-300 text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer"
                       >
                         <UserPlus className="w-3.5 h-3.5" />
-                        Lier un autre personnage EVE SSO
-                      </a>
+                        {isConnectingSso ? 'Ouverture de CCP...' : 'Lier un autre personnage EVE SSO'}
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1351,10 +1463,10 @@ function AppDashboard() {
         {!session ? (
           <div className="space-y-6">
             <section className="relative overflow-hidden rounded-xl border border-slate-800 bg-linear-to-b from-slate-900/90 to-slate-950 p-6 md:p-8 space-y-6">
-              <div className="relative z-10 max-w-3xl space-y-4">
+              <div className="relative z-10 max-w-4xl space-y-5">
                 <div className="inline-flex items-center space-x-2 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-medium">
                   <Shield className="w-3.5 h-3.5" />
-                  <span>Phase 06 — Dashboard Intégré &amp; Ergonomie</span>
+                  <span>Phase F11 — Multi-Character Fleet &amp; Sessions Persistantes</span>
                 </div>
 
                 <h1 className="text-2xl md:text-4xl font-bold tracking-tight text-white">
@@ -1364,6 +1476,98 @@ function AppDashboard() {
                 <p className="text-slate-400 text-sm md:text-base leading-relaxed">
                   Tableau de bord de trading pour EVE Online : suivi consolidé des ventes, gestion du cycle de vie des ordres, préparation de réapprovisionnements sans manipulation en jeu et calcul rigoureux du ROI TTC.
                 </p>
+
+                {/* SAVED FLEET DETECTION BANNER */}
+                {sessionData?.savedSessions && sessionData.savedSessions.length > 0 && (
+                  <div className="rounded-xl border border-amber-500/40 bg-amber-950/20 p-5 space-y-4 shadow-xl backdrop-blur-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-500/20 pb-3">
+                      <div className="flex items-center gap-2 text-amber-300 font-bold text-sm">
+                        <Users className="w-4 h-4 text-amber-400" />
+                        <span>Flotte sauvegardée détectée ({sessionData.savedSessions[0].charactersCount} personnage{sessionData.savedSessions[0].charactersCount > 1 ? 's' : ''})</span>
+                      </div>
+                      <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                        SESSION PERSISTANTE PRÊTE
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <img
+                          src={sessionData.savedSessions[0].portraitUrl}
+                          alt={sessionData.savedSessions[0].activeCharacterName}
+                          className="w-12 h-12 rounded-lg border border-amber-500/40 bg-slate-800 object-cover"
+                        />
+                        <div className="space-y-1">
+                          <div className="text-sm font-bold text-white flex items-center gap-2">
+                            <span>{sessionData.savedSessions[0].activeCharacterName}</span>
+                            {sessionData.savedSessions[0].charactersCount > 1 && (
+                              <span className="text-xs font-mono px-1.5 py-0.5 bg-amber-500/20 text-amber-300 rounded border border-amber-500/30">
+                                {sessionData.savedSessions[0].charactersCount} persos
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-1 max-w-lg">
+                            {sessionData.savedSessions[0].characterNames.map((name) => (
+                              <span
+                                key={name}
+                                className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-900/80 text-slate-300 border border-slate-700/80"
+                              >
+                                {name}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap sm:flex-col items-stretch gap-2 shrink-0">
+                        <button
+                          onClick={() => handleResumeSession(sessionData.savedSessions?.[0]?.sessionId)}
+                          disabled={isResumingSession}
+                          className="px-5 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-md hover:shadow-amber-500/20 cursor-pointer"
+                        >
+                          {isResumingSession ? (
+                            <>
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              Restauration en cours...
+                            </>
+                          ) : (
+                            <>
+                              <Users className="w-3.5 h-3.5" />
+                              Reprendre ma flotte ({sessionData.savedSessions[0].charactersCount} persos)
+                            </>
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleEveLogin(sessionData.savedSessions?.[0]?.sessionId)}
+                          disabled={isConnectingSso}
+                          className="px-3 py-1.5 rounded-lg bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white text-[11px] font-semibold text-center border border-slate-700 transition-colors cursor-pointer"
+                          title="Connecter un personnage supplémentaire et le lier à cette flotte"
+                        >
+                          {isConnectingSso ? 'Ouverture...' : '+ Lier un autre perso à cette flotte'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {sessionData.savedSessions.length > 1 && (
+                      <div className="pt-2 border-t border-amber-500/10 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                        <span className="text-[11px]">Autres sessions disponibles :</span>
+                        {sessionData.savedSessions.slice(1).map((s) => (
+                          <button
+                            key={s.sessionId}
+                            onClick={() => handleResumeSession(s.sessionId)}
+                            disabled={isResumingSession}
+                            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-mono border border-slate-700 cursor-pointer"
+                          >
+                            {s.activeCharacterName} ({s.charactersCount} persos)
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-5 max-w-xl space-y-3">
                   <div className="flex items-center justify-between">
@@ -1383,15 +1587,28 @@ function AppDashboard() {
                   </p>
 
                   <div className="flex flex-wrap items-center gap-3 pt-1">
-                    <a
-                      href="/api/auth/login"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-sm transition-all duration-200 shadow-md hover:shadow-amber-500/20 inline-flex items-center justify-center gap-2 cursor-pointer"
+                    <button
+                      type="button"
+                      onClick={() => handleEveLogin()}
+                      disabled={isConnectingSso}
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-semibold text-sm transition-all duration-200 shadow-md hover:shadow-amber-500/20 inline-flex items-center justify-center gap-2 cursor-pointer"
                     >
                       <LogIn className="w-4 h-4" />
-                      Se connecter avec EVE Online (SSO)
-                    </a>
+                      {isConnectingSso
+                        ? 'Connexion en cours...'
+                        : sessionData?.savedSessions && sessionData.savedSessions.length > 0
+                        ? 'Démarrer une nouvelle flotte'
+                        : 'Se connecter avec EVE Online (SSO)'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowImportFleetModal(true)}
+                      className="w-full sm:w-auto px-4 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-semibold text-xs border border-slate-700 transition-all inline-flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <Upload className="w-4 h-4 text-sky-400" />
+                      Importer un trousseau de flotte (.enc)
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1626,6 +1843,7 @@ function AppDashboard() {
                 activeCharacterId={session?.characterId}
                 onSwitchCharacter={handleSwitchCharacter}
                 onLogout={handleLogout}
+                onLinkCharacter={() => handleEveLogin(getStoredSessionId() || sessionData?.sessionId)}
                 hubsList={hubsList}
                 hubsMappings={hubsMappings}
                 onOpenAddHubModal={() => setShowAddHubModal(true)}
@@ -2242,6 +2460,22 @@ function AppDashboard() {
           characterIds={linkedCharacters.length > 1 ? linkedCharacters.map((c) => c.characterId) : undefined}
         />
       )}
+
+      {/* Fleet Keychain Import Modal */}
+      <ImportFleetModal
+        isOpen={showImportFleetModal}
+        onClose={() => setShowImportFleetModal(false)}
+        onSuccess={(restoredSessionId) => {
+          setStoredSessionId(restoredSessionId);
+          setShowImportFleetModal(false);
+          queryClient.invalidateQueries(['auth']);
+          queryClient.invalidateQueries(['ledger']);
+          queryClient.invalidateQueries(['orders']);
+          queryClient.invalidateQueries(['capital']);
+          queryClient.invalidateQueries(['roi']);
+          queryClient.invalidateQueries(['analytics']);
+        }}
+      />
     </div>
   );
 }

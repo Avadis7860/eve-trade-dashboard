@@ -66,7 +66,9 @@ export interface CharacterWalletJournalEntry {
   contextIdType?: string;
   description: string;
   firstPartyId?: number;
+  firstPartyName?: string;
   secondPartyId?: number;
+  secondPartyName?: string;
   reason?: string;
   tax?: number;
   taxReceiverId?: number;

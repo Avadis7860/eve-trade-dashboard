@@ -981,14 +981,29 @@ export class PostgresLedgerRepository implements ILedgerRepository {
     const jnId = Number(row.journal_id);
     const isCorp = Boolean(row.is_corporation_wallet);
     const corpId = row.corporation_id ? Number(row.corporation_id) : undefined;
-    const div = row.division ? Number(row.division) : undefined;
-    const id = makeJournalEntryKey({
+    const div = row.division !== null && row.division !== undefined ? Number(row.division) : undefined;
+
+    let observedByCharacterIds: number[] = [charId];
+    if (row.observed_by_character_ids) {
+      try {
+        const parsed = JSON.parse(String(row.observed_by_character_ids));
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          observedByCharacterIds = parsed.map(Number);
+        }
+      } catch {
+        const parts = String(row.observed_by_character_ids).split(',').map((s) => Number(s.trim())).filter((n) => !isNaN(n));
+        if (parts.length > 0) observedByCharacterIds = parts;
+      }
+    }
+
+    const id = (row.canonical_id as string) || makeJournalEntryKey({
       isCorporationWallet: isCorp,
       corporationId: corpId,
       division: div,
       characterId: charId,
       journalId: jnId,
     });
+
     return {
       id,
       characterId: charId,
@@ -999,7 +1014,9 @@ export class PostgresLedgerRepository implements ILedgerRepository {
       balance: row.balance !== null && row.balance !== undefined ? Number(row.balance) : undefined,
       description: row.description ? String(row.description) : '',
       firstPartyId: row.first_party_id ? Number(row.first_party_id) : undefined,
+      firstPartyName: row.first_party_name ? String(row.first_party_name) : undefined,
       secondPartyId: row.second_party_id ? Number(row.second_party_id) : undefined,
+      secondPartyName: row.second_party_name ? String(row.second_party_name) : undefined,
       reason: row.reason ? String(row.reason) : undefined,
       taxReceiverId: row.tax_receiver_id ? Number(row.tax_receiver_id) : undefined,
       tax: row.tax !== null && row.tax !== undefined ? Number(row.tax) : undefined,
@@ -1010,7 +1027,7 @@ export class PostgresLedgerRepository implements ILedgerRepository {
       isCorporationWallet: isCorp,
       corporationId: corpId,
       division: div,
-      observedByCharacterIds: [charId],
+      observedByCharacterIds,
     };
   }
 
@@ -1403,18 +1420,61 @@ export class PostgresLedgerRepository implements ILedgerRepository {
 
     return await this.adapter.transaction(async (tx) => {
       let inserted = 0;
+      let updated = 0;
+
+      // Batch query existing canonical rows to merge observed_by_character_ids
+      const canonicalIds = entries.map((e) => e.id || makeJournalEntryKey(e));
+      const existingRes = await tx.query<{ canonical_id: string; observed_by_character_ids: string; character_id: string }>(
+        'SELECT canonical_id, observed_by_character_ids, character_id FROM journal_entries WHERE canonical_id = ANY($1)',
+        [canonicalIds]
+      );
+      const existingMap = new Map<string, Set<number>>();
+      for (const row of existingRes.rows) {
+        const set = new Set<number>();
+        if (row.character_id) set.add(Number(row.character_id));
+        if (row.observed_by_character_ids) {
+          try {
+            const parsed = JSON.parse(row.observed_by_character_ids);
+            if (Array.isArray(parsed)) {
+              for (const cid of parsed) set.add(Number(cid));
+            }
+          } catch {
+            row.observed_by_character_ids.split(',').forEach((s) => {
+              const num = Number(s.trim());
+              if (!isNaN(num)) set.add(num);
+            });
+          }
+        }
+        existingMap.set(row.canonical_id, set);
+      }
+
       for (const item of entries) {
+        const canonicalId = item.id || makeJournalEntryKey(item);
+        const isCorp = Boolean(item.isCorporationWallet);
+        const corpId = item.corporationId || null;
+        const div = item.division !== null && item.division !== undefined ? item.division : (isCorp ? 1 : null);
+
+        const existingObservers = existingMap.get(canonicalId);
+        const mergedObservers = new Set<number>(existingObservers || []);
+        if (item.characterId) mergedObservers.add(item.characterId);
+        if (item.observedByCharacterIds) {
+          for (const cid of item.observedByCharacterIds) mergedObservers.add(cid);
+        }
+        const observedByStr = JSON.stringify(Array.from(mergedObservers));
+
         const sql = `
           INSERT INTO journal_entries (
             character_id, journal_id, date, ref_type, amount, balance,
             description, first_party_id, first_party_name, second_party_id,
             second_party_name, reason, tax_receiver_id, tax, context_id,
-            context_id_type, observed_at
+            context_id_type, observed_at, is_corporation_wallet, corporation_id,
+            division, observed_by_character_ids, canonical_id
           ) VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-            $11, $12, $13, $14, $15, $16, $17
+            $11, $12, $13, $14, $15, $16, $17, $18, $19,
+            $20, $21, $22
           )
-          ON CONFLICT (character_id, journal_id) DO UPDATE SET
+          ON CONFLICT (canonical_id) DO UPDATE SET
             date = EXCLUDED.date,
             ref_type = EXCLUDED.ref_type,
             amount = EXCLUDED.amount,
@@ -1428,7 +1488,8 @@ export class PostgresLedgerRepository implements ILedgerRepository {
             tax_receiver_id = EXCLUDED.tax_receiver_id,
             tax = EXCLUDED.tax,
             context_id = EXCLUDED.context_id,
-            context_id_type = EXCLUDED.context_id_type
+            context_id_type = EXCLUDED.context_id_type,
+            observed_by_character_ids = EXCLUDED.observed_by_character_ids
         `;
         const params = [
           item.characterId,
@@ -1448,11 +1509,21 @@ export class PostgresLedgerRepository implements ILedgerRepository {
           item.contextId || null,
           item.contextIdType || null,
           item.observedAt || Date.now(),
+          isCorp,
+          corpId,
+          div,
+          observedByStr,
+          canonicalId,
         ];
         await tx.execute(sql, params);
-        inserted++;
+        if (existingObservers) {
+          updated++;
+        } else {
+          inserted++;
+        }
+        existingMap.set(canonicalId, mergedObservers);
       }
-      return { inserted, updated: 0 };
+      return { inserted, updated };
     });
   }
 
@@ -1478,9 +1549,9 @@ export class PostgresLedgerRepository implements ILedgerRepository {
     const params: unknown[] = [];
 
     if (characterId !== undefined) {
-      countSql += ' WHERE character_id = $1';
-      dataSql += ' WHERE character_id = $1';
-      params.push(characterId);
+      countSql += ' WHERE (character_id = $1 OR observed_by_character_ids LIKE $2)';
+      dataSql += ' WHERE (character_id = $1 OR observed_by_character_ids LIKE $2)';
+      params.push(characterId, `%"${characterId}"%`);
     }
     dataSql += ` ORDER BY date DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
 
@@ -1499,8 +1570,11 @@ export class PostgresLedgerRepository implements ILedgerRepository {
 
   public async getJournalEntryByIdAsync(characterId: number, journalId: number): Promise<CharacterWalletJournalEntry | null> {
     const res = await this.adapter.query(
-      'SELECT * FROM journal_entries WHERE character_id = $1 AND journal_id = $2',
-      [characterId, journalId]
+      `SELECT * FROM journal_entries WHERE
+        (character_id = $1 AND journal_id = $2)
+        OR canonical_id = $3
+        OR (journal_id = $2 AND observed_by_character_ids LIKE $4)`,
+      [characterId, journalId, `char:${characterId}:${journalId}`, `%"${characterId}"%`]
     );
     if (res.rows.length === 0) return null;
     return this.mapRowToJournal(res.rows[0]);
@@ -1640,7 +1714,28 @@ export class PostgresLedgerRepository implements ILedgerRepository {
 
   public async clearCharacterAsync(characterId: number): Promise<void> {
     await this.adapter.execute('DELETE FROM transactions WHERE character_id = $1', [characterId]);
-    await this.adapter.execute('DELETE FROM journal_entries WHERE character_id = $1', [characterId]);
+    const corpRows = await this.adapter.query<{ canonical_id: string; character_id: string; observed_by_character_ids: string }>(
+      'SELECT canonical_id, character_id, observed_by_character_ids FROM journal_entries WHERE is_corporation_wallet = TRUE AND (character_id = $1 OR observed_by_character_ids LIKE $2)',
+      [characterId, `%"${characterId}"%`]
+    );
+    for (const row of corpRows.rows) {
+      let obs: number[] = [];
+      try {
+        obs = JSON.parse(row.observed_by_character_ids || '[]');
+      } catch {
+        obs = [Number(row.character_id)];
+      }
+      const remaining = obs.filter((id) => id !== characterId);
+      if (remaining.length > 0) {
+        await this.adapter.execute(
+          'UPDATE journal_entries SET character_id = $1, observed_by_character_ids = $2 WHERE canonical_id = $3',
+          [remaining[0], JSON.stringify(remaining), row.canonical_id]
+        );
+      } else {
+        await this.adapter.execute('DELETE FROM journal_entries WHERE canonical_id = $1', [row.canonical_id]);
+      }
+    }
+    await this.adapter.execute('DELETE FROM journal_entries WHERE character_id = $1 AND is_corporation_wallet = FALSE', [characterId]);
   }
 
   public dumpData(): { transactions: CharacterTransaction[]; journalEntries: CharacterWalletJournalEntry[] } {
@@ -1661,8 +1756,12 @@ export class PostgresLedgerRepository implements ILedgerRepository {
   }
 
   public async restoreDataAsync(data: { transactions: CharacterTransaction[]; journalEntries: CharacterWalletJournalEntry[] }): Promise<void> {
-    await this.saveTransactionsAsync(data.transactions);
-    await this.saveJournalEntriesAsync(data.journalEntries);
+    await this.adapter.transaction(async (tx) => {
+      await tx.execute('DELETE FROM transactions');
+      await tx.execute('DELETE FROM journal_entries');
+      await this.saveTransactionsAsync(data.transactions);
+      await this.saveJournalEntriesAsync(data.journalEntries);
+    });
   }
 }
 

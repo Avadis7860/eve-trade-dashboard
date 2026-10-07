@@ -1,7 +1,7 @@
 # Phase G03 — Concurrence Distribuée & Synchronisation ESI
 
 ## 1. Statut
-`PLANIFIÉE`
+`TERMINÉE`
 
 ## 2. Objectif
 Assurer une coordination infaillible des synchronisations ESI entre plusieurs processus ou instances sans saturer les quotas CCP, en implémentant un système de baux (leases) PostgreSQL résilient aux pannes et respectueux des limites de débit.

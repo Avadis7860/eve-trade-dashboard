@@ -12,6 +12,8 @@ import type { IAssetsRepository } from '../assets/repository.ts';
 import { defaultAssetsRepository } from '../assets/repository.ts';
 import type { ISyncRepository } from '../sync/repository.ts';
 import { defaultSyncRepository } from '../sync/repository.ts';
+import type { IWalletRepository } from '../ledger/walletRepository.ts';
+import { defaultWalletRepository } from '../ledger/walletRepository.ts';
 import { defaultMetricsCollector } from '../utils/metrics.ts';
 import type {
   AppBackupSnapshot,
@@ -34,7 +36,8 @@ export class BackupRestoreService {
     private hubsRepo: HubsRepository = hubsRepository,
     private roiRepo: RoiRepository = roiRepository,
     private assetsRepo: IAssetsRepository = defaultAssetsRepository,
-    private syncRepo: ISyncRepository = defaultSyncRepository
+    private syncRepo: ISyncRepository = defaultSyncRepository,
+    private walletRepo: IWalletRepository = defaultWalletRepository
   ) {}
 
   /**
@@ -56,6 +59,7 @@ export class BackupRestoreService {
     const roiData = this.roiRepo.dumpData() as { allocations: ExplicitCostAllocation[]; openingBalances?: OpeningBalanceLot[] };
     const assetsData = this.assetsRepo.dumpData();
     const syncData = this.syncRepo.dumpData();
+    const rawWallets = this.walletRepo.getAllWalletSnapshots();
 
     const authSet =
       authorizedCharacterIds && authorizedCharacterIds.length > 0
@@ -67,8 +71,20 @@ export class BackupRestoreService {
       : ledgerData.transactions;
 
     const journalEntries = authSet
-      ? ledgerData.journalEntries.filter((j) => authSet.has(j.characterId))
+      ? ledgerData.journalEntries.filter((j) => {
+          if (authSet.has(j.characterId)) return true;
+          if (j.observedByCharacterIds && j.observedByCharacterIds.some((cid) => authSet.has(cid))) return true;
+          return false;
+        })
       : ledgerData.journalEntries;
+
+    const walletSnapshots = authSet
+      ? rawWallets.filter((w) => {
+          if (w.characterId && authSet.has(w.characterId)) return true;
+          if (w.observedByCharacterId && authSet.has(w.observedByCharacterId)) return true;
+          return false;
+        })
+      : rawWallets;
 
     const snapshots = authSet
       ? ordersData.snapshots.filter((o) => authSet.has(o.characterId))
@@ -105,6 +121,7 @@ export class BackupRestoreService {
       ledger: {
         transactions,
         journalEntries,
+        walletSnapshots,
       },
       orders: {
         snapshots,
@@ -259,6 +276,7 @@ export class BackupRestoreService {
           this.roiRepo.clearCharacter(charId);
           this.assetsRepo.clearAssets(charId);
           this.syncRepo.clearCharacter(charId);
+          this.walletRepo.clearCharacterData(charId);
         }
 
         // Restore scoped records
@@ -267,6 +285,9 @@ export class BackupRestoreService {
         }
         if (data.ledger.journalEntries.length > 0) {
           this.ledgerRepo.saveJournalEntries(data.ledger.journalEntries);
+        }
+        if (data.ledger.walletSnapshots && data.ledger.walletSnapshots.length > 0) {
+          this.walletRepo.saveWalletSnapshots(data.ledger.walletSnapshots);
         }
         if (data.orders.snapshots.length > 0) {
           this.ordersRepo.saveOrderSnapshots(data.orders.snapshots);
@@ -302,6 +323,7 @@ export class BackupRestoreService {
           restoredCounts: {
             transactions: data.ledger.transactions.length,
             journalEntries: data.ledger.journalEntries.length,
+            walletSnapshots: data.ledger.walletSnapshots?.length || 0,
             orders: data.orders.snapshots.length,
             restockItems: data.orders.restockItems.length,
             hubs: data.hubs.definitions.length,
@@ -334,12 +356,17 @@ export class BackupRestoreService {
       this.roiRepo.restoreData(data.roi);
       this.assetsRepo.restoreData(data.assets);
       this.syncRepo.restoreData(data.sync);
+      if (data.ledger.walletSnapshots) {
+        this.walletRepo.clearAll();
+        this.walletRepo.saveWalletSnapshots(data.ledger.walletSnapshots);
+      }
 
       return {
         success: true,
         restoredCounts: {
           transactions: data.ledger.transactions.length,
           journalEntries: data.ledger.journalEntries.length,
+          walletSnapshots: data.ledger.walletSnapshots?.length || 0,
           orders: data.orders.snapshots.length,
           restockItems: data.orders.restockItems.length,
           hubs: data.hubs.definitions.length,
@@ -361,6 +388,10 @@ export class BackupRestoreService {
       this.roiRepo.restoreData(rollbackSnapshot.data.roi);
       this.assetsRepo.restoreData(rollbackSnapshot.data.assets);
       this.syncRepo.restoreData(rollbackSnapshot.data.sync);
+      if (rollbackSnapshot.data.ledger.walletSnapshots) {
+        this.walletRepo.clearAll();
+        this.walletRepo.saveWalletSnapshots(rollbackSnapshot.data.ledger.walletSnapshots);
+      }
 
       return {
         success: false,

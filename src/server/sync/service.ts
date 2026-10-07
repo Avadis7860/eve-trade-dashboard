@@ -79,6 +79,9 @@ export class SyncService {
     this.universeService = universeService;
     this.assetsRepo = assetsRepo;
     this.coordinator = coordinator;
+    if (this.coordinator && this.syncRepo) {
+      this.coordinator.setSyncRepository(this.syncRepo);
+    }
     this.walletRepo = walletRepo;
   }
 
@@ -96,8 +99,9 @@ export class SyncService {
     options?: { resume?: boolean; maxItems?: number; forceRevalidate?: boolean }
   ): Promise<SyncResult> {
     const key = `sync:${characterId}:wallet_transactions`;
+    const requestInitiatedAt = Date.now();
     return this.coordinator.enqueue(key, (signal) =>
-      this.executeSyncWalletTransactions(characterId, accessToken, refreshTokenFn, { ...options, signal })
+      this.executeSyncWalletTransactions(characterId, accessToken, refreshTokenFn, { ...options, requestInitiatedAt, signal })
     );
   }
 
@@ -105,12 +109,34 @@ export class SyncService {
     characterId: number,
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>,
-    options?: { resume?: boolean; maxItems?: number; forceRevalidate?: boolean; signal?: AbortSignal }
+    options?: { resume?: boolean; maxItems?: number; forceRevalidate?: boolean; requestInitiatedAt?: number; signal?: AbortSignal }
   ): Promise<SyncResult> {
     const resource: SyncResourceType = 'wallet_transactions';
     const startTime = Date.now();
 
     const previousState = await this.syncRepo.getSyncStateAsync(characterId, resource);
+    if (
+      options?.requestInitiatedAt &&
+      previousState.lastSyncCompletedAt &&
+      previousState.lastSyncCompletedAt >= options.requestInitiatedAt &&
+      previousState.status === 'COMPLETE'
+    ) {
+      const totalPersisted = await this.ledgerRepo.countTransactions(characterId);
+      return {
+        resource,
+        characterId,
+        status: 'COMPLETE',
+        coverageStatus: previousState.coverageStatus || 'COMPLETE',
+        hasMore: previousState.hasMore,
+        itemsFetched: previousState.totalRecords,
+        newItemsPersisted: 0,
+        totalPersisted,
+        lastSuccessfulId: previousState.lastSuccessfulId,
+        durationMs: Date.now() - options.requestInitiatedAt,
+        asOf: previousState.asOf,
+      };
+    }
+
     const shouldResume =
       options?.resume !== false &&
       previousState.status === 'PARTIAL' &&
@@ -256,8 +282,9 @@ export class SyncService {
     options?: { resume?: boolean; maxPages?: number; forceRevalidate?: boolean }
   ): Promise<SyncResult> {
     const key = `sync:${characterId}:wallet_journal`;
+    const requestInitiatedAt = Date.now();
     return this.coordinator.enqueue(key, (signal) =>
-      this.executeSyncWalletJournal(characterId, accessToken, refreshTokenFn, { ...options, signal })
+      this.executeSyncWalletJournal(characterId, accessToken, refreshTokenFn, { ...options, requestInitiatedAt, signal })
     );
   }
 
@@ -265,12 +292,35 @@ export class SyncService {
     characterId: number,
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>,
-    options?: { resume?: boolean; maxPages?: number; forceRevalidate?: boolean; signal?: AbortSignal }
+    options?: { resume?: boolean; maxPages?: number; forceRevalidate?: boolean; requestInitiatedAt?: number; signal?: AbortSignal }
   ): Promise<SyncResult> {
     const resource: SyncResourceType = 'wallet_journal';
     const startTime = Date.now();
 
     const previousState = await this.syncRepo.getSyncStateAsync(characterId, resource);
+    if (
+      !options?.forceRevalidate &&
+      options?.requestInitiatedAt &&
+      previousState.lastSyncCompletedAt &&
+      previousState.lastSyncCompletedAt > options.requestInitiatedAt &&
+      previousState.status === 'COMPLETE'
+    ) {
+      const journalResult = await this.ledgerRepo.getJournalEntries(characterId, 1, 1);
+      return {
+        resource,
+        characterId,
+        status: 'COMPLETE',
+        coverageStatus: previousState.coverageStatus || 'COMPLETE',
+        hasMore: previousState.hasMore,
+        itemsFetched: previousState.totalRecords,
+        newItemsPersisted: 0,
+        totalPersisted: journalResult.total,
+        lastPage: previousState.lastPage,
+        durationMs: Date.now() - options.requestInitiatedAt,
+        asOf: previousState.asOf,
+      };
+    }
+
     const shouldResume =
       options?.resume !== false &&
       previousState.status === 'PARTIAL' &&
@@ -409,8 +459,9 @@ export class SyncService {
     options?: { forceRevalidate?: boolean }
   ): Promise<SyncResult> {
     const key = `sync:${characterId}:character_orders`;
+    const requestInitiatedAt = Date.now();
     return this.coordinator.enqueue(key, (signal) =>
-      this.executeSyncCharacterOrders(characterId, accessToken, refreshTokenFn, { ...options, signal })
+      this.executeSyncCharacterOrders(characterId, accessToken, refreshTokenFn, { ...options, requestInitiatedAt, signal })
     );
   }
 
@@ -418,11 +469,34 @@ export class SyncService {
     characterId: number,
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>,
-    options?: { forceRevalidate?: boolean; signal?: AbortSignal }
+    options?: { forceRevalidate?: boolean; requestInitiatedAt?: number; signal?: AbortSignal }
   ): Promise<SyncResult> {
     const resource: SyncResourceType = 'character_orders';
     const startTime = Date.now();
     const observedAt = Date.now();
+
+    const previousState = await this.syncRepo.getSyncStateAsync(characterId, resource);
+    if (
+      !options?.forceRevalidate &&
+      options?.requestInitiatedAt &&
+      previousState.lastSyncCompletedAt &&
+      previousState.lastSyncCompletedAt > options.requestInitiatedAt &&
+      previousState.status === 'COMPLETE'
+    ) {
+      const totalTracked = (await this.ordersRepo.getOrdersForCharacter(characterId)).length;
+      return {
+        resource,
+        characterId,
+        status: 'COMPLETE',
+        coverageStatus: previousState.coverageStatus || 'COMPLETE',
+        hasMore: previousState.hasMore,
+        itemsFetched: previousState.totalRecords,
+        newItemsPersisted: 0,
+        totalPersisted: totalTracked,
+        durationMs: Date.now() - options.requestInitiatedAt,
+        asOf: previousState.asOf,
+      };
+    }
 
     await this.syncRepo.updateSyncStateAsync(characterId, resource, {
       status: 'SYNCING',
@@ -612,8 +686,9 @@ export class SyncService {
     options?: { forceRevalidate?: boolean }
   ): Promise<SyncResult> {
     const key = `sync:${characterId}:character_wallet`;
+    const requestInitiatedAt = Date.now();
     return this.coordinator.enqueue(key, (signal) =>
-      this.executeSyncCharacterWallet(characterId, accessToken, refreshTokenFn, { ...options, signal })
+      this.executeSyncCharacterWallet(characterId, accessToken, refreshTokenFn, { ...options, requestInitiatedAt, signal })
     );
   }
 
@@ -621,11 +696,33 @@ export class SyncService {
     characterId: number,
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>,
-    options?: { forceRevalidate?: boolean; signal?: AbortSignal }
+    options?: { forceRevalidate?: boolean; requestInitiatedAt?: number; signal?: AbortSignal }
   ): Promise<SyncResult> {
     const resource: SyncResourceType = 'character_wallet';
     const startTime = Date.now();
     const observedAt = Date.now();
+
+    const previousState = await this.syncRepo.getSyncStateAsync(characterId, resource);
+    if (
+      !options?.forceRevalidate &&
+      options?.requestInitiatedAt &&
+      previousState.lastSyncCompletedAt &&
+      previousState.lastSyncCompletedAt > options.requestInitiatedAt &&
+      previousState.status === 'COMPLETE'
+    ) {
+      return {
+        resource,
+        characterId,
+        status: 'COMPLETE',
+        coverageStatus: previousState.coverageStatus || 'COMPLETE',
+        hasMore: false,
+        itemsFetched: 1,
+        newItemsPersisted: 0,
+        totalPersisted: 1,
+        durationMs: Date.now() - options.requestInitiatedAt,
+        asOf: previousState.asOf,
+      };
+    }
 
     await this.syncRepo.updateSyncStateAsync(characterId, resource, {
       status: 'SYNCING',
@@ -733,8 +830,9 @@ export class SyncService {
     }
   ): Promise<SyncResult> {
     const key = `sync:${characterId}:corporation_wallets`;
+    const requestInitiatedAt = Date.now();
     return this.coordinator.enqueue(key, (signal) =>
-      this.executeSyncCorporationWallets(characterId, accessToken, refreshTokenFn, { ...options, signal })
+      this.executeSyncCorporationWallets(characterId, accessToken, refreshTokenFn, { ...options, requestInitiatedAt, signal })
     );
   }
 
@@ -747,11 +845,36 @@ export class SyncService {
       resume?: boolean;
       maxPages?: number;
       forceRevalidate?: boolean;
+      requestInitiatedAt?: number;
       signal?: AbortSignal;
     }
   ): Promise<SyncResult> {
     const resource: SyncResourceType = 'corporation_wallets';
     const startTime = Date.now();
+
+    const previousState = await this.syncRepo.getSyncStateAsync(characterId, resource);
+    if (
+      !options?.forceRevalidate &&
+      options?.requestInitiatedAt &&
+      previousState.lastSyncCompletedAt &&
+      previousState.lastSyncCompletedAt > options.requestInitiatedAt &&
+      previousState.status === 'COMPLETE'
+    ) {
+      const journalTotal = (await this.ledgerRepo.getJournalEntries(characterId, 1, 1)).total;
+      return {
+        resource,
+        characterId,
+        status: 'COMPLETE',
+        coverageStatus: previousState.coverageStatus || 'COMPLETE',
+        hasMore: previousState.hasMore,
+        divisionStatuses: previousState.divisionStatuses,
+        itemsFetched: previousState.totalRecords,
+        newItemsPersisted: 0,
+        totalPersisted: journalTotal,
+        durationMs: Date.now() - options.requestInitiatedAt,
+        asOf: previousState.asOf,
+      };
+    }
 
     if (options?.walletSyncMode === 'CHARACTERS_ONLY') {
       return {
@@ -788,8 +911,6 @@ export class SyncService {
       status: 'SYNCING',
       lastSyncStartedAt: startTime,
     });
-
-    const previousState = await this.syncRepo.getSyncStateAsync(characterId, resource);
 
     try {
       // 1. Fetch character public info to get corporation_id
@@ -1168,8 +1289,9 @@ export class SyncService {
     options?: { resume?: boolean; maxPages?: number; forceRevalidate?: boolean }
   ): Promise<SyncResult> {
     const key = `sync:${characterId}:character_assets`;
+    const requestInitiatedAt = Date.now();
     return this.coordinator.enqueue(key, (signal) =>
-      this.executeSyncCharacterAssets(characterId, accessToken, refreshTokenFn, { ...options, signal })
+      this.executeSyncCharacterAssets(characterId, accessToken, refreshTokenFn, { ...options, requestInitiatedAt, signal })
     );
   }
 
@@ -1177,13 +1299,36 @@ export class SyncService {
     characterId: number,
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>,
-    options?: { resume?: boolean; maxPages?: number; forceRevalidate?: boolean; signal?: AbortSignal }
+    options?: { resume?: boolean; maxPages?: number; forceRevalidate?: boolean; requestInitiatedAt?: number; signal?: AbortSignal }
   ): Promise<SyncResult> {
     const resource: SyncResourceType = 'character_assets';
     const startTime = Date.now();
     const observedAt = Date.now();
 
     const previousState = await this.syncRepo.getSyncStateAsync(characterId, resource);
+    if (
+      !options?.forceRevalidate &&
+      options?.requestInitiatedAt &&
+      previousState.lastSyncCompletedAt &&
+      previousState.lastSyncCompletedAt > options.requestInitiatedAt &&
+      previousState.status === 'COMPLETE'
+    ) {
+      const totalPersisted = this.assetsRepo.getAllAssets(characterId).length;
+      return {
+        resource,
+        characterId,
+        status: 'COMPLETE',
+        coverageStatus: previousState.coverageStatus || 'COMPLETE',
+        hasMore: previousState.hasMore,
+        itemsFetched: previousState.totalRecords,
+        newItemsPersisted: 0,
+        totalPersisted,
+        lastPage: previousState.lastPage,
+        durationMs: Date.now() - options.requestInitiatedAt,
+        asOf: previousState.asOf,
+      };
+    }
+
     const shouldResume =
       options?.resume !== false &&
       previousState.status === 'PARTIAL' &&
@@ -1329,8 +1474,9 @@ export class SyncService {
     refreshTokenFn?: () => Promise<string | null>
   ): Promise<SyncResult> {
     const key = `sync:${characterId}:corporation_assets`;
+    const requestInitiatedAt = Date.now();
     return this.coordinator.enqueue(key, (signal) =>
-      this.executeSyncCorporationAssets(characterId, accessToken, refreshTokenFn, { signal })
+      this.executeSyncCorporationAssets(characterId, accessToken, refreshTokenFn, { requestInitiatedAt, signal })
     );
   }
 
@@ -1338,10 +1484,31 @@ export class SyncService {
     characterId: number,
     accessToken: string,
     refreshTokenFn?: () => Promise<string | null>,
-    options?: { signal?: AbortSignal }
+    options?: { requestInitiatedAt?: number; signal?: AbortSignal }
   ): Promise<SyncResult> {
     const resource: SyncResourceType = 'corporation_assets';
     const startTime = Date.now();
+
+    const previousState = await this.syncRepo.getSyncStateAsync(characterId, resource);
+    if (
+      options?.requestInitiatedAt &&
+      previousState.lastSyncCompletedAt &&
+      previousState.lastSyncCompletedAt >= options.requestInitiatedAt &&
+      previousState.status === 'COMPLETE'
+    ) {
+      return {
+        resource,
+        characterId,
+        status: 'COMPLETE',
+        coverageStatus: previousState.coverageStatus || 'COMPLETE',
+        hasMore: previousState.hasMore,
+        itemsFetched: previousState.totalRecords,
+        newItemsPersisted: 0,
+        totalPersisted: previousState.totalRecords,
+        durationMs: Date.now() - options.requestInitiatedAt,
+        asOf: previousState.asOf,
+      };
+    }
 
     if (this.inaccessibleCorpCharacters.has(characterId)) {
       return {

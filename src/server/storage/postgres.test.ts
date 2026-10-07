@@ -64,6 +64,7 @@ class MockPostgresDatabaseAdapter implements IDatabaseAdapter {
       'opening_balances',
       'character_assets',
       'sync_states',
+      'esi_sync_leases',
     ];
     for (const name of tableNames) {
       if (!this.tables.has(name)) {
@@ -120,7 +121,7 @@ class MockPostgresDatabaseAdapter implements IDatabaseAdapter {
           if (tableName === 'transactions') {
             pk = `${row.character_id}:${row.transaction_id}`;
           } else if (tableName === 'journal_entries') {
-            pk = `${row.character_id}:${row.journal_id}`;
+            pk = String(row.canonical_id || `${row.character_id}:${row.journal_id}`);
           } else if (tableName === 'order_snapshots') {
             pk = `${row.character_id}:${row.order_id}`;
           } else if (tableName === 'sync_states') {
@@ -147,6 +148,16 @@ class MockPostgresDatabaseAdapter implements IDatabaseAdapter {
             return count;
           }
           if (params.length > 0) {
+            if (tableName === 'esi_sync_leases') {
+              const scopeKey = String(params[0]);
+              const instanceId = params.length > 1 ? String(params[1]) : undefined;
+              const existing = table.get(scopeKey);
+              if (existing && (!instanceId || String(existing.instance_id) === instanceId)) {
+                table.delete(scopeKey);
+                return 1;
+              }
+              return 0;
+            }
             const charId = params[0];
             let deleted = 0;
             for (const [k, v] of Array.from(table.entries())) {
@@ -380,6 +391,78 @@ class MockPostgresDatabaseAdapter implements IDatabaseAdapter {
       let rows = Array.from(table.values());
       if (params.length > 0 && typeof params[0] === 'number') {
         rows = rows.filter((r) => r.character_id === params[0]);
+      }
+      return { rows: rows as unknown as T[], rowCount: rows.length };
+    }
+
+    if (upper.includes('INTO ESI_SYNC_LEASES')) {
+      const table = this.tables.get('esi_sync_leases')!;
+      const scopeKey = String(params[0]);
+      const instanceId = String(params[1]);
+      const ttlMs = Number(params[2]);
+      const now = Date.now();
+      const existing = table.get(scopeKey);
+
+      if (existing && Number(existing.expires_at) > now && String(existing.instance_id) !== instanceId) {
+        // Locked by another instance
+        return { rows: [], rowCount: 0 };
+      }
+
+      const row = {
+        scope_key: scopeKey,
+        instance_id: instanceId,
+        acquired_at: now,
+        expires_at: now + ttlMs,
+        heartbeat_at: now,
+      };
+      table.set(scopeKey, row);
+      return { rows: [{ scope_key: scopeKey }] as unknown as T[], rowCount: 1 };
+    }
+
+    if (upper.includes('UPDATE ESI_SYNC_LEASES')) {
+      const table = this.tables.get('esi_sync_leases')!;
+      const scopeKey = String(params[0]);
+      const instanceId = String(params[1]);
+      const ttlMs = Number(params[2]);
+      const now = Date.now();
+      const existing = table.get(scopeKey);
+
+      if (!existing || String(existing.instance_id) !== instanceId) {
+        return { rows: [], rowCount: 0 };
+      }
+
+      existing.expires_at = now + ttlMs;
+      existing.heartbeat_at = now;
+      table.set(scopeKey, existing);
+      return { rows: [{ scope_key: scopeKey }] as unknown as T[], rowCount: 1 };
+    }
+
+    if (upper.includes('FROM ESI_SYNC_LEASES')) {
+      const table = this.tables.get('esi_sync_leases')!;
+      const now = Date.now();
+      let rows = Array.from(table.values()).filter((r) => Number(r.expires_at) > now);
+      if (params.length > 0) {
+        rows = rows.filter((r) => String(r.scope_key) === String(params[0]));
+      }
+      return { rows: rows as unknown as T[], rowCount: rows.length };
+    }
+
+    if (upper.includes('FROM JOURNAL_ENTRIES')) {
+      const table = this.tables.get('journal_entries')!;
+      let rows = Array.from(table.values());
+      if (upper.includes('CANONICAL_ID = ANY')) {
+        const list = Array.isArray(params[0]) ? (params[0] as string[]) : [];
+        rows = rows.filter((r) => list.includes(String(r.canonical_id)));
+      } else if (upper.includes('CHARACTER_ID = $1') && params.length > 0) {
+        const charId = Number(params[0]);
+        rows = rows.filter((r) => {
+          if (Number(r.character_id) === charId) return true;
+          if (r.observed_by_character_ids && String(r.observed_by_character_ids).includes(String(charId))) return true;
+          return false;
+        });
+      }
+      if (upper.includes('COUNT(*) AS COUNT')) {
+        return { rows: [{ count: String(rows.length) }] as unknown as T[], rowCount: 1 };
       }
       return { rows: rows as unknown as T[], rowCount: rows.length };
     }
@@ -1065,5 +1148,93 @@ describe('Phase R01 — PostgreSQL Durable Persistence & SQL Repositories', () =
 
     expect(errorCaught).not.toBeNull();
     expect(errorCaught?.message).toContain('Connection refused');
+  });
+
+  it('19. (Phase G03) Validates PostgresSyncRepository distributed lease lifecycle (acquire, renew, release, check)', async () => {
+    const syncRepo = new PostgresSyncRepository(adapter);
+    const scope = 'sync:character:9999:wallet';
+    const instanceA = 'pg_instance_alpha';
+    const instanceB = 'pg_instance_beta';
+
+    // 1. Instance A acquires lease for 500ms
+    const acquiredA = await syncRepo.tryAcquireLeaseAsync(scope, instanceA, 500);
+    expect(acquiredA).toBe(true);
+
+    // 2. Instance B fails to acquire
+    const acquiredB = await syncRepo.tryAcquireLeaseAsync(scope, instanceB, 500);
+    expect(acquiredB).toBe(false);
+
+    // 3. Instance A renews lease
+    const renewedA = await syncRepo.renewLeaseAsync(scope, instanceA, 1000);
+    expect(renewedA).toBe(true);
+
+    // 4. Instance A releases lease
+    await syncRepo.releaseLeaseAsync(scope, instanceA);
+
+    // 5. Instance B can now acquire lease
+    const acquiredBAfter = await syncRepo.tryAcquireLeaseAsync(scope, instanceB, 500);
+    expect(acquiredBAfter).toBe(true);
+    await syncRepo.releaseLeaseAsync(scope, instanceB);
+  });
+
+  it('20. (Phase G04) Validates PostgresLedgerRepository multi-director corporation journal deduplication', async () => {
+    const ledgerRepo = new PostgresLedgerRepository(adapter);
+
+    const corpJnDirector1 = {
+      id: 'corp:98000001:1:99901',
+      characterId: 1001,
+      journalId: 99901,
+      date: '2026-09-25T14:00:00Z',
+      refType: 'market_transaction',
+      amount: 25000000.0,
+      balance: 500000000.0,
+      description: 'Corp market sale in Jita',
+      source: '/corporations/98000001/wallets/1/journal/',
+      observedAt: Date.now(),
+      isCorporationWallet: true,
+      corporationId: 98000001,
+      division: 1,
+      observedByCharacterIds: [1001],
+    };
+
+    const corpJnDirector2 = {
+      id: 'corp:98000001:1:99901',
+      characterId: 2002,
+      journalId: 99901,
+      date: '2026-09-25T14:00:00Z',
+      refType: 'market_transaction',
+      amount: 25000000.0,
+      balance: 500000000.0,
+      description: 'Corp market sale in Jita',
+      source: '/corporations/98000001/wallets/1/journal/',
+      observedAt: Date.now(),
+      isCorporationWallet: true,
+      corporationId: 98000001,
+      division: 1,
+      observedByCharacterIds: [2002],
+    };
+
+    // First director saves entry
+    const res1 = await ledgerRepo.saveJournalEntriesAsync([corpJnDirector1]);
+    expect(res1.inserted).toBe(1);
+
+    // Second director saves identical corp entry
+    const res2 = await ledgerRepo.saveJournalEntriesAsync([corpJnDirector2]);
+    expect(res2.updated).toBe(1);
+
+    // Dump data: exactly 1 entry exists
+    const dump = await ledgerRepo.dumpDataAsync();
+    const matching = dump.journalEntries.filter((j) => j.journalId === 99901);
+    expect(matching).toHaveLength(1);
+    expect(matching[0].observedByCharacterIds).toContain(1001);
+    expect(matching[0].observedByCharacterIds).toContain(2002);
+
+    // Both directors can query the entry
+    const jn1 = await ledgerRepo.getJournalEntryByIdAsync(1001, 99901);
+    const jn2 = await ledgerRepo.getJournalEntryByIdAsync(2002, 99901);
+    expect(jn1).not.toBeNull();
+    expect(jn2).not.toBeNull();
+    expect(jn1?.journalId).toBe(99901);
+    expect(jn2?.journalId).toBe(99901);
   });
 });

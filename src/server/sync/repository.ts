@@ -2,6 +2,14 @@ import type { SyncState, SyncResourceType, FullCharacterSyncStatus } from './typ
 import { StorageManager, DurableFileDatabaseAdapter } from '../storage/database.ts';
 import type { IDatabaseAdapter } from '../storage/types.ts';
 
+export interface DistributedLeaseRecord {
+  scopeKey: string;
+  instanceId: string;
+  acquiredAt: number;
+  expiresAt: number;
+  heartbeatAt: number;
+}
+
 export interface ISyncRepository {
   getSyncState(characterId: number, resource: SyncResourceType): SyncState;
   getSyncStateAsync(characterId: number, resource: SyncResourceType): Promise<SyncState>;
@@ -13,10 +21,22 @@ export interface ISyncRepository {
   clearCharacterAsync(characterId: number): Promise<void>;
   dumpData(): { states: SyncState[] };
   restoreData(data: { states: SyncState[] }): void;
+
+  // Distributed Leases (Phase G03)
+  tryAcquireLease(scopeKey: string, instanceId: string, ttlMs: number): boolean;
+  tryAcquireLeaseAsync(scopeKey: string, instanceId: string, ttlMs: number): Promise<boolean>;
+  renewLease(scopeKey: string, instanceId: string, ttlMs: number): boolean;
+  renewLeaseAsync(scopeKey: string, instanceId: string, ttlMs: number): Promise<boolean>;
+  releaseLease(scopeKey: string, instanceId: string): void;
+  releaseLeaseAsync(scopeKey: string, instanceId: string): Promise<void>;
+  getLease(scopeKey: string): DistributedLeaseRecord | null;
+  getLeaseAsync(scopeKey: string): Promise<DistributedLeaseRecord | null>;
+  getActiveLeasesAsync(): Promise<DistributedLeaseRecord[]>;
 }
 
 export class PersistentSyncRepository implements ISyncRepository {
   private states: Map<string, SyncState> = new Map();
+  private leases: Map<string, DistributedLeaseRecord> = new Map();
 
   constructor(private adapter: IDatabaseAdapter | null = null) {
     if (this.adapter) {
@@ -172,6 +192,82 @@ export class PersistentSyncRepository implements ISyncRepository {
     if (sync) {
       this.syncToStorage();
     }
+  }
+
+  public tryAcquireLease(scopeKey: string, instanceId: string, ttlMs: number): boolean {
+    const now = Date.now();
+    const existing = this.leases.get(scopeKey);
+    if (existing && existing.expiresAt > now && existing.instanceId !== instanceId) {
+      return false;
+    }
+    const lease: DistributedLeaseRecord = {
+      scopeKey,
+      instanceId,
+      acquiredAt: now,
+      expiresAt: now + ttlMs,
+      heartbeatAt: now,
+    };
+    this.leases.set(scopeKey, lease);
+    return true;
+  }
+
+  public async tryAcquireLeaseAsync(scopeKey: string, instanceId: string, ttlMs: number): Promise<boolean> {
+    return this.tryAcquireLease(scopeKey, instanceId, ttlMs);
+  }
+
+  public renewLease(scopeKey: string, instanceId: string, ttlMs: number): boolean {
+    const now = Date.now();
+    const existing = this.leases.get(scopeKey);
+    if (!existing || existing.instanceId !== instanceId) {
+      return false;
+    }
+    existing.expiresAt = now + ttlMs;
+    existing.heartbeatAt = now;
+    this.leases.set(scopeKey, existing);
+    return true;
+  }
+
+  public async renewLeaseAsync(scopeKey: string, instanceId: string, ttlMs: number): Promise<boolean> {
+    return this.renewLease(scopeKey, instanceId, ttlMs);
+  }
+
+  public releaseLease(scopeKey: string, instanceId: string): void {
+    const existing = this.leases.get(scopeKey);
+    if (existing && existing.instanceId === instanceId) {
+      this.leases.delete(scopeKey);
+    }
+  }
+
+  public async releaseLeaseAsync(scopeKey: string, instanceId: string): Promise<void> {
+    this.releaseLease(scopeKey, instanceId);
+  }
+
+  public getLease(scopeKey: string): DistributedLeaseRecord | null {
+    const now = Date.now();
+    const existing = this.leases.get(scopeKey);
+    if (!existing) return null;
+    if (existing.expiresAt <= now) {
+      this.leases.delete(scopeKey);
+      return null;
+    }
+    return { ...existing };
+  }
+
+  public async getLeaseAsync(scopeKey: string): Promise<DistributedLeaseRecord | null> {
+    return this.getLease(scopeKey);
+  }
+
+  public async getActiveLeasesAsync(): Promise<DistributedLeaseRecord[]> {
+    const now = Date.now();
+    const active: DistributedLeaseRecord[] = [];
+    for (const [key, lease] of this.leases.entries()) {
+      if (lease.expiresAt > now) {
+        active.push({ ...lease });
+      } else {
+        this.leases.delete(key);
+      }
+    }
+    return active;
   }
 }
 
@@ -393,6 +489,114 @@ export class PostgresSyncRepository implements ISyncRepository {
     for (const s of data.states) {
       this.updateSyncStateAsync(s.characterId, s.resource, s).catch(() => {});
     }
+  }
+
+  public async tryAcquireLeaseAsync(scopeKey: string, instanceId: string, ttlMs: number): Promise<boolean> {
+    const now = Date.now();
+    const expiresAt = now + ttlMs;
+    const sql = `
+      INSERT INTO esi_sync_leases (scope_key, instance_id, acquired_at, expires_at, heartbeat_at)
+      VALUES ($1, $2, $3, $4, $3)
+      ON CONFLICT (scope_key) DO UPDATE
+      SET instance_id = EXCLUDED.instance_id,
+          acquired_at = EXCLUDED.acquired_at,
+          expires_at = EXCLUDED.expires_at,
+          heartbeat_at = EXCLUDED.heartbeat_at
+      WHERE esi_sync_leases.expires_at < $3 OR esi_sync_leases.instance_id = EXCLUDED.instance_id
+      RETURNING scope_key;
+    `;
+    const res = await this.adapter.query(sql, [scopeKey, instanceId, now, expiresAt]);
+    const acquired = res.rows.length > 0;
+    if (acquired) {
+      this.fallbackMemory.tryAcquireLease(scopeKey, instanceId, ttlMs);
+    }
+    return acquired;
+  }
+
+  public tryAcquireLease(scopeKey: string, instanceId: string, ttlMs: number): boolean {
+    const res = this.fallbackMemory.tryAcquireLease(scopeKey, instanceId, ttlMs);
+    this.tryAcquireLeaseAsync(scopeKey, instanceId, ttlMs).catch(() => {});
+    return res;
+  }
+
+  public async renewLeaseAsync(scopeKey: string, instanceId: string, ttlMs: number): Promise<boolean> {
+    const now = Date.now();
+    const expiresAt = now + ttlMs;
+    const sql = `
+      UPDATE esi_sync_leases
+      SET expires_at = $3,
+          heartbeat_at = $4
+      WHERE scope_key = $1 AND instance_id = $2
+      RETURNING scope_key;
+    `;
+    const res = await this.adapter.query(sql, [scopeKey, instanceId, expiresAt, now]);
+    const renewed = res.rows.length > 0;
+    if (renewed) {
+      this.fallbackMemory.renewLease(scopeKey, instanceId, ttlMs);
+    }
+    return renewed;
+  }
+
+  public renewLease(scopeKey: string, instanceId: string, ttlMs: number): boolean {
+    const res = this.fallbackMemory.renewLease(scopeKey, instanceId, ttlMs);
+    this.renewLeaseAsync(scopeKey, instanceId, ttlMs).catch(() => {});
+    return res;
+  }
+
+  public async releaseLeaseAsync(scopeKey: string, instanceId: string): Promise<void> {
+    this.fallbackMemory.releaseLease(scopeKey, instanceId);
+    const sql = `
+      DELETE FROM esi_sync_leases
+      WHERE scope_key = $1 AND instance_id = $2;
+    `;
+    await this.adapter.execute(sql, [scopeKey, instanceId]);
+  }
+
+  public releaseLease(scopeKey: string, instanceId: string): void {
+    this.fallbackMemory.releaseLease(scopeKey, instanceId);
+    this.releaseLeaseAsync(scopeKey, instanceId).catch(() => {});
+  }
+
+  public async getLeaseAsync(scopeKey: string): Promise<DistributedLeaseRecord | null> {
+    const now = Date.now();
+    const sql = `
+      SELECT scope_key, instance_id, acquired_at, expires_at, heartbeat_at
+      FROM esi_sync_leases
+      WHERE scope_key = $1 AND expires_at > $2;
+    `;
+    const res = await this.adapter.query<Record<string, unknown>>(sql, [scopeKey, now]);
+    if (res.rows.length === 0) {
+      return null;
+    }
+    const row = res.rows[0];
+    return {
+      scopeKey: String(row.scope_key),
+      instanceId: String(row.instance_id),
+      acquiredAt: Number(row.acquired_at),
+      expiresAt: Number(row.expires_at),
+      heartbeatAt: Number(row.heartbeat_at),
+    };
+  }
+
+  public getLease(scopeKey: string): DistributedLeaseRecord | null {
+    return this.fallbackMemory.getLease(scopeKey);
+  }
+
+  public async getActiveLeasesAsync(): Promise<DistributedLeaseRecord[]> {
+    const now = Date.now();
+    const sql = `
+      SELECT scope_key, instance_id, acquired_at, expires_at, heartbeat_at
+      FROM esi_sync_leases
+      WHERE expires_at > $1;
+    `;
+    const res = await this.adapter.query<Record<string, unknown>>(sql, [now]);
+    return res.rows.map((row) => ({
+      scopeKey: String(row.scope_key),
+      instanceId: String(row.instance_id),
+      acquiredAt: Number(row.acquired_at),
+      expiresAt: Number(row.expires_at),
+      heartbeatAt: Number(row.heartbeat_at),
+    }));
   }
 }
 

@@ -44,6 +44,71 @@ export function createSystemRouter(
   const router = Router();
 
   /**
+   * GET /health/live & GET /live
+   * Liveness probe verifying Node.js process viability
+   */
+  const handleLiveness = (_req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    return res.status(200).json({
+      status: 'live',
+      uptimeSeconds: Math.floor(process.uptime()),
+      timestamp: new Date().toISOString(),
+      pid: process.pid,
+    });
+  };
+
+  router.get('/health/live', handleLiveness);
+  router.get('/live', handleLiveness);
+
+  /**
+   * GET /health/ready & GET /ready
+   * Readiness probe thoroughly checking PostgreSQL connectivity and applied schema migrations
+   */
+  const handleReadiness = async (_req: Request, res: Response) => {
+    const startTime = Date.now();
+    let dbHealthy = false;
+    let dbError: string | undefined;
+    let appliedMigrationsCount = 0;
+
+    try {
+      dbHealthy = await dbAdapter.isHealthy();
+      if (dbHealthy) {
+        const migrations = await dbAdapter.getAppliedMigrationVersions();
+        appliedMigrationsCount = migrations.length;
+      } else {
+        dbError = 'Database health check query returned falsy';
+      }
+    } catch (err) {
+      dbHealthy = false;
+      dbError = (err as Error).message;
+    }
+
+    const isReady = dbHealthy;
+    const status = isReady ? 'ready' : 'not_ready';
+    const httpStatusCode = isReady ? 200 : 503;
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    return res.status(httpStatusCode).json({
+      status,
+      ready: isReady,
+      timestamp: new Date().toISOString(),
+      durationMs: Date.now() - startTime,
+      checks: {
+        database: {
+          healthy: dbHealthy,
+          ...(dbError ? { error: dbError } : {}),
+          appliedMigrationsCount,
+        },
+      },
+    });
+  };
+
+  router.get('/health/ready', handleReadiness);
+  router.get('/ready', handleReadiness);
+
+  /**
    * GET /api/system/metrics
    * Exposes real-time in-memory metrics snapshot in JSON format (p50/p95/p99, ESI, SQL, Node.js)
    */

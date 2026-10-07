@@ -1,3 +1,8 @@
+import crypto from 'node:crypto';
+import type { ISyncRepository } from './repository.ts';
+import { defaultSyncRepository } from './repository.ts';
+import { logger } from '../utils/logger.ts';
+
 export interface SyncCoordinatorStats {
   activeWorkers: number;
   maxConcurrent: number;
@@ -5,6 +10,7 @@ export interface SyncCoordinatorStats {
   inFlightKeys: string[];
   totalProcessed: number;
   totalCoalesced: number;
+  instanceId: string;
 }
 
 export interface InternalQueueItem {
@@ -17,7 +23,23 @@ export interface InternalQueueItem {
   enqueuedAt: number;
 }
 
+export interface DistributedLeaseOptions {
+  ttlMs?: number;
+  heartbeatIntervalMs?: number;
+  waitTimeoutMs?: number;
+  pollIntervalMs?: number;
+}
+
+export class LeaseConflictError extends Error {
+  public statusCode = 409;
+  constructor(public scopeKey: string, message?: string) {
+    super(message || `Resource [${scopeKey}] is currently being synchronized by another instance`);
+    this.name = 'LeaseConflictError';
+  }
+}
+
 export class SyncCoordinator {
+  private instanceId: string;
   private maxConcurrent: number;
   private activeWorkers = 0;
   private queue: Array<InternalQueueItem> = [];
@@ -25,9 +47,108 @@ export class SyncCoordinator {
   private inFlightOrchestrations = new Map<string, Promise<unknown>>();
   private totalProcessed = 0;
   private totalCoalesced = 0;
+  private syncRepo: ISyncRepository | null;
 
-  constructor(maxConcurrent = 6) {
+  constructor(
+    maxConcurrent = 6,
+    options?: {
+      instanceId?: string;
+      syncRepo?: ISyncRepository | null;
+    }
+  ) {
     this.maxConcurrent = Math.max(1, maxConcurrent);
+    this.instanceId = options?.instanceId || process.env.APP_INSTANCE_ID || `inst_${crypto.randomUUID().slice(0, 12)}`;
+    this.syncRepo = options?.syncRepo !== undefined ? options.syncRepo : defaultSyncRepository;
+  }
+
+  public getInstanceId(): string {
+    return this.instanceId;
+  }
+
+  public setSyncRepository(repo: ISyncRepository | null): void {
+    this.syncRepo = repo;
+  }
+
+  public getSyncRepository(): ISyncRepository | null {
+    return this.syncRepo;
+  }
+
+  /**
+   * Executes an asynchronous task protected by a distributed lease across application instances.
+   * Ensures single-worker execution, periodic heartbeats, and guaranteed release in a finally block.
+   */
+  public async withDistributedLease<T>(
+    scopeKey: string,
+    fn: (signal: AbortSignal) => Promise<T>,
+    options?: DistributedLeaseOptions & { signal?: AbortSignal }
+  ): Promise<T> {
+    if (!this.syncRepo || !scopeKey) {
+      const abortController = new AbortController();
+      if (options?.signal) {
+        options.signal.addEventListener('abort', () => abortController.abort(options.signal?.reason));
+      }
+      return fn(abortController.signal);
+    }
+
+    const ttlMs = options?.ttlMs ?? 60000; // 60s default TTL
+    const heartbeatIntervalMs = options?.heartbeatIntervalMs ?? 15000; // 15s default heartbeat
+    const waitTimeoutMs = options?.waitTimeoutMs ?? 30000; // 30s wait on conflict
+    const pollIntervalMs = options?.pollIntervalMs ?? 100; // 100ms polling
+
+    const startTime = Date.now();
+    let acquired = false;
+
+    // 1. Acquire lease or poll until available or timeout
+    while (!acquired) {
+      if (options?.signal?.aborted) {
+        throw options.signal.reason || new Error('Aborted while waiting for sync lease');
+      }
+
+      acquired = await this.syncRepo.tryAcquireLeaseAsync(scopeKey, this.instanceId, ttlMs);
+      if (acquired) break;
+
+      if (Date.now() - startTime >= waitTimeoutMs) {
+        throw new LeaseConflictError(scopeKey, `Timed out waiting to acquire sync lease for [${scopeKey}] after ${waitTimeoutMs}ms`);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+
+    // 2. Setup periodic heartbeat during task execution
+    let heartbeatTimer: NodeJS.Timeout | null = null;
+    heartbeatTimer = setInterval(async () => {
+      try {
+        if (this.syncRepo) {
+          const renewed = await this.syncRepo.renewLeaseAsync(scopeKey, this.instanceId, ttlMs);
+          if (!renewed) {
+            logger.warn(`[SyncCoordinator] Failed to renew lease for [${scopeKey}] on instance ${this.instanceId}`);
+          }
+        }
+      } catch (err) {
+        logger.warn(`[SyncCoordinator] Heartbeat error for lease [${scopeKey}]: ${(err as Error).message}`);
+      }
+    }, heartbeatIntervalMs);
+    heartbeatTimer.unref?.();
+
+    // 3. Execute payload with abort signal support
+    const abortController = new AbortController();
+    if (options?.signal) {
+      options.signal.addEventListener('abort', () => abortController.abort(options.signal?.reason));
+    }
+
+    try {
+      return await fn(abortController.signal);
+    } finally {
+      // 4. Guaranteed lease release and heartbeat cleanup
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+      }
+      try {
+        await this.syncRepo.releaseLeaseAsync(scopeKey, this.instanceId);
+      } catch (releaseErr) {
+        logger.error(`[SyncCoordinator] Failed to release lease for [${scopeKey}]: ${(releaseErr as Error).message}`);
+      }
+    }
   }
 
   /**
@@ -57,27 +178,57 @@ export class SyncCoordinator {
 
   /**
    * Enqueues or joins an in-flight asynchronous leaf task in the bounded worker pool.
-   * If a task with the same deduplication key is already running or enqueued,
+   * If a task with the same deduplication key is already running or enqueued on this instance,
    * new callers coalesce and await the identical in-flight promise.
    */
   public enqueue<T>(
     key: string,
     taskFn: (signal: AbortSignal) => Promise<T>,
-    options?: { timeoutMs?: number }
+    options?: {
+      timeoutMs?: number;
+      useDistributedLease?: boolean;
+      leaseTtlMs?: number;
+      heartbeatIntervalMs?: number;
+      waitTimeoutMs?: number;
+    }
   ): Promise<T> {
-    // 1. Request Coalescing: If task is already in-flight, return existing Promise
+    // 1. Request Coalescing (Local Instance): If task is already in-flight, return existing Promise
     if (key && this.inFlightTasks.has(key)) {
       this.totalCoalesced++;
       return this.inFlightTasks.get(key) as Promise<T>;
     }
 
     const timeoutMs = options?.timeoutMs || 45000; // 45s execution safety timeout against hung HTTP sockets
+    const useDistributedLease = options?.useDistributedLease !== false && this.syncRepo !== null && Boolean(key);
+
+    const wrappedFn: (signal: AbortSignal) => Promise<T> = useDistributedLease
+      ? (signal: AbortSignal) =>
+          this.withDistributedLease(
+            key,
+            (leaseSignal) => {
+              // Combine signals
+              if (signal.aborted) {
+                return Promise.reject(signal.reason || new Error('Task aborted'));
+              }
+              const combinedController = new AbortController();
+              signal.addEventListener('abort', () => combinedController.abort(signal.reason));
+              leaseSignal.addEventListener('abort', () => combinedController.abort(leaseSignal.reason));
+              return taskFn(combinedController.signal);
+            },
+            {
+              ttlMs: options?.leaseTtlMs,
+              heartbeatIntervalMs: options?.heartbeatIntervalMs,
+              waitTimeoutMs: options?.waitTimeoutMs ?? timeoutMs,
+              signal,
+            }
+          )
+      : taskFn;
 
     const taskPromise = new Promise<T>((resolve, reject) => {
       const item: InternalQueueItem = {
         id: `${key || 'anon'}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         key,
-        fn: taskFn as (signal: AbortSignal) => Promise<unknown>,
+        fn: wrappedFn as (signal: AbortSignal) => Promise<unknown>,
         resolve: (val) => resolve(val as T),
         reject,
         timeoutMs,
@@ -177,6 +328,7 @@ export class SyncCoordinator {
       ],
       totalProcessed: this.totalProcessed,
       totalCoalesced: this.totalCoalesced,
+      instanceId: this.instanceId,
     };
   }
 
@@ -201,4 +353,3 @@ export class SyncCoordinator {
 }
 
 export const defaultSyncCoordinator = new SyncCoordinator(6);
-

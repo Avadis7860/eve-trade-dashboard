@@ -1,6 +1,6 @@
 import type { SchemaMigration } from './types.ts';
 
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 10;
 
 export const INITIAL_MIGRATION_SQL = `
 -- Hubs Table
@@ -68,12 +68,19 @@ CREATE TABLE IF NOT EXISTS journal_entries (
   context_id BIGINT,
   context_id_type TEXT,
   observed_at BIGINT NOT NULL,
+  is_corporation_wallet BOOLEAN NOT NULL DEFAULT FALSE,
+  corporation_id BIGINT,
+  division INTEGER,
+  observed_by_character_ids TEXT,
+  canonical_id TEXT UNIQUE,
   PRIMARY KEY (character_id, journal_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_jn_char_date ON journal_entries (character_id, date);
 CREATE INDEX IF NOT EXISTS idx_jn_ref ON journal_entries (ref_type);
 CREATE INDEX IF NOT EXISTS idx_jn_context ON journal_entries (context_id);
+CREATE INDEX IF NOT EXISTS idx_jn_canonical_id ON journal_entries (canonical_id);
+CREATE INDEX IF NOT EXISTS idx_jn_corp_div ON journal_entries (corporation_id, division);
 
 -- Market Order Snapshots Table
 CREATE TABLE IF NOT EXISTS order_snapshots (
@@ -312,6 +319,39 @@ export const MIGRATIONS: SchemaMigration[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_session_chars_session ON session_characters (session_id);
       CREATE INDEX IF NOT EXISTS idx_session_chars_char ON session_characters (character_id);
+    `,
+  },
+  {
+    version: 9,
+    name: '009_esi_sync_leases',
+    upSql: `
+      CREATE TABLE IF NOT EXISTS esi_sync_leases (
+        scope_key TEXT PRIMARY KEY,
+        instance_id TEXT NOT NULL,
+        acquired_at BIGINT NOT NULL,
+        expires_at BIGINT NOT NULL,
+        heartbeat_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_leases_expires ON esi_sync_leases (expires_at);
+    `,
+  },
+  {
+    version: 10,
+    name: '010_corporation_journal_deduplication',
+    upSql: `
+      ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS is_corporation_wallet BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS corporation_id BIGINT;
+      ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS division INTEGER;
+      ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS observed_by_character_ids TEXT;
+      ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS canonical_id TEXT;
+
+      UPDATE journal_entries SET canonical_id = CASE
+        WHEN is_corporation_wallet AND corporation_id IS NOT NULL THEN 'corp:' || corporation_id::text || ':' || COALESCE(division, 1)::text || ':' || journal_id::text
+        ELSE 'char:' || character_id::text || ':' || journal_id::text
+      END WHERE canonical_id IS NULL;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_jn_canonical_id ON journal_entries (canonical_id);
+      CREATE INDEX IF NOT EXISTS idx_jn_corp_div ON journal_entries (corporation_id, division);
     `,
   },
 ];

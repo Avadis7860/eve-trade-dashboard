@@ -210,4 +210,45 @@ describe('Phase R08 — Observability, Metrics & Production Diagnostics', () => 
       expect(sanitized).toContain('[REDACTED]');
     });
   });
+
+  describe('6. Production Liveness & Readiness Probes (Phase G04)', () => {
+    it('GET /health/live returns 200 with status live and uptime', async () => {
+      const app = express();
+      app.use('/health', createSystemRouter(collector, mockDbAdapter, mockCoordinator, mockRateLimiter, mockBackupService));
+
+      const res = await request(app).get('/health/live');
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('live');
+      expect(res.body.uptimeSeconds).toBeGreaterThanOrEqual(0);
+      expect(res.body.pid).toBeDefined();
+    });
+
+    it('GET /health/ready returns 200 when database connectivity and migrations are nominal', async () => {
+      const app = express();
+      app.use('/health', createSystemRouter(collector, mockDbAdapter, mockCoordinator, mockRateLimiter, mockBackupService));
+
+      const res = await request(app).get('/health/ready');
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('ready');
+      expect(res.body.ready).toBe(true);
+      expect(res.body.checks.database.healthy).toBe(true);
+      expect(res.body.checks.database.appliedMigrationsCount).toBe(3);
+    });
+
+    it('GET /health/ready returns 503 Service Unavailable when database connection is down', async () => {
+      const brokenDbAdapter: IDatabaseAdapter = {
+        ...mockDbAdapter,
+        isHealthy: async () => false,
+      };
+
+      const app = express();
+      app.use('/health', createSystemRouter(collector, brokenDbAdapter, mockCoordinator, mockRateLimiter, mockBackupService));
+
+      const res = await request(app).get('/health/ready');
+      expect(res.status).toBe(503);
+      expect(res.body.status).toBe('not_ready');
+      expect(res.body.ready).toBe(false);
+      expect(res.body.checks.database.healthy).toBe(false);
+    });
+  });
 });

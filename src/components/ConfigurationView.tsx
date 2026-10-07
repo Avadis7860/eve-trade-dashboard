@@ -32,6 +32,7 @@ interface ConfigurationViewProps {
   activeCharacterId?: number;
   onSwitchCharacter: (characterId: number) => void;
   onLogout?: () => void;
+  onLinkCharacter?: () => void;
   hubsList: HubDefinition[];
   hubsMappings: HubLocationMapping[];
   onOpenAddHubModal: () => void;
@@ -51,6 +52,7 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
   linkedCharacters,
   activeCharacterId,
   onSwitchCharacter,
+  onLinkCharacter,
   hubsList,
   hubsMappings,
   onOpenAddHubModal,
@@ -76,6 +78,37 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
   const [importFileName, setImportFileName] = useState('');
   const [keychainFeedback, setKeychainFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [isKeychainLoading, setIsKeychainLoading] = useState(false);
+  const [isLinking, setIsLinking] = useState(false);
+
+  const handleLinkClick = async () => {
+    if (onLinkCharacter) {
+      onLinkCharacter();
+      return;
+    }
+    if (isLinking) return;
+    setIsLinking(true);
+    try {
+      const data = await fetchJson<{ url: string }>('/api/auth/login?format=json');
+      if (data?.url) {
+        const width = 640;
+        const height = 760;
+        const left = window.screenX + Math.max(0, (window.outerWidth - width) / 2);
+        const top = window.screenY + Math.max(0, (window.outerHeight - height) / 2);
+        const popup = window.open(
+          data.url,
+          'eve_sso_popup',
+          `width=${width},height=${height},left=${left},top=${top},status=no,toolbar=no,menubar=no`
+        );
+        if (!popup || popup.closed || typeof popup.closed === 'undefined') {
+          window.open(data.url, '_blank', 'noopener,noreferrer');
+        }
+      }
+    } catch (err) {
+      console.error('Failed to start EVE login:', err);
+    } finally {
+      setIsLinking(false);
+    }
+  };
 
   const handleExportFleet = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -249,13 +282,15 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
                   Gérez vos comptes et personnages liés. Les jetons OAuth et tokens d&apos;accès restent côté serveur.
                 </p>
               </div>
-              <a
-                href="/api/auth/login"
-                className="px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow"
+              <button
+                type="button"
+                onClick={handleLinkClick}
+                disabled={isLinking}
+                className="px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow"
               >
                 <UserPlus className="w-3.5 h-3.5" />
-                Lier un Autre Personnage
-              </a>
+                {isLinking ? 'Connexion en cours...' : 'Lier un Autre Personnage'}
+              </button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-1">

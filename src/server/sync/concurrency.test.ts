@@ -491,4 +491,199 @@ describe('Phase R05 — Bounded Concurrency, Request Coalescing & Rate Limiting 
       expect(pool.getStats().activeWorkers).toBe(0);
     });
   });
+
+  describe('7. Phase G03 — Distributed ESI Sync Leases, Multi-Instance Coordination & Crash Recovery', () => {
+    it('acquires, renews, checks expiration and deterministically releases distributed leases', async () => {
+      const repo = new InMemorySyncRepository();
+      const scopeKey = 'sync:1001:wallet_transactions';
+      const instanceA = 'inst_node_alpha';
+      const instanceB = 'inst_node_beta';
+
+      // 1. Instance A acquires lease with 200ms TTL
+      const acquiredA = await repo.tryAcquireLeaseAsync(scopeKey, instanceA, 200);
+      expect(acquiredA).toBe(true);
+
+      const leaseA = await repo.getLeaseAsync(scopeKey);
+      expect(leaseA).not.toBeNull();
+      expect(leaseA?.instanceId).toBe(instanceA);
+      expect(leaseA?.scopeKey).toBe(scopeKey);
+
+      // 2. Instance B attempts to acquire active lease -> REJECTED (false)
+      const acquiredB = await repo.tryAcquireLeaseAsync(scopeKey, instanceB, 200);
+      expect(acquiredB).toBe(false);
+
+      // 3. Instance A renews lease for another 300ms
+      const renewedA = await repo.renewLeaseAsync(scopeKey, instanceA, 300);
+      expect(renewedA).toBe(true);
+
+      // Instance B cannot renew Instance A's lease
+      const renewedB = await repo.renewLeaseAsync(scopeKey, instanceB, 300);
+      expect(renewedB).toBe(false);
+
+      // 4. Instance A releases lease
+      await repo.releaseLeaseAsync(scopeKey, instanceA);
+      const leaseAfterRelease = await repo.getLeaseAsync(scopeKey);
+      expect(leaseAfterRelease).toBeNull();
+
+      // 5. Instance B can now acquire the released lease immediately
+      const acquiredBAfterRelease = await repo.tryAcquireLeaseAsync(scopeKey, instanceB, 200);
+      expect(acquiredBAfterRelease).toBe(true);
+      await repo.releaseLeaseAsync(scopeKey, instanceB);
+    });
+
+    it('coordinates 10 concurrent workers across separate instances: exactly 1 executes crawl, 9 coalesce/wait without collisions', async () => {
+      const sharedSyncRepo = new InMemorySyncRepository();
+      let crawlExecutionCount = 0;
+
+      // Mock ESI endpoint for wallet transactions
+      vi.spyOn(esiClient, 'get').mockImplementation(async (path: string) => {
+        if (path.includes('/wallet/transactions/')) {
+          crawlExecutionCount++;
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          return {
+            data: [
+              {
+                transaction_id: 7701,
+                date: '2026-10-01T12:00:00Z',
+                type_id: 34,
+                quantity: 100,
+                unit_price: 5.0,
+                is_buy: true,
+                is_personal: true,
+                journal_ref_id: 1,
+                location_id: 60003760,
+                client_id: 1,
+              },
+            ],
+            meta: { status: 200, fromCache: false, fetchedAt: Date.now() },
+          } as never;
+        }
+        return { data: [] as never, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } };
+      });
+
+      // Create 10 distinct coordinators representing 10 distributed application instances
+      const instances = Array.from({ length: 10 }, (_, i) => {
+        const coord = new SyncCoordinator(4, {
+          instanceId: `inst_${i}`,
+          syncRepo: sharedSyncRepo,
+        });
+        const svc = new SyncService(
+          esiClient,
+          ledgerRepo,
+          ordersRepo,
+          sharedSyncRepo,
+          universeService,
+          assetsRepo,
+          coord
+        );
+        return { coord, svc };
+      });
+
+      // Launch 10 simultaneous sync requests on the same character across all 10 instances
+      const syncPromises = instances.map(({ svc }) =>
+        svc.syncWalletTransactions(2001, 'dummy-token-g03')
+      );
+
+      const results = await Promise.all(syncPromises);
+
+      // All 10 requests must succeed with valid COMPLETE sync status
+      expect(results).toHaveLength(10);
+      for (const res of results) {
+        expect(res.status).toBe('COMPLETE');
+        expect(res.characterId).toBe(2001);
+      }
+
+      // Exactly 1 crawl was executed while lease was held! (No duplicate ESI calls)
+      expect(crawlExecutionCount).toBe(1);
+
+      // Leases must be strictly cleaned up after completion
+      const activeLeases = await sharedSyncRepo.getActiveLeasesAsync();
+      expect(activeLeases).toHaveLength(0);
+    });
+
+    it('recovers from node crash / unreleased lease via TTL expiration (Self-Healing)', async () => {
+      const sharedSyncRepo = new InMemorySyncRepository();
+      const scopeKey = 'sync:3001:wallet_transactions';
+
+      // 1. Node A acquires lease with short TTL (40ms) and simulates crash (no releaseLease called)
+      await sharedSyncRepo.tryAcquireLeaseAsync(scopeKey, 'crashed_instance_node', 40);
+
+      const activeLease = await sharedSyncRepo.getLeaseAsync(scopeKey);
+      expect(activeLease).not.toBeNull();
+      expect(activeLease?.instanceId).toBe('crashed_instance_node');
+
+      // 2. Node B attempts immediate acquisition before TTL expiry -> Fails
+      const immediateAcquireNodeB = await sharedSyncRepo.tryAcquireLeaseAsync(scopeKey, 'surviving_instance_node', 100);
+      expect(immediateAcquireNodeB).toBe(false);
+
+      // 3. Wait 50ms for the lease to expire (simulating TTL lapse on dead node)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // 4. Node B retries acquisition -> SUCCEEDS (Self-healing takeover)
+      const takeoverNodeB = await sharedSyncRepo.tryAcquireLeaseAsync(scopeKey, 'surviving_instance_node', 100);
+      expect(takeoverNodeB).toBe(true);
+
+      const newLease = await sharedSyncRepo.getLeaseAsync(scopeKey);
+      expect(newLease?.instanceId).toBe('surviving_instance_node');
+
+      await sharedSyncRepo.releaseLeaseAsync(scopeKey, 'surviving_instance_node');
+    });
+
+    it('maintains heartbeat renewal on long-running crawl preventing premature lease loss', async () => {
+      const sharedSyncRepo = new InMemorySyncRepository();
+      const coord = new SyncCoordinator(2, {
+        instanceId: 'long_worker_instance',
+        syncRepo: sharedSyncRepo,
+      });
+
+      let heartbeatRenewCount = 0;
+      const originalRenew = sharedSyncRepo.renewLeaseAsync.bind(sharedSyncRepo);
+      vi.spyOn(sharedSyncRepo, 'renewLeaseAsync').mockImplementation(async (key, id, ttl) => {
+        heartbeatRenewCount++;
+        return originalRenew(key, id, ttl);
+      });
+
+      // Execute task with 80ms duration, 100ms TTL, and 20ms heartbeat interval
+      const result = await coord.withDistributedLease(
+        'sync:4001:long_crawl',
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 80));
+          return 'completed_safely';
+        },
+        {
+          ttlMs: 100,
+          heartbeatIntervalMs: 20,
+        }
+      );
+
+      expect(result).toBe('completed_safely');
+      // Heartbeat should have fired at least 3 times during the 80ms run
+      expect(heartbeatRenewCount).toBeGreaterThanOrEqual(3);
+
+      // Lease was cleanly released in finally block
+      const lease = await sharedSyncRepo.getLeaseAsync('sync:4001:long_crawl');
+      expect(lease).toBeNull();
+    });
+
+    it('throws LeaseConflictError when waitTimeoutMs expires while another instance holds the lock', async () => {
+      const sharedSyncRepo = new InMemorySyncRepository();
+      const coord = new SyncCoordinator(2, {
+        instanceId: 'blocked_instance',
+        syncRepo: sharedSyncRepo,
+      });
+
+      // Another instance holds the lease for 1000ms
+      await sharedSyncRepo.tryAcquireLeaseAsync('sync:5001:locked_resource', 'competing_instance', 1000);
+
+      // Blocked instance waits with waitTimeoutMs: 30ms
+      await expect(
+        coord.withDistributedLease(
+          'sync:5001:locked_resource',
+          async () => 'should_not_run',
+          { waitTimeoutMs: 30, pollIntervalMs: 10 }
+        )
+      ).rejects.toThrow('Timed out waiting to acquire sync lease');
+    });
+  });
 });
+

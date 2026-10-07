@@ -1,11 +1,17 @@
 import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import App from './App.tsx';
 
 describe('App Component (Phase 06 Integrated Dashboard)', () => {
+  const originalFetch = global.fetch;
+
   beforeEach(() => {
     vi.resetAllMocks();
     localStorage.clear();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
   });
 
   it('renders unauthenticated state with SSO login button and Phase 06 badge', async () => {
@@ -57,10 +63,11 @@ describe('App Component (Phase 06 Integrated Dashboard)', () => {
     render(<App />);
 
     expect(screen.getAllByText(/EVE Trade Dashboard/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Phase 06 — Dashboard Intégré & Ergonomie/i)).toBeInTheDocument();
+    expect(screen.getByText(/Phase F11 — Multi-Character Fleet & Sessions Persistantes/i)).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.getByText(/Se connecter avec EVE Online \(SSO\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/Importer un trousseau de flotte \(\.enc\)/i)).toBeInTheDocument();
     });
   });
 
@@ -916,5 +923,242 @@ describe('App Component (Phase 06 Integrated Dashboard)', () => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
+  });
+
+  it('renders landing page with saved fleet detection and resumes session on 1 click', async () => {
+    let resumed = false;
+    global.fetch = vi.fn((url: string | URL | Request, _init?: RequestInit) => {
+      const urlStr = url.toString();
+      const pathname = new URL(urlStr, 'http://localhost').pathname;
+
+      if (pathname === '/api/health') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ status: 'ok', service: 'eve-trade-dashboard', timestamp: new Date().toISOString(), version: '0.1.0' }),
+        } as Response);
+      }
+      if (pathname === '/api/auth/status') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ configured: true }),
+        } as Response);
+      }
+      if (pathname === '/api/esi/status') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            rateLimit: { errorLimitRemain: 100, errorLimitResetSeconds: 0, isSuspended: false, suspendedUntil: 0, activeRequests: 0 },
+            cacheSize: 0,
+          }),
+        } as Response);
+      }
+      if (pathname === '/api/auth/session') {
+        if (!resumed) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              authenticated: false,
+              savedSessions: [
+                {
+                  sessionId: 'persisted-session-123',
+                  activeCharacterId: 99911,
+                  activeCharacterName: 'Fleet Commander 11',
+                  portraitUrl: 'https://images.evetech.net/characters/99911/portrait?size=128',
+                  charactersCount: 11,
+                  characterNames: ['Fleet Commander 11', 'Trader 1', 'Trader 2', 'Trader 3'],
+                  createdAt: Date.now() - 3600000,
+                },
+              ],
+            }),
+          } as Response);
+        } else {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              authenticated: true,
+              sessionId: 'persisted-session-123',
+              character: {
+                characterId: 99911,
+                characterName: 'Fleet Commander 11',
+                portraitUrl: 'https://images.evetech.net/characters/99911/portrait?size=128',
+                scopes: ['esi-wallet.read_character_wallet.v1'],
+                expiresAt: Date.now() + 1200000,
+              },
+            }),
+          } as Response);
+        }
+      }
+      if (pathname === '/api/auth/resume') {
+        resumed = true;
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            success: true,
+            authenticated: true,
+            sessionId: 'persisted-session-123',
+            character: {
+              characterId: 99911,
+              characterName: 'Fleet Commander 11',
+              portraitUrl: 'https://images.evetech.net/characters/99911/portrait?size=128',
+              scopes: ['esi-wallet.read_character_wallet.v1'],
+              expiresAt: Date.now() + 1200000,
+            },
+          }),
+        } as Response);
+      }
+      if (pathname.startsWith('/api/ledger') || pathname.startsWith('/api/orders') || pathname.startsWith('/api/roi') || pathname.startsWith('/api/hubs') || pathname.startsWith('/api/capital')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ items: [], total: 0, totalPages: 1, summary: {}, hubs: [], mappings: [] }),
+        } as Response);
+      }
+
+      return Promise.reject(new Error(`Unknown URL: ${pathname}`));
+    });
+
+    render(<App />);
+
+    // Check that saved fleet detection is rendered
+    await waitFor(() => {
+      expect(screen.getByText(/Flotte sauvegardée détectée/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/Fleet Commander 11/i).length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByText(/SESSION PERSISTANTE PRÊTE/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Reprendre ma flotte/i })).toBeInTheDocument();
+    });
+
+    // Click "Reprendre ma flotte"
+    const resumeBtn = screen.getByRole('button', { name: /Reprendre ma flotte/i });
+    await act(async () => {
+      fireEvent.click(resumeBtn);
+    });
+
+    // Verify resumption into authenticated cockpit
+    await waitFor(() => {
+      expect(resumed).toBe(true);
+    });
+  });
+
+  it('opens fleet keychain import modal from landing page and restores fleet', async () => {
+    let importCalled = false;
+    const originalFileReader = global.FileReader;
+    class MockFileReader {
+      onload: ((e: { target: { result: string } }) => void) | null = null;
+      readAsText() {
+        setTimeout(() => {
+          if (this.onload) {
+            this.onload({ target: { result: 'mock_encrypted_content' } });
+          }
+        }, 10);
+      }
+    }
+    // @ts-expect-error test mock
+    global.FileReader = MockFileReader;
+
+    try {
+      global.fetch = vi.fn((url: string | URL | Request, _init?: RequestInit) => {
+        const urlStr = url.toString();
+        const pathname = new URL(urlStr, 'http://localhost').pathname;
+
+        if (pathname === '/api/health') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ status: 'ok', service: 'eve-trade-dashboard', timestamp: new Date().toISOString(), version: '0.1.0' }),
+          } as Response);
+        }
+        if (pathname === '/api/auth/status') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ configured: true }),
+          } as Response);
+        }
+        if (pathname === '/api/esi/status') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              rateLimit: { errorLimitRemain: 100, errorLimitResetSeconds: 0, isSuspended: false, suspendedUntil: 0, activeRequests: 0 },
+              cacheSize: 0,
+            }),
+          } as Response);
+        }
+        if (pathname === '/api/auth/session') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              authenticated: importCalled,
+              character: importCalled ? { characterId: 88801, characterName: 'Restored Leader', portraitUrl: '', scopes: [], expiresAt: Date.now() + 1200000 } : undefined,
+            }),
+          } as Response);
+        }
+        if (pathname === '/api/auth/fleet/import') {
+          importCalled = true;
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              success: true,
+              sessionId: 'imported-sess-777',
+              restoredCharacters: 11,
+            }),
+          } as Response);
+        }
+        if (pathname.startsWith('/api/ledger') || pathname.startsWith('/api/orders') || pathname.startsWith('/api/roi') || pathname.startsWith('/api/hubs') || pathname.startsWith('/api/capital')) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ items: [], total: 0, totalPages: 1, summary: {}, hubs: [], mappings: [] }),
+          } as Response);
+        }
+
+        return Promise.reject(new Error(`Unknown URL: ${pathname}`));
+      });
+
+      render(<App />);
+
+      // Click "Importer un trousseau de flotte (.enc)"
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Importer un trousseau de flotte \(\.enc\)/i })).toBeInTheDocument();
+      });
+
+      const importModalBtn = screen.getByRole('button', { name: /Importer un trousseau de flotte \(\.enc\)/i });
+      await act(async () => {
+        fireEvent.click(importModalBtn);
+      });
+
+      // Check modal opened
+      expect(screen.getByText(/Restaurer un trousseau de flotte \(\.enc\)/i)).toBeInTheDocument();
+      expect(screen.getByPlaceholderText(/Mot de passe utilisé lors de l'export/i)).toBeInTheDocument();
+
+      // Fill password and trigger file input
+      const passwordInput = screen.getByPlaceholderText(/Mot de passe utilisé lors de l'export/i);
+      await act(async () => {
+        fireEvent.change(passwordInput, { target: { value: 'SecretFleet2026' } });
+      });
+
+      // Simulate file selection
+      const file = new File(['mock_encrypted_content'], 'eve-fleet-backup.enc', { type: 'application/octet-stream' });
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      expect(fileInput).not.toBeNull();
+
+      // Trigger file change
+      await act(async () => {
+        fireEvent.change(fileInput, { target: { files: [file] } });
+      });
+
+      // Wait for file read callback
+      await waitFor(() => {
+        const restoreFleetBtn = screen.getByRole('button', { name: /Restaurer la flotte/i });
+        expect(restoreFleetBtn).not.toBeDisabled();
+      });
+
+      // Click "Restaurer la flotte"
+      const restoreFleetBtn = screen.getByRole('button', { name: /Restaurer la flotte/i });
+      await act(async () => {
+        fireEvent.click(restoreFleetBtn);
+      });
+
+      await waitFor(() => {
+        expect(importCalled).toBe(true);
+      });
+    } finally {
+      global.FileReader = originalFileReader;
+    }
   });
 });

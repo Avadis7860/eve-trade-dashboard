@@ -38,9 +38,9 @@ Un seul chantier actif, une phase, une branche, un PR. Jamais sur main. Petits l
 | F11 | Persistance des sessions multi-personnages et résilience iframe Google AI Studio | F10 | Terminé |
 | H03 | Hardening UX, performance et release finale | 00–12, F01–F11 | Terminé |
 | G01 | Sécurité de Production & Intégrité Authentification | Post F01–F11 | Terminé |
-| G02 | Persistance PostgreSQL Unique & Bootstrap Asynchrone | G01 | Planifiée |
-| G03 | Concurrence Distribuée & Synchronisation ESI | G02 | Planifiée |
-| G04 | Cohérence Opérationnelle, Backup & Observabilité | G02, G03 | Planifiée |
+| G02 | Persistance PostgreSQL Unique & Bootstrap Asynchrone | G01 | Terminé |
+| G03 | Concurrence Distribuée & Synchronisation ESI | G02 | Terminé |
+| G04 | Cohérence Opérationnelle, Backup & Observabilité | G02, G03 | Terminé |
 | G05 | Qualification CI Réelle, Disaster Recovery & Release Ready | G01–G04 | Planifiée |
 
 Voir également la roadmap de fiabilisation officielle post-F11 [`docs/ROADMAP-OFFICIELLE-FIABILISATION-POST-F11.md`](ROADMAP-OFFICIELLE-FIABILISATION-POST-F11.md), le rapport complet d'audit post-Phase 12 [`docs/AUDIT-POST-PHASE-12.md`](AUDIT-POST-PHASE-12.md), le rapport d'investigation financière [`docs/AUDIT-TASK-55-FINANCIAL-RECONCILIATION.md`](AUDIT-TASK-55-FINANCIAL-RECONCILIATION.md) et la feuille de route détaillée [`docs/MASTERPLAN-ASSURANCE-FIABILITE.md`](MASTERPLAN-ASSURANCE-FIABILITE.md).

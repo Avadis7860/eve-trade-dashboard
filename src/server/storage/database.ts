@@ -143,7 +143,7 @@ export class DurableFileDatabaseAdapter implements IDatabaseAdapter {
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
-      const tmpPath = `${this.storagePath}.tmp`;
+      const tmpPath = `${this.storagePath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
       const json = JSON.stringify(this.state);
       fs.writeFileSync(tmpPath, json, 'utf8');
       fs.renameSync(tmpPath, this.storagePath);
@@ -357,6 +357,7 @@ export class PostgresDatabaseAdapter implements IDatabaseAdapter {
     if (trimmed.includes('explicit_cost_allocations') || trimmed.includes('opening_balances')) return 'fifo_reconciliation';
     if (trimmed.includes('order_snapshots') || trimmed.includes('restock_items')) return 'orders_query';
     if (trimmed.includes('character_assets')) return 'assets_query';
+    if (trimmed.includes('esi_sync_leases')) return 'lease_query';
     if (trimmed.includes('sync_states')) return 'sync_query';
     if (trimmed.includes('schema_migrations')) return 'schema_migration';
     return trimmed.split(/\s+/)[0] || 'generic_query';

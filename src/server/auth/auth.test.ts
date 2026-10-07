@@ -559,6 +559,111 @@ describe('Phase F11 — Qualifications Réelles & Critères de Sortie', () => {
     expect(restoredSession?.characters[9002].characterName).toBe('Fleet Scout Beta');
   });
 
+  describe('Fleet Persistence & Landing Page Recovery Endpoints', () => {
+    it('TEST-F11-06: GET /api/auth/saved-sessions lists available saved fleets with character counts', async () => {
+      const fleetSession = store.createSession({
+        characterId: 77701,
+        characterName: 'Fleet Admiral',
+        scopes: ['publicData'],
+        accessToken: 'access_admiral',
+        refreshToken: 'refresh_admiral',
+        expiresAt: Date.now() + 1200000,
+      });
+      store.addOrUpdateCharacter(fleetSession.sessionId, {
+        characterId: 77702,
+        characterName: 'Fleet Logi Alt',
+        scopes: ['publicData'],
+        accessToken: 'access_logi',
+        refreshToken: 'refresh_logi',
+        expiresAt: Date.now() + 1200000,
+      }, false);
+
+      const res = await request(app).get('/api/auth/saved-sessions');
+      expect(res.status).toBe(200);
+      expect(res.body.savedSessions).toBeInstanceOf(Array);
+      expect(res.body.savedSessions.length).toBeGreaterThanOrEqual(1);
+
+      const found = res.body.savedSessions.find((s: { sessionId: string }) => s.sessionId === fleetSession.sessionId);
+      expect(found).toBeDefined();
+      expect(found.activeCharacterName).toBe('Fleet Admiral');
+      expect(found.charactersCount).toBe(2);
+      expect(found.characterNames).toContain('Fleet Admiral');
+      expect(found.characterNames).toContain('Fleet Logi Alt');
+      expect(found.portraitUrl).toContain('77701');
+    });
+
+    it('TEST-F11-07: POST /api/auth/resume restores full multi-character fleet in 1 click and sets cookie', async () => {
+      const fleetSession = store.createSession({
+        characterId: 88801,
+        characterName: 'Hauler Prime',
+        scopes: ['publicData'],
+        accessToken: 'access_hauler',
+        refreshToken: 'refresh_hauler',
+        expiresAt: Date.now() + 1200000,
+      });
+
+      // Resume with explicit sessionId
+      const res = await request(app)
+        .post('/api/auth/resume')
+        .send({ sessionId: fleetSession.sessionId });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.authenticated).toBe(true);
+      expect(res.body.sessionId).toBe(fleetSession.sessionId);
+      expect(res.body.character.characterName).toBe('Hauler Prime');
+
+      // Verify Set-Cookie header
+      const cookies = res.headers['set-cookie'];
+      expect(cookies).toBeDefined();
+      expect(cookies[0]).toContain('eve_session_id=');
+
+      // Resume without sessionId (auto-picks latest)
+      const resAuto = await request(app).post('/api/auth/resume').send({});
+      expect(resAuto.status).toBe(200);
+      expect(resAuto.body.authenticated).toBe(true);
+    });
+
+    it('TEST-F11-08: GET /api/auth/session returns savedSessions metadata when unauthenticated and supports auto_resume', async () => {
+      // 1. Unauthenticated request without auto_resume returns savedSessions
+      const unauthRes = await request(app).get('/api/auth/session');
+      expect(unauthRes.status).toBe(200);
+      expect(unauthRes.body.authenticated).toBe(false);
+      expect(unauthRes.body.savedSessions).toBeInstanceOf(Array);
+      expect(unauthRes.body.savedSessions.length).toBeGreaterThan(0);
+
+      // 2. Unauthenticated request with auto_resume=true directly restores the session
+      const autoRes = await request(app).get('/api/auth/session?auto_resume=true');
+      expect(autoRes.status).toBe(200);
+      expect(autoRes.body.authenticated).toBe(true);
+      expect(autoRes.body.sessionId).toBeDefined();
+    });
+
+    it('TEST-F11-09: GET /api/auth/login?session_id=<id> preserves fleet session ID for linking', async () => {
+      const fleetSession = store.createSession({
+        characterId: 99901,
+        characterName: 'Fleet Boss',
+        scopes: ['publicData'],
+        accessToken: 'access_boss',
+        refreshToken: 'refresh_boss',
+        expiresAt: Date.now() + 1200000,
+      });
+
+      const res = await request(app).get(`/api/auth/login?session_id=${fleetSession.sessionId}&format=json`);
+      expect(res.status).toBe(200);
+      expect(res.body.url).toBeDefined();
+
+      const url = new URL(res.body.url);
+      const state = url.searchParams.get('state');
+      expect(state).toBeDefined();
+
+      // Check that store has saved the state with the provided sessionId
+      const consumed = store.consumeOAuthState(state!);
+      expect(consumed).not.toBeNull();
+      expect(consumed?.sessionId).toBe(fleetSession.sessionId);
+    });
+  });
+
   describe('Phase G01 — Single-Flight OAuth & Production Route Hardening', () => {
     it('TEST-G01-04: single-flight OAuth deduplication: 50 concurrent requests trigger exactly ONE token refresh call to CCP', async () => {
       let callCount = 0;

@@ -19,7 +19,7 @@ test.describe('Level 5: Real Chromium Browser E2E Journeys (11 Critical Paths)',
 
     // 3. Verify landing elements: title, login button, phase indication
     await expect(page.locator('text=EVE Online Trade Dashboard').or(page.locator('text=EVE Trade Dashboard')).first()).toBeVisible();
-    await expect(page.locator('text=Se connecter avec EVE Online (SSO)')).toBeVisible();
+    await expect(page.locator('text=Se connecter avec EVE Online (SSO)').or(page.locator('text=Démarrer une nouvelle flotte'))).toBeVisible();
     await expect(page.locator('text=SYSTÈME PRÊT')).toBeVisible();
   });
 

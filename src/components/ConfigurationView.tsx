@@ -23,7 +23,7 @@ import {
   HealthStatus,
   EsiStatusResponse,
 } from '../App';
-import { fetchJson, useQueryClient } from '../utils/apiClient';
+import { fetchJson, useQueryClient, getStoredSessionId } from '../utils/apiClient';
 import { SystemRoadmapView } from './SystemRoadmapView';
 
 interface ConfigurationViewProps {
@@ -31,6 +31,10 @@ interface ConfigurationViewProps {
   linkedCharacters: CharacterSession[];
   activeCharacterId?: number;
   onSwitchCharacter: (characterId: number) => void;
+  onUnlinkCharacter?: (characterId: number) => void;
+  onRefreshToken?: (characterId?: number) => void;
+  isRefreshingTokens?: number | 'all' | null;
+  tokenFeedback?: { type: 'success' | 'error'; message: string } | null;
   onLogout?: () => void;
   onLinkCharacter?: () => void;
   hubsList: HubDefinition[];
@@ -52,6 +56,10 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
   linkedCharacters,
   activeCharacterId,
   onSwitchCharacter,
+  onUnlinkCharacter,
+  onRefreshToken,
+  isRefreshingTokens = null,
+  tokenFeedback = null,
   onLinkCharacter,
   hubsList,
   hubsMappings,
@@ -88,7 +96,12 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
     if (isLinking) return;
     setIsLinking(true);
     try {
-      const data = await fetchJson<{ url: string }>('/api/auth/login?format=json');
+      const activeSessionId = getStoredSessionId();
+      const params = new URLSearchParams({ format: 'json' });
+      if (activeSessionId) {
+        params.set('session_id', activeSessionId);
+      }
+      const data = await fetchJson<{ url: string }>(`/api/auth/login?${params.toString()}`);
       if (data?.url) {
         const width = 640;
         const height = 760;
@@ -279,23 +292,58 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
                   Écosystème Multi-Personnages EVE Online (SSO)
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Gérez vos comptes et personnages liés. Les jetons OAuth et tokens d&apos;accès restent côté serveur.
+                  Gérez vos comptes et personnages liés. Maintenez et actualisez vos jetons OAuth CCP à tout moment.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={handleLinkClick}
-                disabled={isLinking}
-                className="px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow"
-              >
-                <UserPlus className="w-3.5 h-3.5" />
-                {isLinking ? 'Connexion en cours...' : 'Lier un Autre Personnage'}
-              </button>
+              <div className="flex items-center gap-2">
+                {onRefreshToken && linkedCharacters.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => onRefreshToken()}
+                    disabled={isRefreshingTokens !== null}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-700"
+                    title="Actualiser les jetons de tous les personnages de la flotte auprès de CCP"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-amber-400 ${isRefreshingTokens === 'all' ? 'animate-spin' : ''}`} />
+                    {isRefreshingTokens === 'all' ? 'Actualisation...' : 'Actualiser Tous les Jetons'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleLinkClick}
+                  disabled={isLinking}
+                  className="px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  {isLinking ? 'Connexion en cours...' : 'Lier un Autre Personnage'}
+                </button>
+              </div>
             </div>
+
+            {tokenFeedback && (
+              <div
+                className={`p-3 rounded-lg border text-xs flex items-center gap-2 ${
+                  tokenFeedback.type === 'success'
+                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                    : 'border-rose-500/40 bg-rose-500/10 text-rose-300'
+                }`}
+              >
+                {tokenFeedback.type === 'success' ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                )}
+                <span>{tokenFeedback.message}</span>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-1">
               {linkedCharacters.map((char) => {
-                const isActive = char.characterId === (activeCharacterId || session?.characterId);
+                const isActive = char.isActive !== undefined ? Boolean(char.isActive) : Number(char.characterId) === Number(activeCharacterId || session?.characterId);
+                const isExpired = char.expiresAt ? Date.now() >= char.expiresAt : false;
+                const remainingMins = char.expiresAt ? Math.max(0, Math.round((char.expiresAt - Date.now()) / 60000)) : null;
+                const isCharRefreshing = isRefreshingTokens === char.characterId || isRefreshingTokens === 'all';
+
                 return (
                   <div
                     key={char.characterId}
@@ -318,26 +366,63 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
                         <div className="text-[10px] text-slate-500 font-mono">
                           ID: #{char.characterId}
                         </div>
-                        {isActive && (
-                          <span className="inline-block px-2 py-0.5 mt-1 rounded text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                            PERSONNAGE ACTIF
-                          </span>
-                        )}
+                        <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                          {isActive && (
+                            <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                              ACTIF
+                            </span>
+                          )}
+                          {char.expiresAt ? (
+                            <span
+                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono font-medium border ${
+                                !isExpired
+                                  ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                                  : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                              }`}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${!isExpired ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                              {!isExpired ? `SSO ~${remainingMins}m` : 'SSO expiré'}
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
 
-                    <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between">
+                    <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
                       <span className="text-[10px] text-slate-400 font-mono">
                         {char.scopes?.length || 0} scopes ESI
                       </span>
-                      {!isActive && (
-                        <button
-                          onClick={() => onSwitchCharacter(char.characterId)}
-                          className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors cursor-pointer"
-                        >
-                          Basculer vers ce perso
-                        </button>
-                      )}
+                      <div className="flex items-center gap-1.5">
+                        {onRefreshToken && (
+                          <button
+                            type="button"
+                            onClick={() => onRefreshToken(char.characterId)}
+                            disabled={isCharRefreshing}
+                            className="p-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-300 transition-colors cursor-pointer border border-slate-700 disabled:opacity-50"
+                            title="Actualiser le jeton auprès de CCP"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${isCharRefreshing ? 'animate-spin' : ''}`} />
+                          </button>
+                        )}
+                        {!isActive && (
+                          <button
+                            onClick={() => onSwitchCharacter(Number(char.characterId))}
+                            className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors cursor-pointer"
+                          >
+                            Basculer
+                          </button>
+                        )}
+                        {onUnlinkCharacter && linkedCharacters.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => onUnlinkCharacter(Number(char.characterId))}
+                            className="p-1.5 rounded hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+                            title="Délier ce personnage de la session"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );

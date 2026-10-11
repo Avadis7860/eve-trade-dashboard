@@ -398,6 +398,7 @@ export function useApiMutation<TData, TVariables = void>(
 }
 
 export const SESSION_STORAGE_KEY = 'eve_active_session_id';
+export const LOGOUT_INTENT_KEY = 'eve_logout_intent';
 
 export function getStoredSessionId(): string | null {
   try {
@@ -407,11 +408,38 @@ export function getStoredSessionId(): string | null {
   }
 }
 
+export function hasLogoutIntent(): boolean {
+  try {
+    if (typeof localStorage === 'undefined') return false;
+    return localStorage.getItem(LOGOUT_INTENT_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function setLogoutIntent(intent: boolean): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (intent) {
+      localStorage.setItem(LOGOUT_INTENT_KEY, 'true');
+    } else {
+      localStorage.removeItem(LOGOUT_INTENT_KEY);
+    }
+  } catch {
+    // Gracefully ignore localStorage errors
+  }
+}
+
+export function clearLogoutIntent(): void {
+  setLogoutIntent(false);
+}
+
 export function setStoredSessionId(sessionId: string | null): void {
   try {
     if (typeof localStorage === 'undefined') return;
     if (sessionId) {
       localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+      localStorage.removeItem(LOGOUT_INTENT_KEY);
     } else {
       localStorage.removeItem(SESSION_STORAGE_KEY);
     }
@@ -420,31 +448,114 @@ export function setStoredSessionId(sessionId: string | null): void {
   }
 }
 
-export async function fetchJson<T>(url: string, init?: RequestInit & { signal?: AbortSignal }): Promise<T> {
+export function clearStoredSessionId(): void {
+  setStoredSessionId(null);
+}
+
+export interface FetchJsonOptions extends Omit<RequestInit, 'body'> {
+  body?: unknown;
+  sessionId?: string;
+}
+
+export async function fetchJson<T>(
+  url: string,
+  init?: FetchJsonOptions | (RequestInit & { signal?: AbortSignal; sessionId?: string })
+): Promise<T> {
   const headers = new Headers(init?.headers);
-  const storedSessionId = getStoredSessionId();
-  if (storedSessionId && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${storedSessionId}`);
+  const explicitSessionId = (init as FetchJsonOptions)?.sessionId;
+  const storedSessionId = explicitSessionId || getStoredSessionId();
+  if (storedSessionId) {
+    if (!headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${storedSessionId}`);
+    }
+    if (!headers.has('X-Session-ID')) {
+      headers.set('X-Session-ID', storedSessionId);
+    }
   }
-  if (storedSessionId && !headers.has('X-Session-ID')) {
-    headers.set('X-Session-ID', storedSessionId);
+
+  let body: BodyInit | null | undefined = undefined;
+  if (init?.body !== undefined && init?.body !== null) {
+    if (
+      typeof init.body === 'string' ||
+      init.body instanceof FormData ||
+      init.body instanceof Blob ||
+      init.body instanceof URLSearchParams ||
+      init.body instanceof ArrayBuffer
+    ) {
+      body = init.body as BodyInit;
+      if (typeof init.body === 'string' && !headers.has('Content-Type')) {
+        const trimmed = init.body.trim();
+        if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+          headers.set('Content-Type', 'application/json');
+        }
+      }
+    } else {
+      body = JSON.stringify(init.body);
+      if (!headers.has('Content-Type')) {
+        headers.set('Content-Type', 'application/json');
+      }
+    }
   }
 
   const res = await fetch(url, {
     ...init,
     headers,
+    body,
   });
+
   if (!res.ok) {
     let errorDetail = `HTTP ${res.status} ${res.statusText}`;
     try {
-      const errJson = await res.json();
-      if (errJson?.error) {
-        errorDetail = errJson.error;
+      if (typeof res.text === 'function') {
+        const errText = await res.text();
+        if (errText) {
+          try {
+            const errJson = JSON.parse(errText);
+            if (errJson?.error) {
+              errorDetail = errJson.error;
+            } else if (errJson?.message) {
+              errorDetail = errJson.message;
+            } else {
+              errorDetail = errText;
+            }
+          } catch {
+            errorDetail = errText;
+          }
+        }
+      } else if (typeof res.json === 'function') {
+        const errJson = await res.json();
+        if (errJson?.error) {
+          errorDetail = errJson.error;
+        } else if (errJson?.message) {
+          errorDetail = errJson.message;
+        }
       }
     } catch {
-      // Non-JSON response error
+      // Non-parseable error
     }
     throw new Error(errorDetail);
   }
-  return res.json() as Promise<T>;
+
+  if (res.status === 204) {
+    return undefined as unknown as T;
+  }
+
+  if (typeof res.text === 'function') {
+    const text = await res.text();
+    if (!text || text.trim() === '') {
+      return undefined as unknown as T;
+    }
+
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      return text as unknown as T;
+    }
+  }
+
+  if (typeof res.json === 'function') {
+    return res.json() as Promise<T>;
+  }
+
+  return undefined as unknown as T;
 }

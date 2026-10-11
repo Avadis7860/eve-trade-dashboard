@@ -124,6 +124,9 @@ export class PersistentSyncRepository implements ISyncRepository {
     const orders = this.getSyncState(characterId, 'character_orders');
     const assets = this.getSyncState(characterId, 'character_assets');
     const wallet = this.getSyncState(characterId, 'character_wallet');
+    const pi = this.getSyncState(characterId, 'planetary_interaction');
+    const industry = this.getSyncState(characterId, 'industry_jobs');
+    const mining = this.getSyncState(characterId, 'mining_ledger');
 
     const streams: Array<{ state: SyncState; ttlMs: number }> = [
       { state: transactions, ttlMs: 10 * 60 * 1000 },
@@ -131,6 +134,9 @@ export class PersistentSyncRepository implements ISyncRepository {
       { state: orders, ttlMs: 10 * 60 * 1000 },
       { state: assets, ttlMs: 60 * 60 * 1000 },
       { state: wallet, ttlMs: 10 * 60 * 1000 },
+      { state: pi, ttlMs: 15 * 60 * 1000 },
+      { state: industry, ttlMs: 5 * 60 * 1000 },
+      { state: mining, ttlMs: 10 * 60 * 1000 },
     ];
 
     const hasError = streams.some((s) => s.state.status === 'ERROR');
@@ -156,6 +162,9 @@ export class PersistentSyncRepository implements ISyncRepository {
       orders,
       assets,
       wallet,
+      pi,
+      industry,
+      mining,
       asOf: Date.now(),
       freshness,
     };
@@ -433,6 +442,9 @@ export class PostgresSyncRepository implements ISyncRepository {
     const orders = await this.getSyncStateAsync(characterId, 'character_orders');
     const assets = await this.getSyncStateAsync(characterId, 'character_assets');
     const wallet = await this.getSyncStateAsync(characterId, 'character_wallet');
+    const pi = await this.getSyncStateAsync(characterId, 'planetary_interaction');
+    const industry = await this.getSyncStateAsync(characterId, 'industry_jobs');
+    const mining = await this.getSyncStateAsync(characterId, 'mining_ledger');
 
     const streams: Array<{ state: SyncState; ttlMs: number }> = [
       { state: transactions, ttlMs: 10 * 60 * 1000 },
@@ -440,6 +452,9 @@ export class PostgresSyncRepository implements ISyncRepository {
       { state: orders, ttlMs: 10 * 60 * 1000 },
       { state: assets, ttlMs: 60 * 60 * 1000 },
       { state: wallet, ttlMs: 10 * 60 * 1000 },
+      { state: pi, ttlMs: 15 * 60 * 1000 },
+      { state: industry, ttlMs: 5 * 60 * 1000 },
+      { state: mining, ttlMs: 10 * 60 * 1000 },
     ];
 
     const hasError = streams.some((s) => s.state.status === 'ERROR');
@@ -465,6 +480,9 @@ export class PostgresSyncRepository implements ISyncRepository {
       orders,
       assets,
       wallet,
+      pi,
+      industry,
+      mining,
       asOf: Date.now(),
       freshness,
     };

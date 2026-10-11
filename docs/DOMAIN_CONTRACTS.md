@@ -28,14 +28,17 @@ Pour tout article dans une station ou structure donnée :
    Actif physique situé dans un emplacement non associé à un hub de vente actif sans mouvement depuis $X$ jours.
 4. **Stock en transit (`IN_TRANSIT_STOCK`)** :
    Actif localisé dans la soute d'un vaisseau de transport ou lié à un contrat de fret en cours.
-5. **Stock non rapproché (`UNRECONCILED_STOCK`)** :
+5. **Stock en colonie planétaire (`PLANETARY_COLONY_STOCK`)** :
+   Matières premières (P0) et produits transformés (P1 à P4) situés dans les silos de stockage, spatioports ou processeurs d'une colonie planétaire active.
+6. **Stock non rapproché (`UNRECONCILED_STOCK`)** :
    Stock physique sans transaction d'achat ni lot d'inventaire initial tracé.
 
 ## 4. États du Capital Monétaire
 1. **Liquidités disponibles (`LIQUID_WALLET_BALANCE`)** : Trésorerie ISK immédiatement utilisable, issue des soldes réels ESI (`GET /characters/{character_id}/wallet` et `GET /corporations/{corporation_id}/wallets` dédupliqué par `(corporation_id, division)`). Les écritures de journal de corporation sont strictement isolées des journaux personnels et ne peuvent jamais remplacer le solde d'un personnage. L'utilisateur choisit dans les paramètres s'il synchronise et comptabilise les portefeuilles des personnages, des divisions de corporation ou les deux, avec exclusion granulaire possible par personnage (ex. personnage porteur d'une dette) ou par division.
 2. **Escrow ordres d'achat (`MARKET_BUY_ESCROW`)** : Trésorerie ISK bloquée par le marché pour couvrir les buy orders ouverts.
 3. **Capital immobilisé en stocks invendus (`INVENTORY_COST_VALUE`)** : Somme des coûts d'acquisition et frais de courtage des reliquats physiques non vendus.
-4. **Valeur notionnelle de vente (`NOTIONAL_MARKET_ASK_VALUE`)** : Valeur théorique brute de vente des ordres en cours ($\sum \text{prix} \times \text{volume\_remain}$). Cette valeur n'est **jamais** traitée comme de la liquidité ou du bénéfice.
+4. **Capital immobilisé en cours de fabrication (`WIP_INVENTORY_CAPITAL`)** : Valeur des intrants consommés et des frais d'installation engagés dans des lignes de production actives (manufacture, réactions, recherche) jusqu'à livraison finale.
+5. **Valeur notionnelle de vente (`NOTIONAL_MARKET_ASK_VALUE`)** : Valeur théorique brute de vente des ordres en cours ($\sum \text{prix} \times \text{volume\_remain}$). Cette valeur n'est **jamais** traitée comme de la liquidité ou du bénéfice.
 
 ## 5. Cycle de Vie des Ordres
 États : `ACTIVE`, `PARTIALLY_FILLED`, `COMPLETED_CONFIRMED`, `CANCELLED_CONFIRMED`, `EXPIRED_CONFIRMED`, `DISAPPEARED_UNCONFIRMED`, `UNKNOWN`.
@@ -81,5 +84,21 @@ Pour tout article dans une station ou structure donnée :
   $$\text{Investissement TTC Alloué} = \text{Coût d'Achat Alloué} + \text{Frais Courtage Achat Alloués}$$
   $$\text{ROI \% TTC} = \left(\frac{\text{Profit TTC}}{\text{Investissement TTC Alloué}}\right) \times 100$$
   Calculé si et seulement si $\text{Investissement TTC Alloué} > 0$.
+
+## 10. Invariance Comptable des Matières Farmées / Minées (Phase P02)
+- **Règle fondamentale** : *Les minerais ou matières premières extraits par le joueur ne coûtent jamais 0.00 ISK*. Valoriser un actif farmé à 0.00 ISK gonfle frauduleusement le ROI et détruit l'analyse d'arbitrage.
+- **Double valorisation étanche** :
+  1. `realized_cash_cost_isk = 0.00 ISK` : Sortie effective de trésorerie (cash outflow) sur le portefeuille.
+  2. `opportunity_cost_isk = ESTIMATED_EXTRACTION_VALUE` : Coût d'opportunité économique d'extraction (valeur marchande au moment ou au lieu d'extraction).
+- **Statut de provenance** : Tout lot issu du minage ou de l'extraction porte impérativement `provenance: 'FARMED'` (distinct de `'MARKET_PURCHASE'` et `'OPENING_BALANCE'`).
+- **Séparation des indicateurs** : Le ROI commercial d'arbitrage est calculé par rapport au coût d'opportunité des intrants. Le bénéfice brut de farm (génération de trésorerie nette de temps de jeu) est calculé séparément.
+
+## 11. Traçabilité de l'Arbre Industriel BOM & Propagation FIFO Multi-Niveaux (Phases P04 & P05)
+- **Nomenclature et lignée (Lineage)** : Tout lot de fabrication (`MANUFACTURED`) ou de transformation planétaire (`PLANETARY_TRANSFORMED`) conserve la traçabilité intégrale de son `job_id` source et de la liste ordonnée des lots d'intrants consommés (`inputLotAllocations`).
+- **Formule de propagation sans rupture** :
+  $$C_{\text{unitaire}}(L_{\text{produit}}) = \frac{\sum_{i} (Q_{\text{entrant}, i} \times C_{\text{entrant}, i}) + \text{Frais Job ISK} + \text{Taxes Douanières POCO ISK}}{Q_{\text{sortant}}}$$
+- **Propagation de la vérité des données** : Si un intrant consommé a un coût `UNKNOWN` ou `PARTIAL`, le lot produit hérite rigoureusement du statut `PARTIAL` ou `UNKNOWN`. Aucun coût synthétique ou arbitraire n'est inventé.
+- **Continuité de la chaîne de valeur** : Les lots produits intègrent le référentiel des lots d'inventaire unifiés (`InventoryLot`) et peuvent être consommés par la vente de marché ou par une chaîne industrielle supérieure sans aucune rupture de chaîne FIFO.
+
 
 

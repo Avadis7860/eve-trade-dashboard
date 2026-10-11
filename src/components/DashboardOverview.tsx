@@ -123,8 +123,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     return formatIskValue(val, iskDisplayMode);
   };
 
-  const monetary = capitalData?.summary.monetary;
-  const dormant = capitalData?.summary.dormantSummary;
+  const monetary = capitalData?.summary?.monetary;
+  const dormant = capitalData?.summary?.dormantSummary;
 
   const disappearedOrders = orders.filter((o) => o.state === 'DISAPPEARED_UNCONFIRMED');
   const pendingRestock = restockItems.filter((i) => i.status !== 'PURCHASED');

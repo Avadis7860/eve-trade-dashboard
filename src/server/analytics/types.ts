@@ -154,3 +154,38 @@ export interface Product360Response {
   transactions_history: Product360Transaction[];
   timeseries: ActivityTimeSeriesResponse;
 }
+
+export interface TopSalesHubBreakdown {
+  hub_id: string;
+  hub_name: string;
+  units_sold: number;
+  gross_revenue_isk: number;
+}
+
+export interface TopSalesItem {
+  type_id: number;
+  type_name: string;
+  image_url: string;
+  units_sold: number;
+  gross_revenue_isk: number;
+  realized_profit_ttc_isk: number | null;
+  roi_percent_ttc: number | null;
+  sales_transactions_count: number;
+  average_unit_sale_price_isk: number;
+  coverage_status: MetricCoverageStatus;
+  primary_hub_id: string;
+  primary_hub_name: string;
+  hubs: TopSalesHubBreakdown[];
+}
+
+export interface TopSalesRankingsResponse {
+  timeframe: TimeframeOption;
+  hub_id?: string;
+  total_items: number;
+  total_gross_revenue_isk: number;
+  total_realized_profit_ttc_isk: number | null;
+  total_units_sold: number;
+  as_of: string;
+  freshness_status: 'FRESH' | 'STALE' | 'PARTIAL' | 'EMPTY';
+  items: TopSalesItem[];
+}

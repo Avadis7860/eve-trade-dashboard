@@ -30,6 +30,14 @@ export class EsiClient {
     this.fetchFn = fetchFn;
   }
 
+  public getRateLimiter(): EsiRateLimiter {
+    return this.rateLimiter;
+  }
+
+  public getCache(): EsiCache {
+    return this.cache;
+  }
+
   /**
    * Executes a GET request with cache validation, bounded retries, rate limiting, and 304 support
    */

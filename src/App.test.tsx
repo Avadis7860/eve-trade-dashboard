@@ -1161,4 +1161,348 @@ describe('App Component (Phase 06 Integrated Dashboard)', () => {
       global.FileReader = originalFileReader;
     }
   });
+
+  it('TEST-S01-10: clicking logout button sends authenticated POST /api/auth/logout with sessionId body and clears session state without auto-resuming', async () => {
+    let logoutCalledWith: {
+      url: string;
+      method?: string;
+      headers?: HeadersInit;
+      body?: BodyInit | null;
+    } | null = null;
+    let isAuthenticated = true;
+
+    localStorage.setItem('eve_active_session_id', 'active_test_session_abc');
+
+    global.fetch = vi.fn((url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = url.toString();
+      const pathname = new URL(urlStr, 'http://localhost').pathname;
+
+      if (pathname === '/api/health') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ status: 'ok', service: 'eve-trade-dashboard', timestamp: new Date().toISOString(), version: '0.1.0' }),
+        } as Response);
+      }
+      if (pathname === '/api/auth/status') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ configured: true }),
+        } as Response);
+      }
+      if (pathname === '/api/auth/session') {
+        if (isAuthenticated) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              authenticated: true,
+              sessionId: 'active_test_session_abc',
+              character: {
+                characterId: 777001,
+                characterName: 'Test Pilot Active',
+                portraitUrl: 'https://images.evetech.net/characters/777001/portrait?size=128',
+                scopes: ['publicData'],
+                expiresAt: Date.now() + 3600000,
+              },
+              characters: [
+                {
+                  characterId: 777001,
+                  characterName: 'Test Pilot Active',
+                  portraitUrl: 'https://images.evetech.net/characters/777001/portrait?size=128',
+                  scopes: ['publicData'],
+                  expiresAt: Date.now() + 3600000,
+                  isActive: true,
+                },
+              ],
+            }),
+          } as Response);
+        } else {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              authenticated: false,
+              savedSessions: [],
+            }),
+          } as Response);
+        }
+      }
+      if (pathname === '/api/esi/status') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ rateLimit: { errorLimitRemain: 100, errorLimitResetSeconds: 0, isSuspended: false, suspendedUntil: 0, activeRequests: 0 }, cacheSize: 0 }),
+        } as Response);
+      }
+      if (pathname.startsWith('/api/ledger') || pathname.startsWith('/api/orders') || pathname.startsWith('/api/roi') || pathname.startsWith('/api/hubs') || pathname.startsWith('/api/capital')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ items: [], total: 0, totalPages: 1, summary: {}, hubs: [], mappings: [] }),
+        } as Response);
+      }
+      if (pathname === '/api/auth/logout') {
+        isAuthenticated = false;
+        logoutCalledWith = {
+          url: pathname,
+          method: init?.method,
+          headers: init?.headers,
+          body: init?.body,
+        };
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ success: true }),
+        } as Response);
+      }
+
+      return Promise.reject(new Error(`Unknown URL: ${pathname}`));
+    });
+
+    render(<App />);
+
+    // Wait for authenticated header to render
+    await waitFor(() => {
+      expect(screen.getByText('Test Pilot Active')).toBeInTheDocument();
+    });
+
+    const logoutBtn = screen.getByTitle('Déconnexion de tous les personnages');
+    expect(logoutBtn).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(logoutBtn);
+    });
+
+    // Assert logout call was received with Bearer token & body
+    await waitFor(() => {
+      expect(logoutCalledWith).not.toBeNull();
+      expect(logoutCalledWith?.method).toBe('POST');
+    });
+
+    const logoutInfo = logoutCalledWith!;
+    const headers = new Headers(logoutInfo.headers);
+    expect(headers.get('Authorization')).toBe('Bearer active_test_session_abc');
+    expect(headers.get('X-Session-ID')).toBe('active_test_session_abc');
+    expect(JSON.parse(String(logoutInfo.body))).toEqual({ sessionId: 'active_test_session_abc' });
+
+    // Assert session was cleared and unauthenticated screen is displayed
+    expect(localStorage.getItem('eve_active_session_id')).toBeNull();
+    expect(localStorage.getItem('eve_logout_intent')).toBe('true');
+
+    await waitFor(() => {
+      expect(screen.getByText(/Se connecter avec EVE Online \(SSO\)/i)).toBeInTheDocument();
+    });
+  });
+
+  it('TEST-S02-09: switches active character via dropdown with Bearer token and updates UI', async () => {
+    localStorage.setItem('eve_active_session_id', 'multi_char_session_123');
+    let activeCharId = 11111;
+    let switchCalledWith: { url: string; method?: string; headers?: unknown; body?: unknown } | null = null;
+
+    global.fetch = vi.fn((url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = url.toString();
+      const pathname = new URL(urlStr, 'http://localhost').pathname;
+
+      if (pathname === '/api/health') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ status: 'ok', service: 'eve-trade-dashboard' }),
+        } as Response);
+      }
+      if (pathname === '/api/auth/status') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ configured: true }),
+        } as Response);
+      }
+      if (pathname === '/api/auth/session') {
+        const isFirstActive = activeCharId === 11111;
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            authenticated: true,
+            sessionId: 'multi_char_session_123',
+            character: isFirstActive
+              ? { characterId: 11111, characterName: 'Primary Pilot', portraitUrl: 'https://images.evetech.net/11111' }
+              : { characterId: 22222, characterName: 'Secondary Trader', portraitUrl: 'https://images.evetech.net/22222' },
+            characters: [
+              {
+                characterId: 11111,
+                characterName: 'Primary Pilot',
+                portraitUrl: 'https://images.evetech.net/11111',
+                isActive: isFirstActive,
+              },
+              {
+                characterId: 22222,
+                characterName: 'Secondary Trader',
+                portraitUrl: 'https://images.evetech.net/22222',
+                isActive: !isFirstActive,
+              },
+            ],
+          }),
+        } as Response);
+      }
+      if (pathname === '/api/esi/status') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ rateLimit: { errorLimitRemain: 100 } }),
+        } as Response);
+      }
+      if (pathname === '/api/ledger/sync-status') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ freshness: 'FRESH' }),
+        } as Response);
+      }
+      if (pathname === '/api/ledger/summary') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ totalSalesIsk: 0, totalPurchasesIsk: 0 }),
+        } as Response);
+      }
+      if (pathname === '/api/orders/summary') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ activeSellOrdersCount: 0, activeBuyOrdersCount: 0 }),
+        } as Response);
+      }
+      if (pathname === '/api/orders/restock') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ items: [] }),
+        } as Response);
+      }
+      if (pathname === '/api/roi/summary') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ summary: { totalCostIsk: 0, totalRevenueIsk: 0, grossProfitIsk: 0, grossMarginPercent: 0 } }),
+        } as Response);
+      }
+      if (pathname === '/api/roi/allocations') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ allocations: [] }),
+        } as Response);
+      }
+      if (pathname === '/api/roi/unsold-inventory') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ inventory: [] }),
+        } as Response);
+      }
+      if (pathname === '/api/hubs') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ hubs: [] }),
+        } as Response);
+      }
+      if (pathname === '/api/hubs/mappings') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ mappings: [] }),
+        } as Response);
+      }
+      if (pathname === '/api/capital/summary') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            summary: {
+              monetary: {
+                liquidWalletBalanceIsk: 0,
+                marketBuyEscrowIsk: 0,
+                inventoryCostValueIsk: 0,
+                netRealCapitalIsk: 0,
+                notionalMarketAskValueIsk: 0,
+              },
+              dormantSummary: {
+                dormantItemsCount: 0,
+                dormantCostValueIsk: 0,
+              },
+            },
+          }),
+        } as Response);
+      }
+      if (pathname === '/api/capital/breakdown') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            summary: {
+              monetary: {
+                liquidWalletBalanceIsk: 0,
+                marketBuyEscrowIsk: 0,
+                inventoryCostValueIsk: 0,
+                netRealCapitalIsk: 0,
+                notionalMarketAskValueIsk: 0,
+              },
+              dormantSummary: {
+                dormantItemsCount: 0,
+                dormantCostValueIsk: 0,
+              },
+            },
+            classifications: [],
+          }),
+        } as Response);
+      }
+      if (pathname === '/api/auth/switch') {
+        switchCalledWith = {
+          url: pathname,
+          method: init?.method,
+          headers: init?.headers,
+          body: init?.body,
+        };
+        activeCharId = 22222;
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            authenticated: true,
+            sessionId: 'multi_char_session_123',
+            character: { characterId: 22222, characterName: 'Secondary Trader', portraitUrl: 'https://images.evetech.net/22222' },
+            characters: [
+              { characterId: 11111, characterName: 'Primary Pilot', isActive: false },
+              { characterId: 22222, characterName: 'Secondary Trader', isActive: true },
+            ],
+          }),
+        } as Response);
+      }
+
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({}),
+      } as Response);
+    });
+
+    render(<App />);
+
+    // Wait for Primary Pilot to render
+    await waitFor(() => {
+      expect(screen.getByText('Primary Pilot')).toBeInTheDocument();
+    });
+
+    // Open character dropdown
+    const userTrigger = screen.getByText('Primary Pilot').closest('div');
+    expect(userTrigger).not.toBeNull();
+    fireEvent.click(userTrigger!);
+
+    // Check that Secondary Trader is present in the dropdown
+    await waitFor(() => {
+      expect(screen.getByText('Secondary Trader')).toBeInTheDocument();
+    });
+
+    // Click to switch to Secondary Trader
+    const secondaryTraderBtn = screen.getByText('Secondary Trader');
+    await act(async () => {
+      fireEvent.click(secondaryTraderBtn);
+    });
+
+    // Verify /api/auth/switch was called with Bearer and body
+    await waitFor(() => {
+      expect(switchCalledWith).not.toBeNull();
+      expect(switchCalledWith?.method).toBe('POST');
+    });
+
+    const headers = new Headers(switchCalledWith!.headers as HeadersInit);
+    expect(headers.get('Authorization')).toBe('Bearer multi_char_session_123');
+    expect(headers.get('X-Session-ID')).toBe('multi_char_session_123');
+    expect(JSON.parse(String(switchCalledWith!.body))).toEqual({ characterId: 22222 });
+
+    // Verify UI switched to Secondary Trader
+    await waitFor(() => {
+      expect(screen.getByText('Secondary Trader')).toBeInTheDocument();
+    });
+  });
 });

@@ -39,6 +39,7 @@ export interface ILedgerRepository {
   getBrokerFeeSummary?(characterId?: number, characterIds?: number[]): BrokerFeeReconciliationSummary;
   setOrdersRepository?(ordersRepo: IOrdersRepository): void;
   countTransactions(characterId: number): number;
+  addJournalObserver?(corporationId: number, characterId: number): void;
   saveJournalEntries(entries: CharacterWalletJournalEntry[]): { inserted: number; updated: number };
   getJournalEntries(characterId?: number, page?: number, pageSize?: number): { items: CharacterWalletJournalEntry[]; total: number };
   getJournalEntryById(characterId: number, journalId: number): CharacterWalletJournalEntry | null;
@@ -516,6 +517,26 @@ export class PersistentLedgerRepository implements ILedgerRepository {
     this.ensureReconciliation();
     this.syncToStorage();
     return { inserted, updated };
+  }
+
+  public addJournalObserver(corporationId: number, characterId: number): void {
+    const keys = this.jnByCorporation.get(corporationId);
+    if (!keys || keys.size === 0) return;
+    for (const key of keys) {
+      const entry = this.journalEntries.get(key);
+      if (entry) {
+        if (!entry.observedByCharacterIds) {
+          entry.observedByCharacterIds = entry.characterId ? [entry.characterId] : [];
+        }
+        if (!entry.observedByCharacterIds.includes(characterId)) {
+          entry.observedByCharacterIds.push(characterId);
+          this.indexJournal(key, entry);
+        }
+      }
+    }
+    this.isReconciliationDirty = true;
+    this.ensureReconciliation();
+    this.syncToStorage();
   }
 
   public getJournalEntries(

@@ -148,13 +148,15 @@ La spécification mathématique et algorithmique complète est consignée dans *
 - **[docs/SECURITY_PRIVACY.md](docs/SECURITY_PRIVACY.md)** : Règles de sécurité, chiffrement et protection des données.
 - **[docs/TESTING_CI.md](docs/TESTING_CI.md)** : Stratégie de qualification et pyramide de tests.
 
-### 3.3 Feuilles de Route & Phases de Travail
-Le catalogue complet des 42 phases de développement est détaillé dans **[`docs/phases/README.md`](docs/phases/README.md)** :
-- **Époque 1 : Socle Initial & MVP** ([Phases 00 à 06](docs/phases/README.md#époque-1--socle-initial--mvp), H01, H02) — *Terminées*.
-- **Époque 2 : Transformation Cockpit & Pilotage** ([Phases 07 à 12](docs/phases/README.md#époque-2--transformation-cockpit--système-de-pilotage), 10.bis) — *Terminées*.
-- **Époque 3 : Assurance Fiabilité & Traçabilité** ([Série F, F01 à F11](docs/phases/README.md#époque-3--assurance-fiabilité--traçabilité-série-f), H03) — *Terminées*.
-- **Époque 4 : Fiabilisation Finale Production** ([Série G, G01 à G05](docs/phases/README.md#époque-4--fiabilisation-finale-production--sécurité-série-g)) — *G01–G04 Terminées, G05 Planifiée*.
-- **Époque Historique : Remise à Niveau & Performance** ([Série R, R00 à R08](docs/phases/README.md#époque-historique--remise-à-niveau--performance-série-r)) — *Archivées / Terminées*.
+### 3.3 Feuilles de Route, Phases & Archives
+Le catalogue complet des phases actives et la gouvernance sont détaillés dans **[`docs/phases/README.md`](docs/phases/README.md)** :
+- **Série Active : Résilience Sessions & Iframe AI Studio** ([Série S, S01 à S03](docs/phases/README.md#2-série-active--résilience-sessions--iframe-ai-studio-série-s)) — *Terminée*.
+- **Phases Antérieures Archivées** ([Époques 1 à 4](docs/archive/README.md#2-spécifications-des-phases-antérieures-closes-docsarchivephases)) :
+  - *Époque 1 : Socle Initial & MVP* (`PHASE-00` à `06`, `H01`, `H02`) — *Terminées*.
+  - *Époque 2 : Transformation Cockpit & Pilotage* (`PHASE-07` à `12`, `10bis`) — *Terminées*.
+  - *Époque 3 : Assurance Fiabilité & Traçabilité* (`PHASE-F01` à `F11`, `H03`) — *Terminées*.
+  - *Époque 4 : Fiabilisation Finale Production & Sécurité* (`PHASE-G01` à `G05`) — *Terminées*.
+  - L'ensemble des spécifications antérieures est conservé dans **[`docs/archive/`](docs/archive/README.md)**.
 
 ---
 

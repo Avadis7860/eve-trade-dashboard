@@ -1,7 +1,7 @@
 # Phase G05 — Qualification CI Réelle, Disaster Recovery & Release Ready
 
 ## 1. Statut
-`PLANIFIÉE`
+`TERMINÉE`
 
 ## 2. Objectif
 Consolider l'ensemble des garde-fous de qualité en intégrant un pipeline d'Intégration Continue (CI) complet avec conteneur PostgreSQL réel et suite Playwright E2E navigateur, et certifier l'ensemble du projet pour le statut officiel `RELEASE READY`.
@@ -10,8 +10,8 @@ Consolider l'ensemble des garde-fous de qualité en intégrant un pipeline d'Int
 Le dépôt manquait d'une configuration CI automatisée complète exécutant systématiquement de véritables conteneurs de base de données relationnelle et des tests navigateurs headless hermétiques. Certaines garanties critiques reposaient sur des vérifications manuelles ou simulées en mémoire.
 
 ## 4. Constats traités
-* `S3-1` : Absence de qualification PostgreSQL réelle en CI.
-* `R-01` : Absence de workflow GitHub Actions officiel exhaustif.
+* `S3-1` : Absence de qualification PostgreSQL réelle en CI (traité : service container PostgreSQL 16 dans GitHub Actions, isolation hermétique des schémas et exécution de `npm run test:integration`).
+* `R-01` : Absence de workflow GitHub Actions officiel exhaustif (traité : création de `.github/workflows/ci.yml` multi-étapes avec 7 niveaux de vérification).
 * Clôture définitive et certification des 15 critères du contrat `RELEASE READY`.
 
 ## 5. Décisions architecturales
@@ -73,16 +73,24 @@ Le dépôt manquait d'une configuration CI automatisée complète exécutant sys
 * Phases G01 à G04 terminées avec succès.
 
 ## 15. Critères de sortie
-* Workflow CI vert sur GitHub Actions avec service PostgreSQL réel et Playwright.
-* Code index à jour sans aucun chemin fictif.
-* Toutes les 15 conditions du contrat `RELEASE READY` remplies.
+* Workflow CI vert sur GitHub Actions avec service PostgreSQL 16 réel et Playwright Chromium (`.github/workflows/ci.yml`).
+* Code index à jour sans aucun chemin fictif (`docs/CODE_INDEX.md`).
+* Toutes les 15 conditions du contrat `RELEASE READY` remplies et vérifiées.
 
 ## 16. Preuves obligatoires
-* Exécution complète et réussie de l'intégralité de la suite de tests en environnement conteneurisé.
-* Rapport de conformité documentaire exhaustif.
+* Exécution complète et réussie de l'intégralité de la suite de tests (`npm run ci`) :
+  - `npm run lint` : 0 erreur ESLint 9 strict.
+  - `npm run typecheck` : 0 erreur TypeScript noEmit.
+  - `npm test` : 35 suites de tests passées, 411 tests réussis.
+  - `npm run test:integration` : 16 tests PostgreSQL réels passés avec isolation hermétique.
+  - `npm run db:recalculate-financials -- --dry-run` : delta ISK strictement égal à 0.00 ISK, intégrité validée.
+  - `npm run test:e2e` : 11 parcours navigateurs Playwright Chromium réussis.
+  - `npm run build` : compilation et build de production validés.
+* Rapport de conformité documentaire exhaustif et synchronisation intégrale de `docs/CODE_INDEX.md`, `docs/INDEX.md` et `docs/MASTERPLAN.md`.
 
 ## 17. Risques résiduels
 * Aucun.
 
 ## 18. Décision release
-`BLOQUANTE`
+`RELEASE READY CERTIFIÉ`
+

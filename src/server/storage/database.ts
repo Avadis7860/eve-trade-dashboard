@@ -49,7 +49,10 @@ export class DurableFileDatabaseAdapter implements IDatabaseAdapter {
   private transactionSnapshot: DurableDatabaseState | null = null;
   private isInitialized = false;
 
-  constructor(storagePath: string | null = './.data/eve_trade_store.json') {
+  constructor(
+    storagePath: string | null = process.env.DATABASE_STORAGE_PATH ||
+      (process.env.VITEST ? './.data/test_eve_trade_store.json' : './.data/eve_trade_store.json')
+  ) {
     this.storagePath = storagePath;
     this.state = this.createEmptyState();
   }
@@ -494,7 +497,8 @@ export class StorageManager {
 
   private constructor(config?: Partial<StorageConfig>) {
     const databaseUrl = config?.databaseUrl || process.env.DATABASE_URL;
-    const storagePath = config?.storagePath || process.env.DATABASE_STORAGE_PATH || './.data/eve_trade_store.json';
+    const defaultStoragePath = process.env.VITEST ? './.data/test_eve_trade_store.json' : './.data/eve_trade_store.json';
+    const storagePath = config?.storagePath || process.env.DATABASE_STORAGE_PATH || defaultStoragePath;
     const engine = config?.engine || (databaseUrl ? 'postgres' : 'file');
 
     this.config = { engine, databaseUrl, storagePath };

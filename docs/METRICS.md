@@ -85,6 +85,8 @@ Toutes les métriques produites par l'application sont déterministes, auditable
 - **Valeur de Revient Stocks Vente ($Cap_{stock\_vente}$)** : Coût des actifs posés en sell orders.
 - **Valeur de Revient Stocks Libres ($Cap_{stock\_libre}$)** : Coût des actifs en station disponibles.
 - **Valeur de Revient Stocks Dormants ($Cap_{stock\_dormant}$)** : Coût des actifs éloignés hors hub.
+- **Valeur de Revient Stocks Planétaires ($Cap_{stock\_pi}$)** : Coût ou valeur d'extraction des matières (P0 à P4) situées en silos et spatioports planétaires.
+- **Capital en Encours de Fabrication ($Cap_{wip}$)** : Valeur d'acquisition des intrants et frais de pose immobilisés dans les lignes de production actives.
 
 ---
 
@@ -113,3 +115,26 @@ Toutes les métriques produites par l'application sont déterministes, auditable
 ### 4.3. Répartition Opérationnelle
 - **Transfert Prioritaire ($Q_{transfert}$)** : $\min(Q_{besoin}, \text{Stock Libre Distant})$
 - **Achat Net Nécessaire ($Q_{achat}$)** : $Q_{besoin} - Q_{transfert}$
+
+---
+
+## 5. Métriques de Production, Farm & PI (Série P)
+
+### 5.1. Valeur Estimée d'Extraction & Coût d'Opportunité ($ESTIMATED\_EXTRACTION\_VALUE$)
+- **Principe d'Invariance** : Tout minerai extrait possède une valeur économique non nulle.
+- **Formule** :
+  $$\text{Coût d'Opportunité Unit.} = \text{Prix Moyen Marché}(Type, \text{Date}) \quad \text{ou} \quad \text{Valeur Minérale Standard}$$
+  $$\text{Coût d'Opportunité Total} = \text{Quantité Extraite} \times \text{Coût d'Opportunité Unit.}$$
+
+### 5.2. Capital en Encours de Fabrication ($WIP\_INVENTORY\_CAPITAL$)
+- **Formule** :
+  $$WIP_{\text{capital}} = \sum_{\text{jobs actifs}} \left( \sum_{i} (Q_{\text{intrant}, i} \times C_{\text{unitaire}, i}) + \text{Job Installation Cost ISK} \right)$$
+
+### 5.3. Coût de Revient Unitaire Manufacturé TTC ($C_{\text{unitaire}}(L_{\text{produit}})$)
+- **Formule** :
+  $$C_{\text{unitaire}}(L_{\text{produit}}) = \frac{\sum_{i=1}^{n} \left( Q_{\text{entrant}, i} \times C_{\text{entrant}, i} \right) + \text{Frais Pose Job ISK} + \text{Taxes Douanières POCO ISK}}{Q_{\text{sortant}}}$$
+
+### 5.4. Cadence Horaire PI ($Debit_{PI\_horaire}$)
+- **Formule Extraction** : $\text{Taux horaire} = \sum_{\text{extracteurs}} \frac{\text{Quantité par cycle} \times 3600}{\text{Durée cycle (secondes)}}$
+- **Formule Production** : Taux de transformation horaire selon schématique P1, P2, P3, P4 active.
+

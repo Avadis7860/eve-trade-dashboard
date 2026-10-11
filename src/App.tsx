@@ -52,6 +52,10 @@ import {
   fetchJson,
   getStoredSessionId,
   setStoredSessionId,
+  clearStoredSessionId,
+  hasLogoutIntent,
+  setLogoutIntent,
+  clearLogoutIntent,
 } from './utils/apiClient';
 
 export interface HealthStatus {
@@ -484,12 +488,18 @@ function AppDashboard() {
   );
   const authConfigured = authStatusData ? authStatusData.configured : null;
 
+  const storedSessionId = getStoredSessionId();
+  const shouldAutoResume = !hasLogoutIntent() && Boolean(storedSessionId);
+  const sessionUrl = shouldAutoResume
+    ? `/api/auth/session?auto_resume=true&session_id=${encodeURIComponent(storedSessionId!)}`
+    : '/api/auth/session';
+
   const {
     data: sessionData,
     isLoading: sessionLoading,
   } = useApiQuery<AuthSessionResponse>(
     ['auth', 'session'],
-    () => fetchJson('/api/auth/session?auto_resume=true'),
+    () => fetchJson(sessionUrl),
     { ttl: 30_000 }
   );
 
@@ -510,6 +520,8 @@ function AppDashboard() {
   const [showImportFleetModal, setShowImportFleetModal] = useState(false);
   const [isResumingSession, setIsResumingSession] = useState(false);
   const [isConnectingSso, setIsConnectingSso] = useState(false);
+  const [isRefreshingTokens, setIsRefreshingTokens] = useState<number | 'all' | null>(null);
+  const [tokenFeedback, setTokenFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Active Tab View & 6 Decision Workspaces
   const [activeTab, setActiveTab] = useState<string>(
@@ -694,11 +706,9 @@ function AppDashboard() {
     if (isGeneratingRestock || !session) return;
     setIsGeneratingRestock(true);
     try {
-      const res = await fetch('/api/orders/restock/generate', { method: 'POST' });
-      if (res.ok) {
-        queryClient.invalidateQueries(['orders', 'restock']);
-        queryClient.invalidateQueries(['operations']);
-      }
+      await fetchJson('/api/orders/restock/generate', { method: 'POST' });
+      queryClient.invalidateQueries(['orders', 'restock']);
+      queryClient.invalidateQueries(['operations']);
     } catch (err) {
       console.error('Failed to generate restock:', err);
     } finally {
@@ -708,11 +718,9 @@ function AppDashboard() {
 
   const handleDeleteRestockItem = async (id: string) => {
     try {
-      const res = await fetch(`/api/orders/restock/${encodeURIComponent(id)}`, { method: 'DELETE' });
-      if (res.ok) {
-        queryClient.invalidateQueries(['orders', 'restock']);
-        queryClient.invalidateQueries(['operations']);
-      }
+      await fetchJson(`/api/orders/restock/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      queryClient.invalidateQueries(['orders', 'restock']);
+      queryClient.invalidateQueries(['operations']);
     } catch (err) {
       console.error('Failed to delete item:', err);
     }
@@ -720,10 +728,8 @@ function AppDashboard() {
 
   const handleDeleteAllocation = async (id: string) => {
     try {
-      const res = await fetch(`/api/roi/allocations/${encodeURIComponent(id)}`, { method: 'DELETE' });
-      if (res.ok) {
-        queryClient.invalidateQueries(['roi']);
-      }
+      await fetchJson(`/api/roi/allocations/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      queryClient.invalidateQueries(['roi']);
     } catch (err) {
       console.error('Failed to delete allocation:', err);
     }
@@ -756,22 +762,16 @@ function AppDashboard() {
     setSyncError(null);
 
     try {
-      const res = await fetch('/api/ledger/sync', { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.errors && data.errors.length > 0) {
-          setSyncError(data.errors.join(' | '));
-        }
-        queryClient.invalidateQueries(['ledger']);
-        queryClient.invalidateQueries(['orders']);
-        queryClient.invalidateQueries(['roi']);
-        queryClient.invalidateQueries(['capital']);
-        queryClient.invalidateQueries(['analytics']);
-        queryClient.invalidateQueries(['esi']);
-      } else {
-        const errJson = await res.json().catch(() => null);
-        setSyncError(errJson?.error || `Erreur de synchronisation (${res.status})`);
+      const data = await fetchJson<{ errors?: string[] }>('/api/ledger/sync', { method: 'POST' });
+      if (data?.errors && data.errors.length > 0) {
+        setSyncError(data.errors.join(' | '));
       }
+      queryClient.invalidateQueries(['ledger']);
+      queryClient.invalidateQueries(['orders']);
+      queryClient.invalidateQueries(['roi']);
+      queryClient.invalidateQueries(['capital']);
+      queryClient.invalidateQueries(['analytics']);
+      queryClient.invalidateQueries(['esi']);
     } catch (err) {
       console.error('Sync failed:', err);
       setSyncError((err as Error).message || 'Erreur réseau lors de la synchronisation');
@@ -796,15 +796,12 @@ function AppDashboard() {
   const handleCreateRestockItem = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch('/api/orders/restock', {
+      await fetchJson('/api/orders/restock', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newRestockForm),
+        body: newRestockForm,
       });
-      if (res.ok) {
-        setShowAddRestockModal(false);
-        queryClient.invalidateQueries(['orders', 'restock']);
-      }
+      setShowAddRestockModal(false);
+      queryClient.invalidateQueries(['orders', 'restock']);
     } catch (err) {
       console.error('Failed to create restock item:', err);
     }
@@ -823,17 +820,14 @@ function AppDashboard() {
   const handleCreateHub = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch('/api/hubs', {
+      await fetchJson('/api/hubs', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newHubForm),
+        body: newHubForm,
       });
-      if (res.ok) {
-        setShowAddHubModal(false);
-        setNewHubForm({ name: '', system_name: '', notes: '' });
-        queryClient.invalidateQueries(['hubs']);
-        queryClient.invalidateQueries(['roi']);
-      }
+      setShowAddHubModal(false);
+      setNewHubForm({ name: '', system_name: '', notes: '' });
+      queryClient.invalidateQueries(['hubs']);
+      queryClient.invalidateQueries(['roi']);
     } catch (err) {
       console.error('Failed to create hub:', err);
     }
@@ -841,11 +835,9 @@ function AppDashboard() {
 
   const handleDeleteHub = async (hubId: string) => {
     try {
-      const res = await fetch(`/api/hubs/${encodeURIComponent(hubId)}`, { method: 'DELETE' });
-      if (res.ok) {
-        queryClient.invalidateQueries(['hubs']);
-        queryClient.invalidateQueries(['roi']);
-      }
+      await fetchJson(`/api/hubs/${encodeURIComponent(hubId)}`, { method: 'DELETE' });
+      queryClient.invalidateQueries(['hubs']);
+      queryClient.invalidateQueries(['roi']);
     } catch (err) {
       console.error('Failed to delete hub:', err);
     }
@@ -854,17 +846,14 @@ function AppDashboard() {
   const handleCreateMapping = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch('/api/hubs/mappings', {
+      await fetchJson('/api/hubs/mappings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newMappingForm),
+        body: newMappingForm,
       });
-      if (res.ok) {
-        setShowAddMappingModal(false);
-        setNewMappingForm({ location_id: 0, location_name: '', hub_id: 'hub-jita', notes: '' });
-        queryClient.invalidateQueries(['hubs']);
-        queryClient.invalidateQueries(['roi']);
-      }
+      setShowAddMappingModal(false);
+      setNewMappingForm({ location_id: 0, location_name: '', hub_id: 'hub-jita', notes: '' });
+      queryClient.invalidateQueries(['hubs']);
+      queryClient.invalidateQueries(['roi']);
     } catch (err) {
       console.error('Failed to create mapping:', err);
     }
@@ -872,11 +861,9 @@ function AppDashboard() {
 
   const handleDeleteMapping = async (locationId: number) => {
     try {
-      const res = await fetch(`/api/hubs/mappings/${locationId}`, { method: 'DELETE' });
-      if (res.ok) {
-        queryClient.invalidateQueries(['hubs']);
-        queryClient.invalidateQueries(['roi']);
-      }
+      await fetchJson(`/api/hubs/mappings/${locationId}`, { method: 'DELETE' });
+      queryClient.invalidateQueries(['hubs']);
+      queryClient.invalidateQueries(['roi']);
     } catch (err) {
       console.error('Failed to delete mapping:', err);
     }
@@ -884,11 +871,9 @@ function AppDashboard() {
 
   const handleAutoDiscoverHubs = async () => {
     try {
-      const res = await fetch('/api/hubs/auto-discover', { method: 'POST' });
-      if (res.ok) {
-        queryClient.invalidateQueries(['hubs']);
-        queryClient.invalidateQueries(['roi']);
-      }
+      await fetchJson('/api/hubs/auto-discover', { method: 'POST' });
+      queryClient.invalidateQueries(['hubs']);
+      queryClient.invalidateQueries(['roi']);
     } catch (err) {
       console.error('Failed to auto-discover hubs:', err);
     }
@@ -897,22 +882,19 @@ function AppDashboard() {
   const handleCreateAllocation = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch('/api/roi/allocations', {
+      await fetchJson('/api/roi/allocations', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           character_id: session?.characterId,
           sell_transaction_id: Number(newAllocForm.sell_transaction_id),
           buy_transaction_id: Number(newAllocForm.buy_transaction_id),
           quantity_to_allocate: Number(newAllocForm.quantity_to_allocate),
           notes: newAllocForm.notes,
-        }),
+        },
       });
-      if (res.ok) {
-        setShowAddAllocationModal(false);
-        setNewAllocForm({ sell_transaction_id: 0, buy_transaction_id: 0, quantity_to_allocate: 0, notes: '' });
-        queryClient.invalidateQueries(['roi']);
-      }
+      setShowAddAllocationModal(false);
+      setNewAllocForm({ sell_transaction_id: 0, buy_transaction_id: 0, quantity_to_allocate: 0, notes: '' });
+      queryClient.invalidateQueries(['roi']);
     } catch (err) {
       console.error('Failed to create allocation:', err);
     }
@@ -927,26 +909,33 @@ function AppDashboard() {
         ? { character_ids: linkedCharacters.map((c) => c.characterId) }
         : { character_id: session.characterId };
 
-      const res = await fetch('/api/roi/reconcile', {
+      const data = await fetchJson<{
+        success: boolean;
+        result: {
+          allocations_created: number;
+          total_quantity_reconciled: number;
+          sales_with_asset_stock_identified?: number;
+          asset_stock_available_units?: number;
+        };
+      }>('/api/roi/reconcile', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: payload,
       });
-      if (res.ok) {
-        const data = await res.json();
-        const scopeLabel = linkedCharacters.length > 1
-          ? `écosystème multi-personnages (${linkedCharacters.length} persos)`
-          : session.characterName;
-        const assetMsg = data.result.sales_with_asset_stock_identified > 0
-          ? ` · ${data.result.sales_with_asset_stock_identified} ventes avec stock physique identifié dans les actifs ESI (${data.result.asset_stock_available_units?.toLocaleString()} un.)`
-          : '';
-        setReconcileMessage(
-          `${data.result.allocations_created} allocations créées (${data.result.total_quantity_reconciled} unités rapprochées en FIFO pour ${scopeLabel})${assetMsg}`
-        );
-        queryClient.invalidateQueries(['roi']);
-      }
-    } catch (err) {
+
+      const scopeLabel = linkedCharacters.length > 1
+        ? `écosystème multi-personnages (${linkedCharacters.length} persos)`
+        : session.characterName;
+      const assetMsg = (data.result.sales_with_asset_stock_identified || 0) > 0
+        ? ` · ${data.result.sales_with_asset_stock_identified} ventes avec stock physique identifié dans les actifs ESI (${data.result.asset_stock_available_units?.toLocaleString()} un.)`
+        : '';
+      setReconcileMessage(
+        `${data.result.allocations_created} allocations créées (${data.result.total_quantity_reconciled} unités rapprochées en FIFO pour ${scopeLabel})${assetMsg}`
+      );
+      queryClient.invalidateQueries(['roi']);
+      queryClient.invalidateQueries(['ledger']);
+    } catch (err: unknown) {
       console.error('Failed to run auto-reconciliation:', err);
+      setReconcileMessage(`Échec du rapprochement : ${(err as Error).message}`);
     } finally {
       setIsReconciling(false);
     }
@@ -967,51 +956,101 @@ function AppDashboard() {
     const sessionIdParam = urlParams.get('session_id');
 
     if (sessionIdParam) {
+      clearLogoutIntent();
       setStoredSessionId(sessionIdParam);
     }
     if (errorParam) {
       setAuthError(decodeURIComponent(errorParam));
     }
     if (successParam || errorParam || sessionIdParam) {
+      if (successParam) clearLogoutIntent();
       window.history.replaceState({}, document.title, window.location.pathname);
       queryClient.invalidateQueries(['auth']);
     }
   }, [queryClient]);
 
   useEffect(() => {
-    if (sessionData?.sessionId) {
+    if (sessionData?.sessionId && !hasLogoutIntent()) {
       setStoredSessionId(sessionData.sessionId);
+    } else if (sessionData && !sessionData.authenticated && !sessionLoading && !hasLogoutIntent()) {
+      clearStoredSessionId();
     }
-  }, [sessionData]);
+  }, [sessionData, sessionLoading]);
 
-  // Listen for OAuth completion from popup bridge window
+  // Listen for OAuth completion from popup bridge window (postMessage, storage event, BroadcastChannel)
   useEffect(() => {
+    const applyAuthSuccess = (sessionId?: string) => {
+      clearLogoutIntent();
+      if (sessionId) {
+        setStoredSessionId(sessionId);
+      }
+      setAuthError(null);
+      queryClient.invalidateQueries(['auth']);
+      queryClient.invalidateQueries(['ledger']);
+      queryClient.invalidateQueries(['orders']);
+      queryClient.invalidateQueries(['capital']);
+      queryClient.invalidateQueries(['roi']);
+      queryClient.invalidateQueries(['analytics']);
+    };
+
     const handleAuthMessage = (event: MessageEvent) => {
       if (event.data?.type === 'EVE_AUTH_SUCCESS') {
-        const sessionId = event.data.sessionId;
-        if (sessionId) {
-          setStoredSessionId(sessionId);
-        }
-        setAuthError(null);
-        queryClient.invalidateQueries(['auth']);
-        queryClient.invalidateQueries(['ledger']);
-        queryClient.invalidateQueries(['orders']);
-        queryClient.invalidateQueries(['capital']);
-        queryClient.invalidateQueries(['roi']);
-        queryClient.invalidateQueries(['analytics']);
+        applyAuthSuccess(event.data.sessionId);
       } else if (event.data?.type === 'EVE_AUTH_ERROR') {
         setAuthError(event.data.error || "Erreur d'authentification EVE Online");
       }
     };
 
+    const handleStorageEvent = (event: StorageEvent) => {
+      if (event.key === 'eve_auth_event' && event.newValue) {
+        try {
+          const payload = JSON.parse(event.newValue);
+          if (payload?.type === 'EVE_AUTH_SUCCESS') {
+            applyAuthSuccess(payload.sessionId);
+          } else if (payload?.type === 'EVE_AUTH_ERROR') {
+            setAuthError(payload.error || "Erreur d'authentification EVE Online");
+          }
+        } catch {
+          // ignore parsing error
+        }
+      }
+    };
+
     window.addEventListener('message', handleAuthMessage);
-    return () => window.removeEventListener('message', handleAuthMessage);
+    window.addEventListener('storage', handleStorageEvent);
+
+    let bc: BroadcastChannel | null = null;
+    if (typeof BroadcastChannel !== 'undefined') {
+      try {
+        bc = new BroadcastChannel('eve_sso_channel');
+        bc.onmessage = (event) => {
+          if (event.data?.type === 'EVE_AUTH_SUCCESS') {
+            applyAuthSuccess(event.data.sessionId);
+          } else if (event.data?.type === 'EVE_AUTH_ERROR') {
+            setAuthError(event.data.error || "Erreur d'authentification EVE Online");
+          }
+        };
+      } catch {
+        // BroadcastChannel not supported or denied
+      }
+    }
+
+    return () => {
+      window.removeEventListener('message', handleAuthMessage);
+      window.removeEventListener('storage', handleStorageEvent);
+      try {
+        bc?.close();
+      } catch {
+        // ignore close error
+      }
+    };
   }, [queryClient]);
 
   const handleEveLogin = async (sessionIdToLink?: string) => {
     if (isConnectingSso) return;
     setIsConnectingSso(true);
     setAuthError(null);
+    clearLogoutIntent();
     try {
       const params = new URLSearchParams({ format: 'json' });
       if (sessionIdToLink) {
@@ -1049,6 +1088,7 @@ function AppDashboard() {
     if (isResumingSession) return;
     setIsResumingSession(true);
     setAuthError(null);
+    clearLogoutIntent();
     try {
       const res = await fetchJson<{
         success: boolean;
@@ -1057,8 +1097,7 @@ function AppDashboard() {
         characters?: CharacterSession[];
       }>('/api/auth/resume', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(targetSessionId ? { sessionId: targetSessionId } : {}),
+        body: targetSessionId ? { sessionId: targetSessionId } : {},
       });
 
       if (res.sessionId) {
@@ -1080,20 +1119,17 @@ function AppDashboard() {
 
   const handleSwitchCharacter = async (characterId: number) => {
     try {
-      const res = await fetch('/api/auth/switch', {
+      await fetchJson('/api/auth/switch', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ characterId }),
+        body: { characterId: Number(characterId) },
       });
-      if (res.ok) {
-        setShowCharacterDropdown(false);
-        queryClient.invalidateQueries(['auth']);
-        queryClient.invalidateQueries(['ledger']);
-        queryClient.invalidateQueries(['orders']);
-        queryClient.invalidateQueries(['roi']);
-        queryClient.invalidateQueries(['capital']);
-        queryClient.invalidateQueries(['analytics']);
-      }
+      setShowCharacterDropdown(false);
+      queryClient.invalidateQueries(['auth']);
+      queryClient.invalidateQueries(['ledger']);
+      queryClient.invalidateQueries(['orders']);
+      queryClient.invalidateQueries(['roi']);
+      queryClient.invalidateQueries(['capital']);
+      queryClient.invalidateQueries(['analytics']);
     } catch (err) {
       console.error('Failed to switch character:', err);
     }
@@ -1101,17 +1137,46 @@ function AppDashboard() {
 
   const handleUnlinkCharacter = async (characterId: number) => {
     try {
-      const res = await fetch(`/api/auth/character/${characterId}`, { method: 'DELETE' });
-      if (res.ok) {
+      await fetchJson(`/api/auth/character/${Number(characterId)}`, { method: 'DELETE' });
+      queryClient.invalidateQueries(['auth']);
+      queryClient.invalidateQueries(['ledger']);
+      queryClient.invalidateQueries(['orders']);
+      queryClient.invalidateQueries(['roi']);
+      queryClient.invalidateQueries(['capital']);
+      queryClient.invalidateQueries(['analytics']);
+    } catch (err) {
+      console.error('Failed to unlink character:', err);
+    }
+  };
+
+  const handleRefreshTokens = async (characterId?: number) => {
+    setIsRefreshingTokens(characterId ?? 'all');
+    setTokenFeedback(null);
+    try {
+      const url = characterId
+        ? `/api/auth/character/${characterId}/refresh`
+        : '/api/auth/refresh';
+      const res = await fetchJson<{ success: boolean; character?: CharacterSession }>(url, {
+        method: 'POST',
+        body: characterId ? {} : { force: true },
+      });
+      if (res?.success) {
+        setTokenFeedback({
+          type: 'success',
+          message: characterId
+            ? 'Jeton CCP EVE SSO actualisé avec succès.'
+            : 'Tous les jetons de la flotte ont été actualisés auprès de CCP.',
+        });
         queryClient.invalidateQueries(['auth']);
         queryClient.invalidateQueries(['ledger']);
         queryClient.invalidateQueries(['orders']);
-        queryClient.invalidateQueries(['roi']);
         queryClient.invalidateQueries(['capital']);
-        queryClient.invalidateQueries(['analytics']);
       }
-    } catch (err) {
-      console.error('Failed to unlink character:', err);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Échec du rafraîchissement du jeton';
+      setTokenFeedback({ type: 'error', message: msg });
+    } finally {
+      setIsRefreshingTokens(null);
     }
   };
 
@@ -1128,13 +1193,26 @@ function AppDashboard() {
   }, [queryClient]);
 
   const handleLogout = async () => {
+    const currentSessionId = getStoredSessionId() || sessionData?.sessionId;
+    setLogoutIntent(true);
+    setStoredSessionId(null);
+    queryClient.clear();
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
+      if (currentSessionId) {
+        await fetchJson('/api/auth/logout', {
+          method: 'POST',
+          body: { sessionId: currentSessionId },
+          sessionId: currentSessionId,
+        });
+      } else {
+        await fetchJson('/api/auth/logout', { method: 'POST' });
+      }
     } catch (err) {
       console.error('Logout failed:', err);
     } finally {
       setStoredSessionId(null);
       queryClient.clear();
+      queryClient.set(['auth', 'session'], { authenticated: false, savedSessions: [] }, 60_000);
     }
   };
 
@@ -1341,14 +1419,16 @@ function AppDashboard() {
                     <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
                   </div>
 
-                  <a
-                    href="/api/auth/login"
+                  <button
+                    type="button"
+                    onClick={() => handleEveLogin(getStoredSessionId() || sessionData?.sessionId)}
+                    disabled={isConnectingSso}
                     title="Lier un autre personnage EVE SSO"
-                    className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-sky-500/40 text-slate-300 hover:text-sky-300 text-xs font-medium flex items-center gap-1.5 transition-colors"
+                    className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:opacity-50 border border-slate-800 hover:border-sky-500/40 text-slate-300 hover:text-sky-300 text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
                   >
                     <UserPlus className="w-3.5 h-3.5 text-sky-400" />
-                    <span className="hidden md:inline">+ Perso</span>
-                  </a>
+                    <span className="hidden md:inline">{isConnectingSso ? 'Connexion...' : '+ Perso'}</span>
+                  </button>
 
                   <button
                     onClick={handleLogout}
@@ -1370,7 +1450,7 @@ function AppDashboard() {
 
                     <div className="max-h-60 overflow-y-auto space-y-1">
                       {linkedCharacters.map((c) => {
-                        const isCurrent = c.characterId === session.characterId;
+                        const isCurrent = Boolean(c.isActive) || Number(c.characterId) === Number(session.characterId);
                         return (
                           <div
                             key={c.characterId}
@@ -1381,7 +1461,7 @@ function AppDashboard() {
                             }`}
                           >
                             <div
-                              onClick={() => !isCurrent && handleSwitchCharacter(c.characterId)}
+                              onClick={() => !isCurrent && handleSwitchCharacter(Number(c.characterId))}
                               className="flex items-center gap-2.5 flex-1 cursor-pointer"
                             >
                               <img
@@ -1402,15 +1482,33 @@ function AppDashboard() {
                               </div>
                             </div>
 
-                            {linkedCharacters.length > 1 && (
+                            <div className="flex items-center gap-1">
                               <button
-                                onClick={() => handleUnlinkCharacter(c.characterId)}
-                                title="Délier ce personnage"
-                                className="p-1 text-slate-500 hover:text-rose-400 rounded hover:bg-slate-800 transition-colors"
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRefreshTokens(c.characterId);
+                                }}
+                                disabled={isRefreshingTokens === c.characterId || isRefreshingTokens === 'all'}
+                                title="Actualiser le jeton SSO auprès de CCP"
+                                className="p-1 text-slate-400 hover:text-amber-300 rounded hover:bg-slate-800 transition-colors disabled:opacity-50"
                               >
-                                <X className="w-3.5 h-3.5" />
+                                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingTokens === c.characterId || isRefreshingTokens === 'all' ? 'animate-spin' : ''}`} />
                               </button>
-                            )}
+                              {linkedCharacters.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleUnlinkCharacter(c.characterId);
+                                  }}
+                                  title="Délier ce personnage"
+                                  className="p-1 text-slate-500 hover:text-rose-400 rounded hover:bg-slate-800 transition-colors"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
                           </div>
                         );
                       })}
@@ -1842,6 +1940,10 @@ function AppDashboard() {
                 linkedCharacters={linkedCharacters}
                 activeCharacterId={session?.characterId}
                 onSwitchCharacter={handleSwitchCharacter}
+                onUnlinkCharacter={handleUnlinkCharacter}
+                onRefreshToken={handleRefreshTokens}
+                isRefreshingTokens={isRefreshingTokens}
+                tokenFeedback={tokenFeedback}
                 onLogout={handleLogout}
                 onLinkCharacter={() => handleEveLogin(getStoredSessionId() || sessionData?.sessionId)}
                 hubsList={hubsList}

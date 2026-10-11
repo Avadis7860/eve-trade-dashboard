@@ -685,5 +685,138 @@ describe('Phase R05 — Bounded Concurrency, Request Coalescing & Rate Limiting 
       ).rejects.toThrow('Timed out waiting to acquire sync lease');
     });
   });
+
+  describe('5. Phase P01 — PI, Industry & Mining Dedicated Ingestion & Rate Regulation', () => {
+    it('TEST-P01-01: Simulates 11 characters x 6 planets (66 colonies) with bounded concurrency <= 4', async () => {
+      let activePinRequests = 0;
+      let peakPinRequests = 0;
+
+      // Mock 6 planets per character
+      vi.spyOn(esiClient, 'get').mockImplementation(async (path: string) => {
+        if (path.includes('/planets/') && !path.match(/\/planets\/\d+\//)) {
+          // List planets
+          const charMatch = path.match(/\/characters\/(\d+)\/planets\//);
+          const charId = charMatch ? Number(charMatch[1]) : 1;
+          const planets = Array.from({ length: 6 }, (_, idx) => ({
+            last_update: '2026-10-10T12:00:00Z',
+            num_pins: 5,
+            owner_id: charId,
+            planet_id: charId * 100 + idx + 1,
+            planet_type: 'temperate',
+            solar_system_id: 300001,
+            upgrade_level: 4,
+          }));
+          return {
+            data: planets,
+            meta: { status: 200, fromCache: false, fetchedAt: Date.now() },
+          };
+        }
+
+        if (path.match(/\/planets\/\d+\//)) {
+          // Pin detail
+          activePinRequests++;
+          peakPinRequests = Math.max(peakPinRequests, activePinRequests);
+          await new Promise((res) => setTimeout(res, 15));
+          activePinRequests--;
+          return {
+            data: {
+              links: [],
+              pins: [{ latitude: 0.1, longitude: 0.2, pin_id: 1, type_id: 2254 }],
+              routes: [],
+            },
+            meta: { status: 200, fromCache: false, fetchedAt: Date.now() },
+          };
+        }
+
+        return {
+          data: [],
+          meta: { status: 200, fromCache: false, fetchedAt: Date.now() },
+        };
+      });
+
+      // Synchronize 11 characters with concurrencyLimit: 4
+      const charIds = Array.from({ length: 11 }, (_, i) => 2000 + i + 1);
+      const syncPromises = charIds.map((charId) =>
+        syncService.syncPlanetaryInteraction(charId, `token-${charId}`)
+      );
+
+      const results = await Promise.all(syncPromises);
+
+      expect(results).toHaveLength(11);
+      for (const res of results) {
+        expect(res.status).toBe('COMPLETE');
+        expect(res.itemsFetched).toBe(6);
+      }
+
+      // Assert that peak concurrent pin detail requests never exceeded 4!
+      expect(peakPinRequests).toBeLessThanOrEqual(4);
+      expect(peakPinRequests).toBeGreaterThan(0);
+    });
+
+    it('TEST-P01-02: Preserves error limit budget >= 80/100 across full sync cycle', async () => {
+      // Set initial headers with 95/100 budget
+      esiRateLimiter.updateFromHeaders(
+        new Headers({
+          'x-esi-error-limit-remain': '95',
+          'x-esi-error-limit-reset': '60',
+        })
+      );
+
+      vi.spyOn(esiClient, 'get').mockImplementation(async (path: string) => {
+        if (path.includes('/industry/jobs/')) {
+          return {
+            data: [{ job_id: 1, activity_id: 1, runs: 1, status: 'active', blueprint_id: 1, blueprint_location_id: 1, blueprint_type_id: 1, duration: 100, end_date: '', facility_id: 1, installer_id: 1, output_location_id: 1, start_date: '', station_id: 1 }],
+            meta: { status: 200, fromCache: false, fetchedAt: Date.now() },
+          };
+        }
+        if (path.includes('/mining/')) {
+          return {
+            data: [{ date: '2026-10-10', quantity: 1000, solar_system_id: 1, type_id: 34 }],
+            meta: { status: 200, fromCache: false, pages: 1, fetchedAt: Date.now() },
+          };
+        }
+        return {
+          data: [],
+          meta: { status: 200, fromCache: false, fetchedAt: Date.now() },
+        };
+      });
+
+      const piRes = await syncService.syncPlanetaryInteraction(1001, 'test-token');
+      const indRes = await syncService.syncIndustryJobs(1001, 'test-token');
+      const minRes = await syncService.syncMiningLedger(1001, 'test-token');
+
+      expect(piRes.status).toBe('COMPLETE');
+      expect(indRes.status).toBe('COMPLETE');
+      expect(minRes.status).toBe('COMPLETE');
+
+      const rateStatus = esiRateLimiter.getStatus();
+      expect(rateStatus.errorLimitRemain).toBeGreaterThanOrEqual(80);
+      expect(rateStatus.isSuspended).toBe(false);
+    });
+
+    it('TEST-P01-03: syncAll orchestrates PI, industry, and mining streams alongside core domains', async () => {
+      vi.spyOn(esiClient, 'get').mockImplementation(async (path: string) => {
+        if (path.includes('/wallet/transactions')) return { data: [], meta: { status: 200, fromCache: false, fetchedAt: Date.now() } };
+        if (path.includes('/wallet/journal')) return { data: [], meta: { status: 200, fromCache: false, fetchedAt: Date.now() } };
+        if (path.includes('/orders/')) return { data: [], meta: { status: 200, fromCache: false, fetchedAt: Date.now() } };
+        if (path.includes('/assets/')) return { data: [], meta: { status: 200, fromCache: false, pages: 1, fetchedAt: Date.now() } };
+        if (path.includes('/wallet')) return { data: 50000000, meta: { status: 200, fromCache: false, fetchedAt: Date.now() } };
+        if (path.includes('/planets/')) return { data: [], meta: { status: 200, fromCache: false, fetchedAt: Date.now() } };
+        if (path.includes('/industry/jobs/')) return { data: [], meta: { status: 200, fromCache: false, fetchedAt: Date.now() } };
+        if (path.includes('/mining/')) return { data: [], meta: { status: 200, fromCache: false, pages: 1, fetchedAt: Date.now() } };
+        return { data: [], meta: { status: 200, fromCache: false, fetchedAt: Date.now() } };
+      });
+
+      const allRes = await syncService.syncAll(1001, 'test-token');
+
+      expect(allRes.transactions.status).toBe('COMPLETE');
+      expect(allRes.journal.status).toBe('COMPLETE');
+      expect(allRes.orders.status).toBe('COMPLETE');
+      expect(allRes.assets.status).toBe('COMPLETE');
+      expect(allRes.pi?.status).toBe('COMPLETE');
+      expect(allRes.industry?.status).toBe('COMPLETE');
+      expect(allRes.mining?.status).toBe('COMPLETE');
+    });
+  });
 });
 

@@ -158,3 +158,40 @@ Export/import de la flotte entière chiffré par un mot de passe utilisateur via
 ### 8.3 Single-Flight OAuth & Résilience Iframe
 - Verrou de rafraîchissement local coalescé prévenant la révocation accidentelle des tokens CCP lors d'appels simultanés.
 - Double canal de session : Cookie HTTP sécurisé + En-tête `Authorization: Bearer <sessionId>` assurant la continuité de navigation dans les iframes tierces.
+
+---
+
+## 9. Moteur de Propagation Déterministe des Coûts Industriels & BOM (Phase P05)
+
+- **Fichiers :** `src/server/production/costPropagator.ts`, `src/server/production/service.ts`
+- **Tests :** `src/server/production/production.test.ts`
+
+### 9.1 Principe de Propagation Ascendante le Long de l'Arbre BOM
+Dans une chaîne de fabrication (P0 $\rightarrow$ P1 $\rightarrow$ P2 $\rightarrow$ P3 $\rightarrow$ P4 ou Minerais $\rightarrow$ Composants $\rightarrow$ Coques), le coût de revient unitaire d'un lot fabriqué $L_{\text{produit}}$ résulte de la somme pondérée des intrants consommés et des coûts de processus :
+$$C_{\text{unitaire}}(L_{\text{produit}}) = \frac{\sum_{i=1}^{n} \left( Q_{\text{entrant}, i} \times C_{\text{unitaire}}(L_{\text{entrant}, i}) \right) + \text{Frais Job ISK} + \text{Taxes Douanières POCO ISK}}{Q_{\text{sortant}}}$$
+
+### 9.2 Invariants et Règles de Vérité
+1. **Pas de Rupture de Chaîne FIFO :** Le lot produit est injecté dans le référentiel des lots d'inventaire (`InventoryLot`) avec son statut `MANUFACTURED` et ses pointeurs de lignée (`lineage`). La vente ultérieure sur le marché consomme ce lot comme un achat direct.
+2. **Hérédité des Incertitudes :** Si au moins un intrant possède un coût non résolu (`UNKNOWN` ou `PARTIAL`), le lot produit fini hérite du statut `PARTIAL` ou `UNKNOWN`. Aucun coût fictif n'est substitué.
+3. **Preuve Formelle Développée :** La structure `FormulaProof` conserve l'arbre récursif de décomposition des intrants et de leurs coûts respectifs.
+
+---
+
+## 10. Double Valorisation des Matières Farmées & Minées (Phase P02)
+
+- **Fichiers :** `src/server/mining/service.ts`, `src/server/mining/repository.ts`
+- **Tests :** `src/server/mining/mining.test.ts`
+
+### 10.1 Élimination de l'Erreur du "Minerai Gratuit à 0.00 ISK"
+Tout lot extrait par le joueur (`provenance: 'FARMED'`) est comptabilisé sous deux dimensions indépendantes :
+1. **Dimension Trésorerie (Cash Outflow) :**
+   $$\text{Coût Réel Décaissé} = 0.00\text{ ISK}$$
+2. **Dimension Économique (Coût d'Opportunité d'Extraction) :**
+   $$\text{Coût d'Opportunité} = Q_{\text{extrait}} \times \text{Valeur Unitaire Marchande Observée à Date}$$
+
+### 10.2 Calcul Dual de Rentabilité
+- **ROI Commercial d'Arbitrage :** Évalue la pertinence de transformer ou déplacer le produit par rapport à sa vente brute immédiate :
+  $$\text{ROI}_{\text{arbitrage}} = \frac{\text{Prix Net Vente} - \text{Coût d'Opportunité}}{\text{Coût d'Opportunité}} \times 100$$
+- **Rendement Brut de Farm :** Mesure la création brute de valeur monétaire nette de taxes :
+  $$\text{Gain Net Farm} = \text{Prix Net Vente} - \text{Taxes}$$
+

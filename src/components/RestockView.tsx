@@ -17,7 +17,7 @@ import { RestockItem, RestockItemStatus } from '../App';
 import { formatEveMultibuy } from '../utils/eveMultibuy';
 import { transfersToCsv, restockPurchasesToCsv, triggerCsvDownload } from '../utils/csvExport';
 import { formatIskValue } from '../utils/preferences';
-import { useApiQuery, useQueryClient } from '../utils/apiClient';
+import { useApiQuery, useQueryClient, fetchJson } from '../utils/apiClient';
 
 export interface TransferSuggestion {
   id: string;
@@ -150,10 +150,7 @@ export const RestockView: React.FC<RestockViewProps> = ({
       if (characterIds && characterIds.length > 0) {
         params.set('characterId', String(characterIds[0]));
       }
-      return fetch(`/api/operations/plan?${params.toString()}`, { signal }).then((res) => {
-        if (!res.ok) throw new Error('Failed to fetch operations plan');
-        return res.json();
-      });
+      return fetchJson<OperationsPlanResponse>(`/api/operations/plan?${params.toString()}`, { signal });
     },
     { ttl: 15_000 }
   );
@@ -208,14 +205,11 @@ export const RestockView: React.FC<RestockViewProps> = ({
   const handleUpdateTransferStatus = async (id: string, newStatus: TransferSuggestion['status']) => {
     setIsUpdatingStatus(id);
     try {
-      const res = await fetch(`/api/operations/transfers/${encodeURIComponent(id)}/status`, {
+      await fetchJson(`/api/operations/transfers/${encodeURIComponent(id)}/status`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
+        body: { status: newStatus },
       });
-      if (res.ok) {
-        queryClient.invalidateQueries(['operations']);
-      }
+      queryClient.invalidateQueries(['operations']);
     } catch (err) {
       console.error('Failed to update transfer status:', err);
     } finally {
@@ -226,14 +220,11 @@ export const RestockView: React.FC<RestockViewProps> = ({
   const handleUpdatePurchaseStatus = async (id: string, newStatus: RestockPurchaseSuggestion['status']) => {
     setIsUpdatingStatus(id);
     try {
-      const res = await fetch(`/api/operations/restock/${encodeURIComponent(id)}/status`, {
+      await fetchJson(`/api/operations/restock/${encodeURIComponent(id)}/status`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
+        body: { status: newStatus },
       });
-      if (res.ok) {
-        queryClient.invalidateQueries(['operations']);
-      }
+      queryClient.invalidateQueries(['operations']);
     } catch (err) {
       console.error('Failed to update purchase status:', err);
     } finally {

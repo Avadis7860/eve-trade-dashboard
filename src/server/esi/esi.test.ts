@@ -534,4 +534,67 @@ describe('ESI Gateway — Pagination Strategies (X-Pages & from_id)', () => {
     expect(result.totalPagesExpected).toBe(3);
     expect(result.totalFetched).toBe(3);
   });
+
+  describe('Phase P01 — ESI OpenAPI Specifications: PI, Industry & Mining', () => {
+    it('TEST-P01-ESI-01: Verifies conditional 304 caching on PI, industry and mining routes', async () => {
+      let fetchCount = 0;
+      const mockFetch = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+        fetchCount++;
+        const headers = init?.headers as Record<string, string>;
+        if (headers && headers['If-None-Match'] === '"etag-p01"') {
+          return {
+            status: 304,
+            ok: false,
+            headers: new Headers({
+              'etag': '"etag-p01"',
+              'expires': new Date(Date.now() + 600000).toUTCString(),
+            }),
+          };
+        }
+        return {
+          status: 200,
+          ok: true,
+          headers: new Headers({
+            'etag': '"etag-p01"',
+            'expires': new Date(Date.now() - 1000).toUTCString(), // Stale so next call revalidates
+            'content-type': 'application/json',
+          }),
+          json: async () => [{ planet_id: 40001, num_pins: 5 }],
+        };
+      });
+
+      const client = new EsiClient({ baseUrl: 'https://esi.evetech.net' }, cache, rateLimiter, mockFetch as unknown as typeof fetch);
+
+      // 1st request -> 200 OK
+      const res1 = await client.get('/characters/1001/planets/');
+      expect(res1.meta.status).toBe(200);
+      expect(res1.meta.fromCache).toBe(false);
+
+      // 2nd request -> 304 Not Modified
+      const res2 = await client.get('/characters/1001/planets/');
+      expect(res2.meta.status).toBe(304);
+      expect(res2.meta.fromCache).toBe(true);
+      expect(fetchCount).toBe(2);
+    });
+
+    it('TEST-P01-ESI-02: Bypasses network call when local cache is still fresh within TTL', async () => {
+      const mockFetch = vi.fn();
+      const client = new EsiClient({ baseUrl: 'https://esi.evetech.net' }, cache, rateLimiter, mockFetch as unknown as typeof fetch);
+
+      const key = cache.generateKey('/characters/1001/mining/');
+      cache.set(
+        key,
+        [{ date: '2026-10-10', quantity: 5000, solar_system_id: 300001, type_id: 34 }],
+        {
+          etag: '"mining-fresh"',
+          expiresHeader: new Date(Date.now() + 300000).toUTCString(),
+        }
+      );
+
+      const res = await client.get('/characters/1001/mining/');
+      expect(res.meta.fromCache).toBe(true);
+      expect(res.meta.status).toBe(304);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+  });
 });

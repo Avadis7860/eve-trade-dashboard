@@ -749,4 +749,580 @@ describe('Phase F11 — Qualifications Réelles & Critères de Sortie', () => {
       }
     });
   });
+
+  describe('Phase S01: Deterministic Logout & Bearer Session Invalidation', () => {
+    let authService: AuthService;
+    let store: SessionStore;
+    let app: express.Express;
+
+    beforeEach(() => {
+      store = new SessionStore();
+      authService = new AuthService(undefined, store);
+      app = express();
+      app.use(cookieParser());
+      app.use(express.json());
+      app.use('/api/auth', createAuthRouter(authService, store));
+    });
+
+    it('TEST-S01-01: invalidates session via Authorization: Bearer <sessionId> header', async () => {
+      const session = store.createSession({
+        characterId: 9001,
+        characterName: 'Bearer Logout Pilot',
+        scopes: ['publicData'],
+        accessToken: 'valid_access_token',
+        refreshToken: 'valid_refresh_token',
+        expiresAt: Date.now() + 3600000,
+      });
+
+      expect(store.getSession(session.sessionId)).not.toBeNull();
+
+      const res = await request(app)
+        .post('/api/auth/logout')
+        .set('Authorization', `Bearer ${session.sessionId}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+
+      // Session must be purged from store
+      expect(store.getSession(session.sessionId)).toBeNull();
+
+      // Subsequent session check returns unauthenticated
+      const checkRes = await request(app)
+        .get('/api/auth/session')
+        .set('Authorization', `Bearer ${session.sessionId}`);
+      expect(checkRes.status).toBe(200);
+      expect(checkRes.body.authenticated).toBe(false);
+    });
+
+    it('TEST-S01-02: invalidates session via X-Session-ID header', async () => {
+      const session = store.createSession({
+        characterId: 9002,
+        characterName: 'X-Session Logout Pilot',
+        scopes: ['publicData'],
+        accessToken: 'valid_access_token',
+        refreshToken: 'valid_refresh_token',
+        expiresAt: Date.now() + 3600000,
+      });
+
+      expect(store.getSession(session.sessionId)).not.toBeNull();
+
+      const res = await request(app)
+        .post('/api/auth/logout')
+        .set('X-Session-ID', session.sessionId);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(store.getSession(session.sessionId)).toBeNull();
+    });
+
+    it('TEST-S01-03: invalidates session via JSON body { sessionId }', async () => {
+      const session = store.createSession({
+        characterId: 9003,
+        characterName: 'Body Logout Pilot',
+        scopes: ['publicData'],
+        accessToken: 'valid_access_token',
+        refreshToken: 'valid_refresh_token',
+        expiresAt: Date.now() + 3600000,
+      });
+
+      expect(store.getSession(session.sessionId)).not.toBeNull();
+
+      const res = await request(app)
+        .post('/api/auth/logout')
+        .send({ sessionId: session.sessionId });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(store.getSession(session.sessionId)).toBeNull();
+    });
+
+    it('TEST-S01-04: once session is deleted via logout, subsequent request without auto_resume returns unauthenticated', async () => {
+      const session = store.createSession({
+        characterId: 9004,
+        characterName: 'No Auto Resume Pilot',
+        scopes: ['publicData'],
+        accessToken: 'valid_access_token',
+        refreshToken: 'valid_refresh_token',
+        expiresAt: Date.now() + 3600000,
+      });
+
+      await request(app)
+        .post('/api/auth/logout')
+        .send({ sessionId: session.sessionId });
+
+      const sessionRes = await request(app).get('/api/auth/session');
+      expect(sessionRes.status).toBe(200);
+      expect(sessionRes.body.authenticated).toBe(false);
+      expect(sessionRes.body.character).toBeUndefined();
+    });
+
+    it('TEST-AUTH-REFRESH-01: POST /api/auth/refresh refreshes all characters in session and returns updated info', async () => {
+      const mockFetch = vi.fn().mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({
+          access_token: 'fresh_access_token_123',
+          token_type: 'Bearer',
+          expires_in: 1200,
+          refresh_token: 'fresh_refresh_token_456',
+        }),
+      }));
+      const refreshAuthService = new AuthService(
+        { clientId: 'test_client', clientSecret: 'test_secret' },
+        store,
+        mockFetch as unknown as typeof fetch
+      );
+      const testApp = express();
+      testApp.use(cookieParser());
+      testApp.use(express.json());
+      testApp.use('/api/auth', createAuthRouter(refreshAuthService, store));
+
+      const session = store.createSession({
+        characterId: 9005,
+        characterName: 'Refresh Fleet Leader',
+        scopes: ['esi-wallet.read_character_wallet.v1'],
+        accessToken: 'old_access_token',
+        refreshToken: 'old_refresh_token',
+        expiresAt: Date.now() - 1000, // expired
+      });
+
+      const res = await request(testApp)
+        .post('/api/auth/refresh')
+        .set('X-Session-ID', session.sessionId);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.authenticated).toBe(true);
+
+      const updated = store.getSession(session.sessionId);
+      expect(updated?.accessToken).toBe('fresh_access_token_123');
+      expect(updated?.refreshToken).toBe('fresh_refresh_token_456');
+    });
+
+    it('TEST-AUTH-REFRESH-02: POST /api/auth/character/:characterId/refresh refreshes specific character', async () => {
+      const mockFetch = vi.fn().mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({
+          access_token: 'fresh_char_token',
+          token_type: 'Bearer',
+          expires_in: 1200,
+          refresh_token: 'fresh_char_refresh',
+        }),
+      }));
+      const refreshAuthService = new AuthService(
+        { clientId: 'test_client', clientSecret: 'test_secret' },
+        store,
+        mockFetch as unknown as typeof fetch
+      );
+      const testApp = express();
+      testApp.use(cookieParser());
+      testApp.use(express.json());
+      testApp.use('/api/auth', createAuthRouter(refreshAuthService, store));
+
+      const session = store.createSession({
+        characterId: 9006,
+        characterName: 'Single Refresh Pilot',
+        scopes: ['esi-wallet.read_character_wallet.v1'],
+        accessToken: 'initial_token',
+        refreshToken: 'initial_refresh',
+        expiresAt: Date.now() + 3600000,
+      });
+
+      const res = await request(testApp)
+        .post(`/api/auth/character/9006/refresh`)
+        .set('Authorization', `Bearer ${session.sessionId}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+
+      const updated = store.getSession(session.sessionId);
+      expect(updated?.characters[9006].accessToken).toBe('fresh_char_token');
+    });
+
+    it('TEST-AUTH-REFRESH-03: getValidSession maintains session when CCP token refresh has transient error', async () => {
+      const mockFetch = vi.fn().mockImplementation(async () => ({
+        ok: false,
+        status: 502,
+        text: async () => 'Bad Gateway',
+      }));
+      const resilientAuthService = new AuthService(
+        { clientId: 'test_client', clientSecret: 'test_secret' },
+        store,
+        mockFetch as unknown as typeof fetch
+      );
+
+      const session = store.createSession({
+        characterId: 9007,
+        characterName: 'Resilient Pilot',
+        scopes: ['publicData'],
+        accessToken: 'expired_access_token',
+        refreshToken: 'durable_refresh_token',
+        expiresAt: Date.now() - 5000, // expired
+      });
+
+      // getValidSession should NOT return null or delete session on transient refresh failure
+      const result = await resilientAuthService.getValidSession(session.sessionId);
+      expect(result).not.toBeNull();
+      expect(result?.sessionId).toBe(session.sessionId);
+      expect(store.getSession(session.sessionId)).not.toBeNull();
+    });
+  });
+
+  describe('Phase S02 — Sélection et Invariance du Personnage Principal', () => {
+    it('TEST-S02-05: POST /api/auth/switch with Bearer token switches active character and returns isActive badges', async () => {
+      const testApp = express();
+      testApp.use(cookieParser());
+      testApp.use(express.json());
+      testApp.use('/api/auth', createAuthRouter(authService, store));
+
+      const session = store.createSession({
+        characterId: 1001,
+        characterName: 'Leader Char',
+        scopes: ['publicData'],
+        accessToken: 'leader-token',
+        refreshToken: 'leader-refresh',
+        expiresAt: Date.now() + 3600000,
+      });
+
+      store.addOrUpdateCharacter(
+        session.sessionId,
+        {
+          characterId: 1002,
+          characterName: 'Second Char',
+          scopes: ['publicData', 'esi-markets.read_character_orders.v1'],
+          accessToken: 'second-token',
+          refreshToken: 'second-refresh',
+          expiresAt: Date.now() + 3600000,
+        },
+        false
+      );
+
+      // Call switch via Bearer token
+      const res = await request(testApp)
+        .post('/api/auth/switch')
+        .set('Authorization', `Bearer ${session.sessionId}`)
+        .send({ characterId: 1002 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.authenticated).toBe(true);
+      expect(res.body.character.characterId).toBe(1002);
+      expect(res.body.character.characterName).toBe('Second Char');
+
+      // Verify characters array contains correct isActive flag
+      const chars = res.body.characters;
+      expect(chars).toHaveLength(2);
+      const c1001 = chars.find((c: { characterId: number }) => c.characterId === 1001);
+      const c1002 = chars.find((c: { characterId: number }) => c.characterId === 1002);
+      expect(c1001?.isActive).toBe(false);
+      expect(c1002?.isActive).toBe(true);
+
+      // Verify store state
+      const updated = store.getSession(session.sessionId);
+      expect(updated?.activeCharacterId).toBe(1002);
+      expect(updated?.characterId).toBe(1002);
+      expect(updated?.characterName).toBe('Second Char');
+    });
+
+    it('TEST-S02-06: POST /api/auth/switch validates missing input (400) and unknown character (404)', async () => {
+      const testApp = express();
+      testApp.use(cookieParser());
+      testApp.use(express.json());
+      testApp.use('/api/auth', createAuthRouter(authService, store));
+
+      const session = store.createSession({
+        characterId: 2001,
+        characterName: 'Solo Pilot',
+        scopes: ['publicData'],
+        accessToken: 'solo-token',
+        refreshToken: 'solo-refresh',
+        expiresAt: Date.now() + 3600000,
+      });
+
+      // Missing sessionId -> 400
+      const resNoSession = await request(testApp)
+        .post('/api/auth/switch')
+        .send({ characterId: 2001 });
+      expect(resNoSession.status).toBe(400);
+
+      // Missing characterId -> 400
+      const resNoChar = await request(testApp)
+        .post('/api/auth/switch')
+        .set('X-Session-ID', session.sessionId)
+        .send({});
+      expect(resNoChar.status).toBe(400);
+
+      // Character not in session -> 404
+      const resNotFound = await request(testApp)
+        .post('/api/auth/switch')
+        .set('Authorization', `Bearer ${session.sessionId}`)
+        .send({ characterId: 99999999 });
+      expect(resNotFound.status).toBe(404);
+    });
+
+    it('TEST-S02-07: DELETE /api/auth/character/:characterId unlinks cleanly with Bearer transport', async () => {
+      const testApp = express();
+      testApp.use(cookieParser());
+      testApp.use(express.json());
+      testApp.use('/api/auth', createAuthRouter(authService, store));
+
+      const session = store.createSession({
+        characterId: 3001,
+        characterName: 'Fleet Active Pilot',
+        scopes: ['publicData'],
+        accessToken: 'token-3001',
+        refreshToken: 'refresh-3001',
+        expiresAt: Date.now() + 3600000,
+      });
+
+      store.addOrUpdateCharacter(
+        session.sessionId,
+        {
+          characterId: 3002,
+          characterName: 'Fleet Alt Pilot',
+          scopes: ['publicData'],
+          accessToken: 'token-3002',
+          refreshToken: 'refresh-3002',
+          expiresAt: Date.now() + 3600000,
+        },
+        false
+      );
+
+      // Unlink non-active character 3002
+      const res1 = await request(testApp)
+        .delete('/api/auth/character/3002')
+        .set('Authorization', `Bearer ${session.sessionId}`);
+
+      expect(res1.status).toBe(200);
+      expect(res1.body.authenticated).toBe(true);
+      expect(res1.body.character.characterId).toBe(3001); // remains 3001
+      expect(res1.body.characters).toHaveLength(1);
+
+      // Unlink active character 3001 (now only 1 character left)
+      store.addOrUpdateCharacter(
+        session.sessionId,
+        {
+          characterId: 3003,
+          characterName: 'Replacement Alt',
+          scopes: ['publicData'],
+          accessToken: 'token-3003',
+          refreshToken: 'refresh-3003',
+          expiresAt: Date.now() + 3600000,
+        },
+        false
+      );
+
+      const res2 = await request(testApp)
+        .delete('/api/auth/character/3001')
+        .set('X-Session-ID', session.sessionId);
+
+      expect(res2.status).toBe(200);
+      expect(res2.body.character.characterId).toBe(3003); // transitioned to 3003
+
+      // Unlink the last character -> session destroyed
+      const res3 = await request(testApp)
+        .delete('/api/auth/character/3003')
+        .set('Authorization', `Bearer ${session.sessionId}`);
+
+      expect(res3.status).toBe(200);
+      expect(res3.body.authenticated).toBe(false);
+      expect(store.getSession(session.sessionId)).toBeNull();
+    });
+
+    it('TEST-S02-08: activeCharacterId is strictly invariant when refreshing 10 expired characters in fleet', async () => {
+      let callCount = 0;
+      const mockFetch = vi.fn().mockImplementation(async () => {
+        callCount++;
+        return {
+          ok: true,
+          json: async () => ({
+            access_token: `refreshed_token_${callCount}`,
+            token_type: 'Bearer',
+            expires_in: 1200,
+            refresh_token: `refreshed_refresh_${callCount}`,
+          }),
+        };
+      });
+
+      const multiAuthService = new AuthService(
+        { clientId: 'multi_client', clientSecret: 'multi_secret' },
+        store,
+        mockFetch as unknown as typeof fetch
+      );
+
+      // Create session with chosen active character #4005
+      const session = store.createSession({
+        characterId: 4001,
+        characterName: 'Char 1',
+        scopes: ['publicData'],
+        accessToken: 'old_1',
+        refreshToken: 'ref_1',
+        expiresAt: Date.now() - 1000, // expired
+      });
+
+      for (let i = 2; i <= 10; i++) {
+        store.addOrUpdateCharacter(
+          session.sessionId,
+          {
+            characterId: 4000 + i,
+            characterName: `Char ${i}`,
+            scopes: ['publicData'],
+            accessToken: `old_${i}`,
+            refreshToken: `ref_${i}`,
+            expiresAt: Date.now() - 1000, // all expired
+          },
+          false
+        );
+      }
+
+      // Explicitly set active character to 4005
+      store.switchActiveCharacter(session.sessionId, 4005);
+      expect(store.getSession(session.sessionId)?.activeCharacterId).toBe(4005);
+
+      // Perform getValidSession which triggers refreshAllExpiredCharacters
+      const validSession = await multiAuthService.getValidSession(session.sessionId);
+      expect(validSession).not.toBeNull();
+
+      // INVARIANCE ASSERTION: activeCharacterId MUST remain 4005!
+      expect(validSession?.activeCharacterId).toBe(4005);
+      expect(validSession?.characterId).toBe(4005);
+      expect(validSession?.characterName).toBe('Char 5');
+
+      const publicInfo = multiAuthService.getPublicSessionInfo(validSession);
+      expect(publicInfo.character?.characterId).toBe(4005);
+      expect(publicInfo.character?.characterName).toBe('Char 5');
+
+      const activeInList = publicInfo.characters?.find((c) => c.isActive);
+      expect(activeInList?.characterId).toBe(4005);
+    });
+
+    it('TEST-S03-04: GET /api/auth/login?session_id=...&format=json binds session_id to OAuth state for fleet expansion', async () => {
+      const testApp = express();
+      testApp.use(cookieParser());
+      testApp.use(express.json());
+      testApp.use('/api/auth', createAuthRouter(authService, store));
+
+      const existingSession = store.createSession({
+        characterId: 8001,
+        characterName: 'Fleet Leader',
+        scopes: ['publicData'],
+        accessToken: 'tk-8001',
+        refreshToken: 'rf-8001',
+        expiresAt: Date.now() + 1000000,
+      });
+
+      const res = await request(testApp)
+        .get(`/api/auth/login?format=json&session_id=${existingSession.sessionId}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.url).toBeDefined();
+
+      const parsedUrl = new URL(res.body.url);
+      const state = parsedUrl.searchParams.get('state');
+      expect(state).toBeDefined();
+
+      // Verify that SessionStore registered the pending state associated with the existing session
+      const pendingState = store.consumeOAuthState(state!);
+      expect(pendingState).not.toBeNull();
+      expect(pendingState?.sessionId).toBe(existingSession.sessionId);
+    });
+
+    it('TEST-S03-05: GET /api/auth/callback responds with resilient HTML containing BroadcastChannel, storage events, and close button without crashing when window.opener is null', async () => {
+      const testApp = express();
+      testApp.use(cookieParser());
+      testApp.use(express.json());
+      testApp.use('/api/auth', createAuthRouter(authService, store));
+
+      const callbackCharId = 8801;
+
+      // Mock handleCallback directly to test callback HTML response and iframe resilience
+      vi.spyOn(authService, 'handleCallback').mockResolvedValueOnce({
+        sessionId: 'session_s03_test',
+        activeCharacterId: callbackCharId,
+        characterId: callbackCharId,
+        characterName: 'Resilient Pilot',
+        scopes: ['publicData'],
+        accessToken: 'tk_s03',
+        refreshToken: 'rf_s03',
+        expiresAt: Date.now() + 1200000,
+        createdAt: Date.now(),
+        characters: {
+          [callbackCharId]: {
+            characterId: callbackCharId,
+            characterName: 'Resilient Pilot',
+            scopes: ['publicData'],
+            accessToken: 'tk_s03',
+            refreshToken: 'rf_s03',
+            expiresAt: Date.now() + 1200000,
+            createdAt: Date.now(),
+          },
+        },
+      });
+
+      const res = await request(testApp)
+        .get('/api/auth/callback?code=mock_code_123&state=mock_state_123');
+
+      expect(res.status).toBe(200);
+      expect(res.text).toContain('Authentification Réussie');
+      expect(res.text).toContain('eve_sso_channel');
+      expect(res.text).toContain('eve_auth_event');
+      expect(res.text).toContain('Fermer cette fenêtre');
+      expect(res.text).toContain('window.close()');
+    });
+
+    it('TEST-S03-06: full 11-character fleet expansion persists all 11 linked characters under a single session', async () => {
+      const futureExp = Math.floor(Date.now() / 1000) + 1200;
+      let charIndex = 0;
+
+      const multiFetch = vi.fn().mockImplementation(async () => {
+        charIndex++;
+        const charId = 9000 + charIndex;
+        const charToken = createMockJwt({
+          iss: 'login.eveonline.com',
+          sub: `CHARACTER:EVE:${charId}`,
+          name: `Fleet ${charIndex}`,
+          owner: `owner_${charId}`,
+          scp: ['publicData'],
+          exp: futureExp,
+          azp: 'fleet_client',
+        });
+        return {
+          ok: true,
+          json: async () => ({
+            access_token: charToken,
+            token_type: 'Bearer',
+            expires_in: 1200,
+            refresh_token: `rf_${charIndex}`,
+          }),
+        };
+      });
+
+      const fleetAuthService = new AuthService(
+        { clientId: 'fleet_client', clientSecret: 'fleet_secret', callbackUrl: 'http://localhost:3000/api/auth/callback' },
+        store,
+        multiFetch as unknown as typeof fetch
+      );
+
+      // 1. Initial login for character #1
+      const { state: state1 } = fleetAuthService.createLoginUrl();
+      const session = await fleetAuthService.handleCallback('code_1', state1);
+      const fleetSessionId = session.sessionId;
+
+      // 2. Link 10 additional characters sequentially using session_id
+      for (let i = 2; i <= 11; i++) {
+        const { state: stateI } = fleetAuthService.createLoginUrl(undefined, fleetSessionId);
+        await fleetAuthService.handleCallback(`code_${i}`, stateI, fleetSessionId);
+      }
+
+      // 3. Verify that the session has all 11 characters
+      const fleetSession = store.getSession(fleetSessionId);
+      expect(fleetSession).not.toBeNull();
+      expect(fleetSession?.sessionId).toBe(fleetSessionId);
+      expect(Object.keys(fleetSession!.characters)).toHaveLength(11);
+
+      for (let i = 1; i <= 11; i++) {
+        const charId = 9000 + i;
+        expect(fleetSession?.characters[charId]).toBeDefined();
+        expect(fleetSession?.characters[charId].characterName).toBe(`Fleet ${i}`);
+      }
+    });
+  });
 });

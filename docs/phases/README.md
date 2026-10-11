@@ -1,6 +1,6 @@
 # Répertoire Canonique des Phases de Travail
 
-Ce dossier rassemble les cahiers des charges et critères de qualification de l'ensemble des phases de développement du projet **EVE Trade Dashboard**.
+Ce dossier rassemble les spécifications et critères de qualification des phases de développement actives du projet **EVE Trade Dashboard**.
 
 ---
 
@@ -14,69 +14,36 @@ Chaque phase suit une discipline stricte de livraison :
 
 ---
 
-## 2. Table Récapitulative des Phases par Époque
+## 2. Série Active : Moteur Intégré Production, PI, Industrie & Traçabilité des Coûts (Série P)
 
-### Époque 1 : Socle Initial & MVP
-| Phase | Intitulé | État | Document |
+| Phase | Intitulé | État | Spécification |
 |---|---|---|---|
-| **00** | Fondations React 19, TypeScript strict, Express, CI | Terminé | [PHASE-00-foundation.md](PHASE-00-foundation.md) |
-| **01** | EVE SSO & Identité (OAuth 2.0 PKCE) | Terminé | [PHASE-01-sso-character.md](PHASE-01-sso-character.md) |
-| **02** | Client ESI résilient (Cache ETag, Rate-limiting, Retry) | Terminé | [PHASE-02-esi-gateway.md](PHASE-02-esi-gateway.md) |
-| **03** | Transactions et grand livre | Terminé | [PHASE-03-sales-ledger.md](PHASE-03-sales-ledger.md) |
-| **04** | Cycle de vie des ordres et réapprovisionnement initial | Terminé | [PHASE-04-order-lifecycle.md](PHASE-04-order-lifecycle.md) |
-| **05** | Hubs commerciaux et rentabilité brute | Terminé | [PHASE-05-hubs-and-roi.md](PHASE-05-hubs-and-roi.md) |
-| **06** | Dashboard intégré initial | Terminé | [PHASE-06-dashboard.md](PHASE-06-dashboard.md) |
-| **H01**| Hardening sécurité et isolation multi-personnages | Terminé | [PHASE-H01-security.md](PHASE-H01-security.md) |
-| **H02**| Hardening intégrité, résilience et sauvegarde SHA-256 | Terminé | [PHASE-H02-data-reliability.md](PHASE-H02-data-reliability.md) |
+| **P01** | Ingestion ESI Dédiée & Régulation Débit : PI, Industrie & Minage (Sub-batching, cache Expires, protection quota) | Planifiée | [PHASE-P01-esi-ingestion-rate-concurrency-pi-industry-mining.md](PHASE-P01-esi-ingestion-rate-concurrency-pi-industry-mining.md) |
+| **P02** | Registre Minier & Modélisation des Coûts d'Opportunité Farm / Mining (FARMED_PROVENANCE, valeur d'extraction non nulle) | Planifiée | [PHASE-P02-mining-farm-ledger-opportunity-cost.md](PHASE-P02-mining-farm-ledger-opportunity-cost.md) |
+| **P03** | Colonies Planétaires & Flux de Matières PI (Pins, cadences horaires, silos, taxes POCO) | Planifiée | [PHASE-P03-planetary-interaction-colonies-customs.md](PHASE-P03-planetary-interaction-colonies-customs.md) |
+| **P04** | Grand Livre Industriel & Bill of Materials (BOM) : Jobs & Encours WIP (Manufacturing, réactions, frais d'installation) | Planifiée | [PHASE-P04-industry-jobs-bom-work-in-progress.md](PHASE-P04-industry-jobs-bom-work-in-progress.md) |
+| **P05** | Moteur de Propagation Déterministe des Coûts (FIFO Multi-Niveaux & Chaîne de Valeur P0->P4 et BOM sans rupture) | Planifiée | [PHASE-P05-multi-tier-fifo-cost-propagation.md](PHASE-P05-multi-tier-fifo-cost-propagation.md) |
 
-### Époque 2 : Transformation Cockpit & Système de Pilotage
-| Phase | Intitulé | État | Document |
-|---|---|---|---|
-| **07** | Durabilité du stockage et historique fiable (Migrations SQL) | Terminé | [PHASE-07-storage-and-history.md](PHASE-07-storage-and-history.md) |
-| **08** | Réconciliation financière et métriques versionnées | Terminé | [PHASE-08-financial-reconciliation.md](PHASE-08-financial-reconciliation.md) |
-| **09** | Positions de capital et inventaire mutuellement exclusif | Terminé | [PHASE-09-capital-and-inventory.md](PHASE-09-capital-and-inventory.md) |
-| **10** | Product 360 et visualisations temporelles | Terminé | [PHASE-10-product-360-analytics.md](PHASE-10-product-360-analytics.md) |
-| **10.bis** | Soldes réels des wallets et divisions corporatives (1 à 7) | Terminé | [PHASE-10bis-wallets-and-scopes.md](PHASE-10bis-wallets-and-scopes.md) |
-| **11** | Opérations, réapprovisionnement et transferts prioritaires | Terminé | [PHASE-11-restock-and-transfers.md](PHASE-11-restock-and-transfers.md) |
-| **12** | Refonte globale du cockpit et navigation en 6 espaces | Terminé | [PHASE-12-cockpit-and-ux-redesign.md](PHASE-12-cockpit-and-ux-redesign.md) |
+---
 
-### Époque 3 : Assurance Fiabilité & Traçabilité (Série F)
-*Fruit de l'audit approfondi post-Phase 12 ([docs/AUDIT-POST-PHASE-12.md](../AUDIT-POST-PHASE-12.md)).*
-| Phase | Intitulé | État | Document |
-|---|---|---|---|
-| **F01** | Cycle de vie sync, annulation réelle `AbortSignal` et persistance | Terminé | [PHASE-F01-sync-concurrency-lifecycle.md](PHASE-F01-sync-concurrency-lifecycle.md) |
-| **F02** | Intégrité du stockage, anti-écrasement et sauvegarde `.corrupt.bak` | Terminé | [PHASE-F02-data-integrity-storage.md](PHASE-F02-data-integrity-storage.md) |
-| **F03** | Invariants financiers, chronologie stricte et FIFO pur sans coût moyen | Terminé | [PHASE-F03-financial-inventory-invariants.md](PHASE-F03-financial-inventory-invariants.md) |
-| **F04** | Qualification PostgreSQL réelle CI (`F04-A`) et tests E2E Chromium (`F04-B`) | Terminé | [PHASE-F04-testing-ci-real-postgres-e2e.md](PHASE-F04-testing-ci-real-postgres-e2e.md) |
-| **F05** | Pagination complète et exhaustive des journaux corporatifs | Terminé | [PHASE-F05-corporation-journal-completeness.md](PHASE-F05-corporation-journal-completeness.md) |
-| **F06** | Identité canonique et déduplication des journaux corporatifs | Terminé | [PHASE-F06-corporation-journal-deduplication.md](PHASE-F06-corporation-journal-deduplication.md) |
-| **F07** | Rapprochement fiscal déterministe SCC M+1 sans double comptage | Terminé | [PHASE-F07-deterministic-tax-reconciliation.md](PHASE-F07-deterministic-tax-reconciliation.md) |
-| **F08** | Attribution unitaire des frais de courtage et reliquats orphelins | Terminé | [PHASE-F08-broker-fee-attribution.md](PHASE-F08-broker-fee-attribution.md) |
-| **F09** | Réconciliation financière TTC et preuve mathématique `FormulaProof` | Terminé | [PHASE-F09-ttc-financial-reconciliation.md](PHASE-F09-ttc-financial-reconciliation.md) |
-| **F10** | Reconstitution historique, recalcul rétrospectif et validation à delta 0 | Terminé | [PHASE-F10-historical-financial-recovery.md](PHASE-F10-historical-financial-recovery.md) |
-| **F11** | Persistance sessions multi-personnages et résilience iframe | Terminé | [PHASE-F11-multi-character-session-persistence.md](PHASE-F11-multi-character-session-persistence.md) |
-| **H03** | Hardening UX, performance et release | Terminé / Archivé | [PHASE-H03-quality-release.md](PHASE-H03-quality-release.md) |
+## 3. Séries Antérieures Récemment Complétées
 
-### Époque 4 : Fiabilisation Finale Production & Sécurité (Série G)
-*Roadmap officielle post-F11 ([docs/ROADMAP-OFFICIELLE-FIABILISATION-POST-F11.md](../ROADMAP-OFFICIELLE-FIABILISATION-POST-F11.md)).*
-| Phase | Intitulé | État | Document |
+### Série S : Résilience Sessions & Iframe AI Studio (Série S)
+| Phase | Intitulé | État | Spécification |
 |---|---|---|---|
-| **G01** | Sécurité de production, Fail-Fast clé chiffrement et single-flight OAuth | Terminé | [PHASE-G01-security-auth-integrity.md](PHASE-G01-security-auth-integrity.md) |
-| **G02** | Persistance PostgreSQL unique sans maps divergentes et bootstrap ordonné | Terminé | [PHASE-G02-postgres-single-source-bootstrap.md](PHASE-G02-postgres-single-source-bootstrap.md) |
-| **G03** | Baux distribués ESI PostgreSQL (`esi_sync_leases`) et concurrence | Terminé | [PHASE-G03-distributed-esi-sync-leases.md](PHASE-G03-distributed-esi-sync-leases.md) |
-| **G04** | Déduplication corporation SQL, backups atomiques et sondes `/health/ready` | Terminé | [PHASE-G04-corp-deduplication-backup-probes.md](PHASE-G04-corp-deduplication-backup-probes.md) |
-| **G05** | Pipeline CI GitHub Actions complet, exercice DR et certification Release | Planifiée | [PHASE-G05-real-ci-e2e-release-ready.md](PHASE-G05-real-ci-e2e-release-ready.md) |
+| **S01** | Transport hybride unifié, Bearer universel et déconnexion déterministe | Terminé | [PHASE-S01-transport-hybrid-logout-determinism.md](PHASE-S01-transport-hybrid-logout-determinism.md) |
+| **S02** | Sélection et invariance absolue du personnage principal sélectionné | Terminé | [PHASE-S02-active-character-selection-invariance.md](PHASE-S02-active-character-selection-invariance.md) |
+| **S03** | Pérennité des flottes au bootstrap et résilience pop-up iframe AI Studio | Terminé | [PHASE-S03-fleet-persistence-iframe-resilience.md](PHASE-S03-fleet-persistence-iframe-resilience.md) |
 
-### Époque Historique : Remise à Niveau & Performance (Série R)
-*Cadrage de référence ([docs/MASTERPLAN-RELIABILITY-PERFORMANCE.md](../MASTERPLAN-RELIABILITY-PERFORMANCE.md)).*
-| Phase | Intitulé | État | Document |
-|---|---|---|---|
-| **R00** | Baseline, mesure de performance et profilage | Archivé / Terminé | [PHASE-R00-baseline.md](PHASE-R00-baseline.md) |
-| **R01** | Fondations de persistance et stockage durable | Archivé / Terminé | [PHASE-R01-persistence.md](PHASE-R01-persistence.md) |
-| **R02** | Complétude des données et pagination adaptative | Archivé / Terminé | [PHASE-R02-completeness-pagination.md](PHASE-R02-completeness-pagination.md) |
-| **R03** | Architecture des requêtes frontend (`apiClient`, cache, abort) | Archivé / Terminé | [PHASE-R03-frontend-query-architecture.md](PHASE-R03-frontend-query-architecture.md) |
-| **R04** | Optimisation des requêtes SQL et indexation | Archivé / Terminé | [PHASE-R04-business-calculations-data-access.md](PHASE-R04-business-calculations-data-access.md) |
-| **R05** | Synchronisation ESI et limitation de concurrence | Archivé / Terminé | [PHASE-R05-esi-sync-concurrency.md](PHASE-R05-esi-sync-concurrency.md) |
-| **R06** | Sécurité, isolation multi-personnages et sauvegardes | Archivé / Terminé | [PHASE-R06-security-isolation-backup.md](PHASE-R06-security-isolation-backup.md) |
-| **R07** | Stratégie de tests complète (Domain, SQL, HTTP, UI, E2E) | Archivé / Terminé | [PHASE-R07-testing-strategy.md](PHASE-R07-testing-strategy.md) |
-| **R08** | Observabilité et métriques système de production | Archivé / Terminé | [PHASE-R08-observability-production.md](PHASE-R08-observability-production.md) |
+---
+
+## 4. Phases Antérieures Archivées
+
+L'ensemble des phases closes des époques précédentes (Époques 1 à 4) a été consolidé et archivé dans **[`docs/archive/phases/`](../archive/phases/)** :
+
+- **Époque 1 : Socle Initial & MVP** (`PHASE-00` à `PHASE-06`, `PHASE-H01`, `PHASE-H02`) : Fondations React 19 / TypeScript, SSO PKCE, client ESI, Grand Livre, cycle des ordres, hubs, dashboard initial et durcissement de sécurité.
+- **Époque 2 : Transformation Cockpit & Pilotage** (`PHASE-07` à `PHASE-12`, `PHASE-10bis`) : Persistance SQL, réconciliation FIFO initiale, positions de capital, Product 360, soldes réels de portefeuilles, logistique & transferts, cockpit en 6 espaces.
+- **Époque 3 : Assurance Fiabilité & Traçabilité (Série F)** (`PHASE-F01` à `PHASE-F11`, `PHASE-H03`) : Invariants financiers, pagination intégrale des journaux, déduplication corporation, attribution fiscale SCC M+1, attribution courtage, preuve TTC `FormulaProof`, recalcul d'historique et persistance des sessions.
+- **Époque 4 : Fiabilisation Finale Production (Série G)** (`PHASE-G01` à `PHASE-G05`) : Sécurité de production, source unique PostgreSQL, baux distribués `esi_sync_leases`, sondes `/health/ready` et validation Release Ready.
+
+Consulter **[`docs/archive/README.md`](../archive/README.md)** pour le détail de l'ensemble des documents archivés.

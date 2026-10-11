@@ -140,6 +140,49 @@ export function createAnalyticsRouter(
     }
   });
 
+  /**
+   * GET /api/analytics/top-sales
+   * Returns ranked sales items from best to worst, without arbitrary limits,
+   * filterable by hub, timeframe, search query, and sorting metric.
+   */
+  router.get('/top-sales', async (req: Request, res: Response) => {
+    try {
+      const charContext = extractCharactersAndValidate(req, res);
+      if (!charContext) return;
+
+      const timeframeParam = req.query.timeframe as TimeframeOption | undefined;
+      const allowedTimeframes: TimeframeOption[] = ['7d', '14d', '30d', '90d', '180d', 'all'];
+      const timeframe: TimeframeOption = timeframeParam && allowedTimeframes.includes(timeframeParam)
+        ? timeframeParam
+        : '90d';
+
+      const hubId = req.query.hub_id ? String(req.query.hub_id) : undefined;
+      const search = req.query.search ? String(req.query.search) : undefined;
+
+      const sortByParam = req.query.sort_by as 'revenue' | 'profit' | 'units' | 'transactions' | 'roi' | undefined;
+      const allowedSort = ['revenue', 'profit', 'units', 'transactions', 'roi'];
+      const sortBy = sortByParam && allowedSort.includes(sortByParam) ? sortByParam : 'revenue';
+
+      const sortDirParam = req.query.sort_dir as 'asc' | 'desc' | undefined;
+      const sortDirection = sortDirParam === 'asc' ? 'asc' : 'desc';
+
+      const result = await service.getTopSalesRankings({
+        timeframe,
+        hubId,
+        search,
+        sortBy,
+        sortDirection,
+        characterId: charContext.effectiveCharId,
+        characterIds: charContext.characterIdsParam,
+      });
+
+      res.json(result);
+    } catch (error) {
+      console.error('[AnalyticsRouter] Error generating top sales rankings:', error);
+      res.status(500).json({ error: 'Erreur lors de la génération du classement des ventes' });
+    }
+  });
+
   return router;
 }
 

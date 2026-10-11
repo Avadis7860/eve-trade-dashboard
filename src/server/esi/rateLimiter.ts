@@ -58,7 +58,7 @@ export class EsiRateLimiter {
    * Acquires a concurrency slot, waiting if max concurrency or rate limit suspension is active.
    * Includes safety timeout to prevent permanent deadlocks.
    */
-  public acquire(timeoutMs: number = 30000): Promise<void> {
+  public acquire(timeoutMs: number = 60000): Promise<void> {
     if (!this.isSuspended() && this.activeRequests < this.maxConcurrent && this.queue.length === 0) {
       this.activeRequests++;
       return Promise.resolve();

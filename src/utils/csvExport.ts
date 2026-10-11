@@ -3,6 +3,7 @@
  */
 
 import { CharacterTransaction, CharacterOrderSnapshot, RestockItem, ExplicitCostAllocation } from '../App';
+import type { TopSalesItem } from '../server/analytics/types';
 
 export function escapeCsvField(value: string | number | boolean | null | undefined): string {
   if (value === null || value === undefined) {
@@ -401,6 +402,40 @@ export function timeSeriesToCsv(dataPoints: Array<{
     escapeCsvField(dp.cumulative_gross_revenue_isk),
     escapeCsvField(dp.sales_count),
     escapeCsvField(dp.buys_count),
+  ].join(','));
+
+  return [headers.join(','), ...rows].join('\r\n');
+}
+
+export function topSalesToCsv(items: TopSalesItem[]): string {
+  const headers = [
+    'Rang',
+    'TypeID',
+    'NomArticle',
+    'HubPrincipal',
+    'UnitesVendues',
+    'PrixMoyenVenteISK',
+    'CABrutISK',
+    'ProfitRealiseTTC_ISK',
+    'ROI_Pourcent_TTC',
+    'NombreTransactions',
+    'StatutCouverture',
+    'DetailsHubs',
+  ];
+
+  const rows = items.map((item, index) => [
+    escapeCsvField(index + 1),
+    escapeCsvField(item.type_id),
+    escapeCsvField(item.type_name),
+    escapeCsvField(item.primary_hub_name),
+    escapeCsvField(item.units_sold),
+    escapeCsvField(item.average_unit_sale_price_isk),
+    escapeCsvField(item.gross_revenue_isk),
+    escapeCsvField(item.realized_profit_ttc_isk ?? ''),
+    escapeCsvField(item.roi_percent_ttc !== null ? `${item.roi_percent_ttc}%` : ''),
+    escapeCsvField(item.sales_transactions_count),
+    escapeCsvField(item.coverage_status),
+    escapeCsvField(item.hubs.map((h) => `${h.hub_name}: ${h.units_sold} un. (${h.gross_revenue_isk} ISK)`).join(' ; ')),
   ].join(','));
 
   return [headers.join(','), ...rows].join('\r\n');

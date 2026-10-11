@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: ['**']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualification-pipeline:
+    name: Full CI Matrix & Real Postgres E2E Pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: eve_trade_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      CI: 'true'
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/eve_trade_test
+      SESSION_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium & Dependencies
+        run: npx playwright install --with-deps chromium chromium-headless-shell
+
+      - name: 1. Lint & Code Formatting (ESLint 9 Strict)
+        run: npm run lint
+
+      - name: 2. TypeScript Static Typecheck (noEmit)
+        run: npm run typecheck
+
+      - name: 3. Unit & Domain Logic Tests (Vitest)
+        run: npm test
+
+      - name: 4. Real PostgreSQL Service Integration Tests (Docker Container)
+        run: npm run test:integration
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/eve_trade_test
+
+      - name: 5. Disaster Recovery & Financial Recalculation Check (Delta ISK = 0.00)
+        run: npm run db:recalculate-financials -- --dry-run
+
+      - name: 6. Real Chromium Browser E2E Journeys (Playwright Headless)
+        run: npm run test:e2e
+
+      - name: 7. Production Build Verification (Client & Server)
+        run: npm run build

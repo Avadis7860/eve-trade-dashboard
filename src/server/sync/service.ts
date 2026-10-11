@@ -21,6 +21,9 @@ import type { SyncResult, SyncResourceType, SyncAllResult, DivisionSyncStatus, S
 import type { IWalletRepository } from '../ledger/walletRepository.ts';
 import { defaultWalletRepository } from '../ledger/walletRepository.ts';
 import type { WalletBalanceSnapshot, WalletSyncMode } from '../capital/types.ts';
+import { PiCollector } from '../pi/collector.ts';
+import { IndustryCollector } from '../industry/collector.ts';
+import { MiningCollector } from '../mining/collector.ts';
 
 export interface RawEsiTransaction {
   transaction_id: number;
@@ -60,6 +63,9 @@ export class SyncService {
   private syncRepo: ISyncRepository;
   private universeService: UniverseService;
   private coordinator: SyncCoordinator;
+  private piCollector: PiCollector;
+  private industryCollector: IndustryCollector;
+  private miningCollector: MiningCollector;
   private inaccessibleCorpCharacters: Set<number> = new Set();
 
   constructor(
@@ -70,7 +76,10 @@ export class SyncService {
     universeService: UniverseService = defaultUniverseService,
     assetsRepo: IAssetsRepository = defaultAssetsRepository,
     coordinator: SyncCoordinator = defaultSyncCoordinator,
-    walletRepo: IWalletRepository = defaultWalletRepository
+    walletRepo: IWalletRepository = defaultWalletRepository,
+    piCollector?: PiCollector,
+    industryCollector?: IndustryCollector,
+    miningCollector?: MiningCollector
   ) {
     this.esiClient = esiClient;
     this.ledgerRepo = ledgerRepo;
@@ -83,10 +92,25 @@ export class SyncService {
       this.coordinator.setSyncRepository(this.syncRepo);
     }
     this.walletRepo = walletRepo;
+    this.piCollector = piCollector ?? new PiCollector(this.esiClient, this.esiClient.getRateLimiter());
+    this.industryCollector = industryCollector ?? new IndustryCollector(this.esiClient);
+    this.miningCollector = miningCollector ?? new MiningCollector(this.esiClient);
   }
 
   public getCoordinator(): SyncCoordinator {
     return this.coordinator;
+  }
+
+  public getPiCollector(): PiCollector {
+    return this.piCollector;
+  }
+
+  public getIndustryCollector(): IndustryCollector {
+    return this.industryCollector;
+  }
+
+  public getMiningCollector(): MiningCollector {
+    return this.miningCollector;
   }
 
   /**
@@ -1715,7 +1739,18 @@ export class SyncService {
       });
 
       // 1. Launch independent resources in parallel through the bounded worker pool using Promise.allSettled
-      const [txSettled, jnSettled, ordSettled, astSettled, walSettled, corpWalSettled, corpAstSettled] = await Promise.allSettled([
+      const [
+        txSettled,
+        jnSettled,
+        ordSettled,
+        astSettled,
+        walSettled,
+        corpWalSettled,
+        corpAstSettled,
+        piSettled,
+        indSettled,
+        minSettled,
+      ] = await Promise.allSettled([
         this.syncWalletTransactions(characterId, accessToken, refreshTokenFn, { forceRevalidate }),
         this.syncWalletJournal(characterId, accessToken, refreshTokenFn, { forceRevalidate }),
         this.syncCharacterOrders(characterId, accessToken, refreshTokenFn, { forceRevalidate }),
@@ -1723,6 +1758,9 @@ export class SyncService {
         this.syncCharacterWallet(characterId, accessToken, refreshTokenFn, { forceRevalidate }),
         this.syncCorporationWallets(characterId, accessToken, refreshTokenFn, { walletSyncMode: options?.walletSyncMode }),
         this.syncCorporationAssets(characterId, accessToken, refreshTokenFn),
+        this.syncPlanetaryInteraction(characterId, accessToken, refreshTokenFn, { forceRevalidate }),
+        this.syncIndustryJobs(characterId, accessToken, refreshTokenFn, { forceRevalidate }),
+        this.syncMiningLedger(characterId, accessToken, refreshTokenFn, { forceRevalidate }),
       ]);
 
       const transactions = txSettled.status === 'fulfilled'
@@ -1747,8 +1785,164 @@ export class SyncService {
 
       const corpWallets = corpWalSettled.status === 'fulfilled' ? corpWalSettled.value : undefined;
       const corpAssets = corpAstSettled.status === 'fulfilled' ? corpAstSettled.value : undefined;
+      const pi = piSettled.status === 'fulfilled' ? piSettled.value : undefined;
+      const industry = indSettled.status === 'fulfilled' ? indSettled.value : undefined;
+      const mining = minSettled.status === 'fulfilled' ? minSettled.value : undefined;
 
-      return { transactions, journal, orders, assets, wallet, corpWallets, corpAssets };
+      return { transactions, journal, orders, assets, wallet, corpWallets, corpAssets, pi, industry, mining };
+    });
+  }
+
+  /**
+   * Synchronizes planetary interaction colonies and pins using the dedicated PiCollector
+   */
+  public async syncPlanetaryInteraction(
+    characterId: number,
+    accessToken: string,
+    refreshTokenFn?: () => Promise<string | null>,
+    options?: { forceRevalidate?: boolean; minErrorBudget?: number }
+  ): Promise<SyncResult> {
+    const key = `sync:${characterId}:planetary_interaction`;
+    return this.coordinator.enqueue(key, async (signal) => {
+      const resource: SyncResourceType = 'planetary_interaction';
+      const startTime = Date.now();
+
+      await this.syncRepo.updateSyncStateAsync(characterId, resource, {
+        status: 'SYNCING',
+        lastSyncStartedAt: startTime,
+      });
+
+      const res = await this.piCollector.collectPlanets(characterId, accessToken, refreshTokenFn, {
+        forceRevalidate: options?.forceRevalidate,
+        signal,
+        minErrorBudget: options?.minErrorBudget,
+      });
+
+      const syncStatus: SyncStatusState = res.status;
+      await this.syncRepo.updateSyncStateAsync(characterId, resource, {
+        status: syncStatus,
+        coverageStatus: res.status,
+        lastSyncCompletedAt: Date.now(),
+        totalRecords: res.planetsCount,
+        itemsCount: res.pinsCount,
+        newRecordsInLastSync: res.planetsCount,
+        errorMessage: res.error,
+      });
+
+      return {
+        resource,
+        characterId,
+        status: syncStatus,
+        coverageStatus: res.status,
+        itemsFetched: res.planetsCount,
+        newItemsPersisted: res.planetsCount,
+        totalPersisted: res.planetsCount,
+        durationMs: Date.now() - startTime,
+        error: res.error,
+        asOf: Date.now(),
+      };
+    });
+  }
+
+  /**
+   * Synchronizes character industry jobs using the dedicated IndustryCollector
+   */
+  public async syncIndustryJobs(
+    characterId: number,
+    accessToken: string,
+    refreshTokenFn?: () => Promise<string | null>,
+    options?: { forceRevalidate?: boolean; includeCompleted?: boolean }
+  ): Promise<SyncResult> {
+    const key = `sync:${characterId}:industry_jobs`;
+    return this.coordinator.enqueue(key, async (signal) => {
+      const resource: SyncResourceType = 'industry_jobs';
+      const startTime = Date.now();
+
+      await this.syncRepo.updateSyncStateAsync(characterId, resource, {
+        status: 'SYNCING',
+        lastSyncStartedAt: startTime,
+      });
+
+      const res = await this.industryCollector.collectCharacterJobs(characterId, accessToken, refreshTokenFn, {
+        forceRevalidate: options?.forceRevalidate,
+        includeCompleted: options?.includeCompleted,
+        signal,
+      });
+
+      const syncStatus: SyncStatusState = res.status;
+      await this.syncRepo.updateSyncStateAsync(characterId, resource, {
+        status: syncStatus,
+        coverageStatus: res.status,
+        lastSyncCompletedAt: Date.now(),
+        totalRecords: res.totalJobs,
+        itemsCount: res.totalJobs,
+        newRecordsInLastSync: res.totalJobs,
+        errorMessage: res.error,
+      });
+
+      return {
+        resource,
+        characterId,
+        status: syncStatus,
+        coverageStatus: res.status,
+        itemsFetched: res.totalJobs,
+        newItemsPersisted: res.totalJobs,
+        totalPersisted: res.totalJobs,
+        durationMs: Date.now() - startTime,
+        error: res.error,
+        asOf: Date.now(),
+      };
+    });
+  }
+
+  /**
+   * Synchronizes character mining ledger entries using the dedicated MiningCollector
+   */
+  public async syncMiningLedger(
+    characterId: number,
+    accessToken: string,
+    refreshTokenFn?: () => Promise<string | null>,
+    options?: { forceRevalidate?: boolean; maxPages?: number }
+  ): Promise<SyncResult> {
+    const key = `sync:${characterId}:mining_ledger`;
+    return this.coordinator.enqueue(key, async (signal) => {
+      const resource: SyncResourceType = 'mining_ledger';
+      const startTime = Date.now();
+
+      await this.syncRepo.updateSyncStateAsync(characterId, resource, {
+        status: 'SYNCING',
+        lastSyncStartedAt: startTime,
+      });
+
+      const res = await this.miningCollector.collectMiningLedger(characterId, accessToken, refreshTokenFn, {
+        forceRevalidate: options?.forceRevalidate,
+        maxPages: options?.maxPages,
+        signal,
+      });
+
+      const syncStatus: SyncStatusState = res.status;
+      await this.syncRepo.updateSyncStateAsync(characterId, resource, {
+        status: syncStatus,
+        coverageStatus: res.status,
+        lastSyncCompletedAt: Date.now(),
+        totalRecords: res.entries.length,
+        itemsCount: res.entries.length,
+        newRecordsInLastSync: res.entries.length,
+        errorMessage: res.error,
+      });
+
+      return {
+        resource,
+        characterId,
+        status: syncStatus,
+        coverageStatus: res.status,
+        itemsFetched: res.entries.length,
+        newItemsPersisted: res.entries.length,
+        totalPersisted: res.entries.length,
+        durationMs: Date.now() - startTime,
+        error: res.error,
+        asOf: Date.now(),
+      };
     });
   }
 

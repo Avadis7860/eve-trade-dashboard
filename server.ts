@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { StorageManager } from './src/server/storage/database.ts';
+import { defaultSessionStore } from './src/server/auth/sessionStore.ts';
 import { createAuthRouter } from './src/server/auth/router.ts';
 import { validateProductionSecrets } from './src/server/auth/crypto.ts';
 import { createEsiRouter } from './src/server/esi/router.ts';
@@ -18,6 +19,7 @@ import { createAnalyticsRouter } from './src/server/analytics/router.ts';
 import { createOperationsRouter } from './src/server/operations/router.ts';
 import { createBackupRouter } from './src/server/storage/router.ts';
 import { createSystemRouter } from './src/server/system/router.ts';
+import { createSyncRouter } from './src/server/sync/router.ts';
 import { requestContextMiddleware } from './src/server/middleware/context.ts';
 import { securityHeadersMiddleware, csrfProtectionMiddleware } from './src/server/middleware/security.ts';
 
@@ -136,6 +138,9 @@ export async function createApp() {
   // Backup & Storage Reliability Router
   app.use('/api/backup', createBackupRouter());
 
+  // Dedicated Sync Router (Phase P01)
+  app.use('/api/sync', createSyncRouter());
+
   // Vite middleware in dev or static serving in prod
   if (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
     const { createServer: createViteServer } = await import('vite');
@@ -175,6 +180,8 @@ export async function bootstrapApp(port?: number, host?: string): Promise<Bootst
   console.log('[Bootstrap] Migrations Applied');
 
   // 2. Services Init & Store Init
+  await defaultSessionStore.init();
+  console.log('[Bootstrap] SessionStore Hydrated');
   console.log('[Bootstrap] Services Ready');
 
   // 3. Create Express Application

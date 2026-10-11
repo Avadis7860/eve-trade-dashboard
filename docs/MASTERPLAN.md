@@ -41,16 +41,27 @@ Un seul chantier actif, une phase, une branche, un PR. Jamais sur main. Petits l
 | G02 | Persistance PostgreSQL Unique & Bootstrap Asynchrone | G01 | Terminé |
 | G03 | Concurrence Distribuée & Synchronisation ESI | G02 | Terminé |
 | G04 | Cohérence Opérationnelle, Backup & Observabilité | G02, G03 | Terminé |
-| G05 | Qualification CI Réelle, Disaster Recovery & Release Ready | G01–G04 | Planifiée |
+| G05 | Qualification CI Réelle, Disaster Recovery & Release Ready | G01–G04 | Terminé |
+| S01 | Transport Hybride Unifié & Déconnexion Déterministe | G01–G05 | Terminé |
+| S02 | Sélection & Invariance du Personnage Principal | S01 | Terminé |
+| S03 | Pérennité des Flottes & Résilience Iframe AI Studio | S01, S02 | Terminé |
+| P01 | Ingestion ESI Dédiée & Régulation Débit : PI, Industrie & Minage | S01–S03 | Terminé |
+| P02 | Registre Minier & Coûts d'Opportunité Farm / Mining | P01 | Planifié |
+| P03 | Colonies Planétaires & Flux de Matières PI | P01 | Planifié |
+| P04 | Grand Livre Industriel & Bill of Materials (BOM) : Jobs & Encours WIP | P01, P02 | Planifié |
+| P05 | Moteur de Propagation Déterministe des Coûts (FIFO Multi-Niveaux & Chaîne de Valeur) | P01–P04 | Planifié |
 
-Voir également la roadmap de fiabilisation officielle post-F11 [`docs/ROADMAP-OFFICIELLE-FIABILISATION-POST-F11.md`](ROADMAP-OFFICIELLE-FIABILISATION-POST-F11.md), le rapport complet d'audit post-Phase 12 [`docs/AUDIT-POST-PHASE-12.md`](AUDIT-POST-PHASE-12.md), le rapport d'investigation financière [`docs/AUDIT-TASK-55-FINANCIAL-RECONCILIATION.md`](AUDIT-TASK-55-FINANCIAL-RECONCILIATION.md) et la feuille de route détaillée [`docs/MASTERPLAN-ASSURANCE-FIABILITE.md`](MASTERPLAN-ASSURANCE-FIABILITE.md).
+Les spécifications des phases actives sont consultables dans [`docs/phases/`](phases/README.md). L'historique complet des phases antérieures et des audits clos est archivé dans [`docs/archive/`](archive/README.md).
 
-Chaque phase possède un fichier dédié dans `docs/phases`. Fin de phase : critères propres satisfaits, tests ajoutés et verts, index du code à jour, PR vérifiable, aucun secret. Le statut « terminé » requiert merge et revalidation de main.
+Chaque phase suit la discipline : critères propres satisfaits, tests ajoutés et verts, index du code à jour, PR vérifiable, aucun secret. Le statut « terminé » requiert merge et revalidation de main.
 
 ## Décisions & Invariants d'Architecture
 - Monolithe modulaire React 19 / TypeScript strict + Node.js / TypeScript.
+- Délégation des responsabilités par modules de domaine isolés (`mining/`, `pi/`, `industry/`, `production/`) sans surcharge des modules centraux (`ledger`, `orders`, `roi/calculator`).
 - Authentification SSO serveur avec PKCE S256 ; aucun secret ou token dans le bundle client.
 - ESI strictement en lecture seule : aucune écriture, création, modification ou annulation d'ordres en jeu.
 - Séparation stricte entre observations ESI immuables et projections recalculables.
 - États de données distincts : `KNOWN`, `UNKNOWN`, `PARTIAL`, `ERROR`, `ABSENT` ne valent jamais zéro.
+- Invariance de coût des matières farmées : les minerais et ressources extraites ne coûtent jamais 0.00 ISK (`FARMED_PROVENANCE` + coût d'opportunité d'extraction).
+- Traçabilité de l'arbre BOM sans rupture FIFO : propagation ascendante du coût unitaire intégrant composants réels, frais de pose et taxes POCO.
 - Pas de double comptage de taxes ou frais : calcul du profit TTC et du ROI strictement justifié par preuves.

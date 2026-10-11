@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SyncService } from './service.ts';
+import { SyncCoordinator } from './coordinator.ts';
 import { InMemoryLedgerRepository } from '../ledger/repository.ts';
 import { InMemoryOrdersRepository } from '../orders/repository.ts';
 import { InMemorySyncRepository } from './repository.ts';
@@ -20,6 +21,7 @@ describe('Sync Module (Sales Ledger & Orders Synchronization)', () => {
   let syncService: SyncService;
 
   beforeEach(() => {
+    vi.restoreAllMocks();
     ledgerRepo = new InMemoryLedgerRepository();
     ordersRepo = new InMemoryOrdersRepository();
     syncRepo = new InMemorySyncRepository();
@@ -41,6 +43,7 @@ describe('Sync Module (Sales Ledger & Orders Synchronization)', () => {
     );
 
     universeService = new UniverseService(esiClient);
+    const coordinator = new SyncCoordinator(6, { syncRepo });
     syncService = new SyncService(
       esiClient,
       ledgerRepo,
@@ -48,7 +51,7 @@ describe('Sync Module (Sales Ledger & Orders Synchronization)', () => {
       syncRepo,
       universeService,
       undefined,
-      undefined,
+      coordinator,
       walletRepo
     );
   });
@@ -846,6 +849,59 @@ describe('Sync Module (Sales Ledger & Orders Synchronization)', () => {
       const summary = ledgerRepo.getSummary(undefined, [1001, 1002]);
       expect(summary.totalTaxesIsk).toBe(120000); // NOT 240,000 ISK
       expect(summary.totalBrokerFeesIsk).toBe(45000); // NOT 90,000 ISK
+    });
+  });
+
+  describe('Phase P01 — Integrated Streams: PI, Industry & Mining in Sync Status', () => {
+    it('TEST-P01-SYNC-01: getFullStatus enriches full character status with pi, industry, and mining states', async () => {
+      // Setup initial sync states
+      await syncRepo.updateSyncStateAsync(1001, 'planetary_interaction', {
+        status: 'COMPLETE',
+        coverageStatus: 'COMPLETE',
+        lastSyncCompletedAt: Date.now(),
+        totalRecords: 6,
+        itemsCount: 18,
+      });
+
+      await syncRepo.updateSyncStateAsync(1001, 'industry_jobs', {
+        status: 'COMPLETE',
+        coverageStatus: 'COMPLETE',
+        lastSyncCompletedAt: Date.now(),
+        totalRecords: 3,
+        itemsCount: 3,
+      });
+
+      await syncRepo.updateSyncStateAsync(1001, 'mining_ledger', {
+        status: 'COMPLETE',
+        coverageStatus: 'COMPLETE',
+        lastSyncCompletedAt: Date.now(),
+        totalRecords: 42,
+        itemsCount: 42,
+      });
+
+      const fullStatus = syncRepo.getFullStatus(1001);
+
+      expect(fullStatus.characterId).toBe(1001);
+      expect(fullStatus.pi).toBeDefined();
+      expect(fullStatus.pi?.status).toBe('COMPLETE');
+      expect(fullStatus.pi?.totalRecords).toBe(6);
+      expect(fullStatus.industry).toBeDefined();
+      expect(fullStatus.industry?.status).toBe('COMPLETE');
+      expect(fullStatus.mining).toBeDefined();
+      expect(fullStatus.mining?.status).toBe('COMPLETE');
+      expect(fullStatus.mining?.totalRecords).toBe(42);
+    });
+
+    it('TEST-P01-SYNC-02: Reflects PARTIAL freshness when one of the new streams is in partial state', async () => {
+      await syncRepo.updateSyncStateAsync(1001, 'planetary_interaction', {
+        status: 'PARTIAL',
+        coverageStatus: 'PARTIAL',
+        lastSyncCompletedAt: Date.now(),
+        totalRecords: 3,
+      });
+
+      const fullStatus = syncRepo.getFullStatus(1001);
+      expect(fullStatus.freshness).toBe('PARTIAL');
     });
   });
 });

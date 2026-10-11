@@ -7,9 +7,11 @@ import {
   transfersToCsv,
   restockPurchasesToCsv,
   allocationsToCsv,
+  topSalesToCsv,
   triggerCsvDownload,
 } from './csvExport';
 import { CharacterTransaction, CharacterOrderSnapshot, RestockItem, ExplicitCostAllocation } from '../App';
+import type { TopSalesItem } from '../server/analytics/types';
 
 describe('CSV Export Utilities', () => {
   it('escapes special characters correctly according to RFC 4180', () => {
@@ -217,6 +219,33 @@ describe('CSV Export Utilities', () => {
     expect(lines[1]).toContain('50002');
     expect(lines[1]).toContain('50001');
     expect(lines[1]).toContain('50000');
+  });
+
+  it('generates valid top sales rankings CSV', () => {
+    const mockItems: TopSalesItem[] = [
+      {
+        type_id: 34,
+        type_name: 'Tritanium',
+        image_url: 'https://images.evetech.net/types/34/icon',
+        units_sold: 50000,
+        average_unit_sale_price_isk: 6.0,
+        gross_revenue_isk: 300000,
+        realized_profit_ttc_isk: 50000,
+        roi_percent_ttc: 20.0,
+        sales_transactions_count: 5,
+        coverage_status: 'COMPLETE',
+        primary_hub_id: 'hub-jita',
+        primary_hub_name: 'Jita 4-4',
+        hubs: [
+          { hub_id: 'hub-jita', hub_name: 'Jita 4-4', units_sold: 50000, gross_revenue_isk: 300000 },
+        ],
+      },
+    ];
+
+    const csv = topSalesToCsv(mockItems);
+    const lines = csv.split('\r\n');
+    expect(lines[0]).toContain('Rang,TypeID,NomArticle,HubPrincipal,UnitesVendues');
+    expect(lines[1]).toContain('1,34,Tritanium,Jita 4-4,50000,6,300000,50000,20%,5,COMPLETE');
   });
 
   it('triggers browser download mechanism without error', () => {

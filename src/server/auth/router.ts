@@ -26,6 +26,10 @@ export function extractSessionId(req: Request): string | undefined {
   if (typeof customHeader === 'string' && customHeader.trim()) {
     return customHeader.trim();
   }
+  if (req.body && typeof req.body === 'object' && typeof req.body.sessionId === 'string') {
+    const token = req.body.sessionId.trim();
+    if (token) return token;
+  }
   return undefined;
 }
 
@@ -66,14 +70,15 @@ export function createAuthRouter(
     return allSessions
       .map((s: UserSession) => {
         const charList: LinkedCharacter[] = Object.values(s.characters || {});
-        const activeChar = (s.activeCharacterId && s.characters?.[s.activeCharacterId]) || charList[0];
-        const activeId = activeChar?.characterId || s.activeCharacterId || s.characterId;
+        const activeId = Number(s.activeCharacterId || s.characterId);
+        const activeChar = (s.characters && s.characters[activeId]) || charList.find((c) => Number(c.characterId) === activeId) || charList[0];
+        const resolvedActiveId = activeChar?.characterId ? Number(activeChar.characterId) : activeId;
         const activeName = activeChar?.characterName || s.characterName;
         return {
           sessionId: s.sessionId,
-          activeCharacterId: activeId,
+          activeCharacterId: resolvedActiveId,
           activeCharacterName: activeName,
-          portraitUrl: `https://images.evetech.net/characters/${activeId}/portrait?size=128`,
+          portraitUrl: `https://images.evetech.net/characters/${resolvedActiveId}/portrait?size=128`,
           charactersCount: charList.length,
           characterNames: charList.map((c: LinkedCharacter) => c.characterName),
           createdAt: s.createdAt,
@@ -230,11 +235,26 @@ export function createAuthRouter(
     <div style="max-width: 420px; text-align: center; background: #0f172a; border: 1px solid #7f1d1d; border-radius: 16px; padding: 28px;">
       <h3 style="color: #ef4444; margin: 0 0 8px 0;">Erreur d'authentification EVE SSO</h3>
       <p style="color: #cbd5e1; font-size: 13px;">${encodeURIComponent(errorDesc)}</p>
+      <button onclick="window.close()" style="margin-top: 16px; padding: 8px 18px; background: #ef4444; color: #ffffff; border: none; border-radius: 8px; font-weight: bold; font-size: 13px; cursor: pointer;">
+        Fermer cette fenêtre
+      </button>
       <script>
+        try {
+          localStorage.setItem('eve_auth_event', JSON.stringify({ type: 'EVE_AUTH_ERROR', error: '${errorDesc.replace(/'/g, "\\'")}', timestamp: Date.now() }));
+        } catch (e) {}
+        try {
+          if (typeof BroadcastChannel !== 'undefined') {
+            var bc = new BroadcastChannel('eve_sso_channel');
+            bc.postMessage({ type: 'EVE_AUTH_ERROR', error: '${errorDesc.replace(/'/g, "\\'")}' });
+            bc.close();
+          }
+        } catch (e) {}
         if (window.opener && !window.opener.closed) {
-          window.opener.postMessage({ type: 'EVE_AUTH_ERROR', error: '${errorDesc.replace(/'/g, "\\'")}' }, '*');
+          try {
+            window.opener.postMessage({ type: 'EVE_AUTH_ERROR', error: '${errorDesc.replace(/'/g, "\\'")}' }, '*');
+          } catch (e) {}
           setTimeout(function() { window.close(); }, 1500);
-        } else {
+        } else if (window.name !== 'eve_sso_popup' && window.name !== 'eve_sso_auth' && window.self === window.top) {
           window.location.href = '/?auth_error=${encodeURIComponent(errorDesc)}';
         }
       </script>
@@ -268,32 +288,62 @@ export function createAuthRouter(
     <meta charset="utf-8">
     <title>EVE Online SSO - Authentification réussie</title>
   </head>
-  <body style="font-family: system-ui, sans-serif; background: #020617; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 16px;">
+  <body style="font-family: system-ui, sans-serif; background: #020617; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 16px; box-sizing: border-box;">
     <div style="max-width: 440px; text-align: center; background: #0f172a; border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 16px; padding: 32px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);">
       <div style="display: inline-block; width: 44px; height: 44px; line-height: 44px; border-radius: 12px; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); color: #10b981; font-weight: bold; font-size: 18px; margin-bottom: 16px;">&#10003;</div>
       <h2 style="color: #ffffff; margin: 0 0 8px 0; font-size: 20px;">Authentification Réussie</h2>
       <p style="color: #94a3b8; font-size: 13px; margin: 0 0 20px 0;">
-        Connexion validée auprès de CCP EVE Online. Cette fenêtre se ferme automatiquement...
+        Connexion validée auprès de CCP EVE Online. Votre tableau de bord s'actualise automatiquement.
       </p>
-      <a href="${redirectTarget}" style="display: inline-block; padding: 10px 20px; background: #f59e0b; color: #020617; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 13px;">
-        Revenir au Tableau de Bord &rarr;
-      </a>
+      <button id="closeBtn" onclick="window.close()" style="display: inline-block; padding: 10px 24px; background: #f59e0b; color: #020617; border: none; border-radius: 8px; font-weight: bold; font-size: 13px; cursor: pointer;">
+        Fermer cette fenêtre
+      </button>
+      <p style="color: #64748b; font-size: 11px; margin-top: 14px; margin-bottom: 0;">
+        Cette fenêtre se ferme automatiquement ou vous pouvez cliquer sur le bouton ci-dessus.
+      </p>
     </div>
     <script>
+      try {
+        localStorage.setItem('eve_session_id', '${session.sessionId}');
+        localStorage.setItem('eve_auth_event', JSON.stringify({
+          type: 'EVE_AUTH_SUCCESS',
+          sessionId: '${session.sessionId}',
+          timestamp: Date.now()
+        }));
+      } catch (e) {}
+
+      try {
+        if (typeof BroadcastChannel !== 'undefined') {
+          var bc = new BroadcastChannel('eve_sso_channel');
+          bc.postMessage({ type: 'EVE_AUTH_SUCCESS', sessionId: '${session.sessionId}' });
+          bc.close();
+        }
+      } catch (e) {}
+
+      var notified = false;
       try {
         if (window.opener && !window.opener.closed) {
           window.opener.postMessage({
             type: 'EVE_AUTH_SUCCESS',
             sessionId: '${session.sessionId}'
           }, '*');
+          notified = true;
           setTimeout(function() {
             window.close();
           }, 300);
-        } else {
-          window.location.href = '${redirectTarget}';
         }
-      } catch (e) {
-        window.location.href = '${redirectTarget}';
+      } catch (e) {}
+
+      if (!notified) {
+        setTimeout(function() {
+          try { window.close(); } catch (e) {}
+        }, 500);
+
+        if (window.name !== 'eve_sso_popup' && window.name !== 'eve_sso_auth' && window.self === window.top && window.history.length <= 1) {
+          setTimeout(function() {
+            window.location.href = '${redirectTarget}';
+          }, 1500);
+        }
       }
     </script>
   </body>
@@ -304,14 +354,31 @@ export function createAuthRouter(
       res.send(`<!DOCTYPE html>
 <html>
   <head><meta charset="utf-8"><title>Erreur EVE SSO</title></head>
-  <body style="font-family: system-ui, sans-serif; background: #020617; color: #f8fafc; padding: 24px; text-align: center;">
-    <h3 style="color: #ef4444;">Échec de l'authentification</h3>
-    <p style="color: #94a3b8; font-size: 13px;">${encodeURIComponent(message)}</p>
+  <body style="font-family: system-ui, sans-serif; background: #020617; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 16px;">
+    <div style="max-width: 420px; text-align: center; background: #0f172a; border: 1px solid #7f1d1d; border-radius: 16px; padding: 28px;">
+      <h3 style="color: #ef4444; margin: 0 0 8px 0;">Échec de l'authentification</h3>
+      <p style="color: #94a3b8; font-size: 13px;">${encodeURIComponent(message)}</p>
+      <button onclick="window.close()" style="margin-top: 16px; padding: 8px 18px; background: #ef4444; color: #ffffff; border: none; border-radius: 8px; font-weight: bold; font-size: 13px; cursor: pointer;">
+        Fermer cette fenêtre
+      </button>
+    </div>
     <script>
+      try {
+        localStorage.setItem('eve_auth_event', JSON.stringify({ type: 'EVE_AUTH_ERROR', error: '${message.replace(/'/g, "\\'")}', timestamp: Date.now() }));
+      } catch (e) {}
+      try {
+        if (typeof BroadcastChannel !== 'undefined') {
+          var bc = new BroadcastChannel('eve_sso_channel');
+          bc.postMessage({ type: 'EVE_AUTH_ERROR', error: '${message.replace(/'/g, "\\'")}' });
+          bc.close();
+        }
+      } catch (e) {}
       if (window.opener && !window.opener.closed) {
-        window.opener.postMessage({ type: 'EVE_AUTH_ERROR', error: '${message.replace(/'/g, "\\'")}' }, '*');
+        try {
+          window.opener.postMessage({ type: 'EVE_AUTH_ERROR', error: '${message.replace(/'/g, "\\'")}' }, '*');
+        } catch (e) {}
         setTimeout(function() { window.close(); }, 2000);
-      } else {
+      } else if (window.name !== 'eve_sso_popup' && window.name !== 'eve_sso_auth' && window.self === window.top) {
         window.location.href = '/?auth_error=${encodeURIComponent(message)}';
       }
     </script>
@@ -324,13 +391,20 @@ export function createAuthRouter(
    * Session endpoint: returns currently authenticated character and linked characters
    */
   router.get('/session', async (req: Request, res: Response) => {
-    const sessionId = extractSessionId(req);
+    let sessionId = extractSessionId(req);
+    if (!sessionId && typeof req.query.session_id === 'string' && req.query.session_id.trim()) {
+      sessionId = req.query.session_id.trim();
+    }
     const savedSessions = getSavedSessionsList();
 
     if (!sessionId) {
       const autoResume = req.query.auto_resume === 'true' || req.query.auto_resume === '1';
-      if (autoResume && savedSessions.length > 0) {
-        const resumed = await authService.getValidSession(savedSessions[0].sessionId);
+      const targetResumeId =
+        (typeof req.query.target_session_id === 'string' && req.query.target_session_id.trim()) ||
+        (savedSessions.length > 0 ? savedSessions[0].sessionId : undefined);
+
+      if (autoResume && targetResumeId) {
+        const resumed = await authService.getValidSession(targetResumeId);
         if (resumed) {
           res.cookie(SESSION_COOKIE_NAME, resumed.sessionId, getCookieOptions(req));
           res.json({
@@ -368,17 +442,97 @@ export function createAuthRouter(
   });
 
   /**
+   * Refresh all character tokens in the current session
+   * POST /api/auth/refresh
+   */
+  router.post('/refresh', async (req: Request, res: Response) => {
+    const sessionId = extractSessionId(req);
+    if (!sessionId) {
+      res.status(401).json({ error: 'Session non authentifiée' });
+      return;
+    }
+
+    const session = authService.getSessionStore().getSession(sessionId);
+    if (!session) {
+      res.status(404).json({ error: 'Session introuvable' });
+      return;
+    }
+
+    try {
+      const refreshedSession = await authService.refreshAllExpiredCharacters(session, 4);
+      if (req.body?.force) {
+        for (const charId of Object.keys(refreshedSession.characters || {}).map(Number)) {
+          await authService.refreshCharacterTokens(sessionId, charId);
+        }
+      }
+      const updated = authService.getSessionStore().getSession(sessionId) || refreshedSession;
+      res.json({
+        success: true,
+        ...authService.getPublicSessionInfo(updated),
+        sessionId: updated.sessionId,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Échec du rafraîchissement des tokens';
+      logger.error('[Auth] Refresh tokens error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  /**
+   * Refresh tokens for a specific character
+   * POST /api/auth/character/:characterId/refresh
+   */
+  router.post('/character/:characterId/refresh', async (req: Request, res: Response) => {
+    const sessionId = extractSessionId(req);
+    const characterId = Number(req.params.characterId);
+    if (!sessionId || isNaN(characterId)) {
+      res.status(400).json({ error: 'Session et identifiant de personnage valides requis' });
+      return;
+    }
+
+    const session = authService.getSessionStore().getSession(sessionId);
+    if (!session || !session.characters || !session.characters[characterId]) {
+      res.status(404).json({ error: 'Personnage introuvable dans cette session' });
+      return;
+    }
+
+    try {
+      const newAccessToken = await authService.refreshCharacterTokens(sessionId, characterId);
+      if (!newAccessToken) {
+        res.status(502).json({ error: "Le serveur CCP EVE SSO n'a pas validé le renouvellement du jeton" });
+        return;
+      }
+      const updated = authService.getSessionStore().getSession(sessionId);
+      res.json({
+        success: true,
+        ...authService.getPublicSessionInfo(updated || session),
+        sessionId,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Échec du renouvellement du jeton auprès de CCP';
+      logger.error('[Auth] Character refresh error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  /**
    * Switch active character endpoint
    */
   router.post('/switch', (req: Request, res: Response) => {
     const sessionId = extractSessionId(req);
-    const { characterId } = req.body;
-    if (!sessionId || !characterId) {
+    const { characterId } = req.body || {};
+    if (!sessionId || characterId === undefined || characterId === null) {
       res.status(400).json({ error: 'sessionId and characterId are required' });
       return;
     }
 
-    const session = authService.switchActiveCharacter(sessionId, Number(characterId));
+    const charId = Number(characterId);
+    if (isNaN(charId)) {
+      res.status(400).json({ error: 'characterId must be a valid number' });
+      return;
+    }
+
+    const session = authService.switchActiveCharacter(sessionId, charId);
     if (!session) {
       res.status(404).json({ error: 'Personnage introuvable dans cette session' });
       return;
@@ -397,7 +551,7 @@ export function createAuthRouter(
     const sessionId = extractSessionId(req);
     const characterId = Number(req.params.characterId);
     if (!sessionId || isNaN(characterId)) {
-      res.status(400).json({ error: 'characterId valide requis' });
+      res.status(400).json({ error: 'Session et identifiant de personnage valides requis' });
       return;
     }
 
@@ -418,7 +572,9 @@ export function createAuthRouter(
    * Logout endpoint: invalidates session and clears cookie
    */
   router.post('/logout', (req: Request, res: Response) => {
-    const sessionId = extractSessionId(req);
+    const sessionId =
+      extractSessionId(req) ||
+      (typeof req.body?.sessionId === 'string' && req.body.sessionId.trim() ? req.body.sessionId.trim() : undefined);
     if (sessionId) {
       authService.logout(sessionId);
     }
@@ -641,6 +797,7 @@ export function createAuthRouter(
       defaultAssetsRepository.clearAssets(altCharacterId);
       defaultSyncRepository.clearCharacter(mainCharacterId);
       defaultSyncRepository.clearCharacter(altCharacterId);
+      defaultSessionStore.clearAll();
       res.json({ success: true });
     });
   }

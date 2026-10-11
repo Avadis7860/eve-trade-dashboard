@@ -2,84 +2,11 @@ import { generateCodeVerifier, generateCodeChallenge, generateState } from './pk
 import { extractAndValidateCharacterIdentity } from './jwt.ts';
 import { SessionStore, defaultSessionStore } from './sessionStore.ts';
 import type { AuthConfig, UserSession, EveTokenResponse, PublicSessionInfo } from './types.ts';
+import { DEFAULT_SCOPES } from './types.ts';
 import { encryptWithPassword, decryptWithPassword } from './crypto.ts';
 import { logger } from '../utils/logger.ts';
 
-export const DEFAULT_SCOPES = [
-  // Portefeuilles, Marchés, Actifs, Contrats & Industrie
-  'esi-wallet.read_character_wallet.v1',
-  'esi-wallet.read_corporation_wallets.v1',
-  'esi-markets.read_character_orders.v1',
-  'esi-markets.read_corporation_orders.v1',
-  'esi-markets.structure_markets.v1',
-  'esi-assets.read_assets.v1',
-  'esi-assets.read_corporation_assets.v1',
-  'esi-contracts.read_character_contracts.v1',
-  'esi-contracts.read_corporation_contracts.v1',
-  'esi-industry.read_character_jobs.v1',
-  'esi-industry.read_character_mining.v1',
-  'esi-industry.read_corporation_jobs.v1',
-  'esi-industry.read_corporation_mining.v1',
-  // Corporations, Alliances & Structures
-  'esi-corporations.read_blueprints.v1',
-  'esi-corporations.read_contacts.v1',
-  'esi-corporations.read_container_logs.v1',
-  'esi-corporations.read_corporation_membership.v1',
-  'esi-corporations.read_divisions.v1',
-  'esi-corporations.read_facilities.v1',
-  'esi-corporations.read_freelance_jobs.v1',
-  'esi-corporations.read_fw_stats.v1',
-  'esi-corporations.read_medals.v1',
-  'esi-corporations.read_projects.v1',
-  'esi-corporations.read_standings.v1',
-  'esi-corporations.read_starbases.v1',
-  'esi-corporations.read_structures.v1',
-  'esi-corporations.read_titles.v1',
-  'esi-corporations.track_members.v1',
-  'esi-alliances.read_contacts.v1',
-  'esi-structures.read_character.v1',
-  'esi-structures.read_corporation.v1',
-  'esi-universe.read_structures.v1',
-  'esi-search.search_structures.v1',
-  // Personnage, Compétences, Clones, Localisation, Flottes, Courrier & Divers
-  'esi-access.read_lists.v1',
-  'esi-activities.read_character.v1',
-  'esi-calendar.read_calendar_events.v1',
-  'esi-calendar.respond_calendar_events.v1',
-  'esi-characters.read_agents_research.v1',
-  'esi-characters.read_blueprints.v1',
-  'esi-characters.read_contacts.v1',
-  'esi-characters.read_corporation_roles.v1',
-  'esi-characters.read_fatigue.v1',
-  'esi-characters.read_freelance_jobs.v1',
-  'esi-characters.read_fw_stats.v1',
-  'esi-characters.read_loyalty.v1',
-  'esi-characters.read_medals.v1',
-  'esi-characters.read_notifications.v1',
-  'esi-characters.read_standings.v1',
-  'esi-characters.read_titles.v1',
-  'esi-characters.write_contacts.v1',
-  'esi-clones.read_clones.v1',
-  'esi-clones.read_implants.v1',
-  'esi-fittings.read_fittings.v1',
-  'esi-fittings.write_fittings.v1',
-  'esi-fleets.read_fleet.v1',
-  'esi-fleets.write_fleet.v1',
-  'esi-killmails.read_corporation_killmails.v1',
-  'esi-killmails.read_killmails.v1',
-  'esi-location.read_location.v1',
-  'esi-location.read_online.v1',
-  'esi-location.read_ship_type.v1',
-  'esi-mail.organize_mail.v1',
-  'esi-mail.read_mail.v1',
-  'esi-mail.send_mail.v1',
-  'esi-planets.manage_planets.v1',
-  'esi-planets.read_customs_offices.v1',
-  'esi-skills.read_skillqueue.v1',
-  'esi-skills.read_skills.v1',
-  'esi-ui.open_window.v1',
-  'esi-ui.write_waypoint.v1',
-];
+export { DEFAULT_SCOPES };
 
 export function getAuthConfigFromEnv(): AuthConfig {
   return {
@@ -282,8 +209,10 @@ export class AuthService {
         });
 
         if (!response.ok) {
-          const errorText = await response.text();
-          this.sessionStore.deleteSession(session.sessionId);
+          const errorText = await response.text().catch(() => '');
+          if (response.status === 400 && errorText.includes('invalid_grant')) {
+            this.sessionStore.deleteSession(session.sessionId);
+          }
           throw new Error(`Token refresh failed (HTTP ${response.status}): ${errorText}`);
         }
 
@@ -449,24 +378,16 @@ export class AuthService {
         if (hasExpiredChar) {
           try {
             const refreshed = await this.refreshAllExpiredCharacters(session);
-            if (refreshed.expiresAt > now) {
+            if (refreshed) {
               return refreshed;
             }
-            if (refreshed.characters) {
-              for (const char of Object.values(refreshed.characters)) {
-                if (char.expiresAt > now) {
-                  return this.sessionStore.switchActiveCharacter(sessionId, char.characterId);
-                }
-              }
-            }
-            return null;
           } catch (err) {
             logger.warn('[Auth] Automatic token refresh failed:', err);
-            return null;
           }
         }
 
-        return session;
+        const currentSession = this.sessionStore.getSession(sessionId);
+        return currentSession || session;
       } finally {
         this.inFlightValidSessionRequests.delete(sessionId);
       }
@@ -636,34 +557,44 @@ export class AuthService {
       return { authenticated: false };
     }
 
+    const activeId = Number(session.activeCharacterId || session.characterId);
     const charactersList = session.characters
-      ? Object.values(session.characters).map((c) => ({
-          characterId: c.characterId,
-          characterName: c.characterName,
-          portraitUrl: `https://images.evetech.net/characters/${c.characterId}/portrait?size=128`,
-          scopes: c.scopes,
-          expiresAt: c.expiresAt,
-          isActive: c.characterId === (session.activeCharacterId || session.characterId),
-        }))
+      ? Object.values(session.characters).map((c) => {
+          const charId = Number(c.characterId);
+          return {
+            characterId: charId,
+            characterName: c.characterName,
+            portraitUrl: `https://images.evetech.net/characters/${charId}/portrait?size=128`,
+            scopes: c.scopes,
+            expiresAt: c.expiresAt,
+            isActive: charId === activeId,
+          };
+        })
       : [
           {
-            characterId: session.characterId,
+            characterId: activeId,
             characterName: session.characterName,
-            portraitUrl: `https://images.evetech.net/characters/${session.characterId}/portrait?size=128`,
+            portraitUrl: `https://images.evetech.net/characters/${activeId}/portrait?size=128`,
             scopes: session.scopes,
             expiresAt: session.expiresAt,
             isActive: true,
           },
         ];
 
+    const activeChar = (session.characters && session.characters[activeId]) || charactersList.find(c => c.characterId === activeId);
+    const resolvedCharId = activeChar?.characterId ? Number(activeChar.characterId) : activeId;
+    const resolvedName = activeChar?.characterName || session.characterName;
+    const resolvedScopes = activeChar?.scopes || session.scopes;
+    const resolvedExpiresAt = activeChar?.expiresAt || session.expiresAt;
+
     return {
       authenticated: true,
       character: {
-        characterId: session.characterId,
-        characterName: session.characterName,
-        portraitUrl: `https://images.evetech.net/characters/${session.characterId}/portrait?size=128`,
-        scopes: session.scopes,
-        expiresAt: session.expiresAt,
+        characterId: resolvedCharId,
+        characterName: resolvedName,
+        portraitUrl: `https://images.evetech.net/characters/${resolvedCharId}/portrait?size=128`,
+        scopes: resolvedScopes,
+        expiresAt: resolvedExpiresAt,
       },
       characters: charactersList,
     };
@@ -673,14 +604,14 @@ export class AuthService {
    * Switches the active character within the user session
    */
   public switchActiveCharacter(sessionId: string, characterId: number): UserSession | null {
-    return this.sessionStore.switchActiveCharacter(sessionId, characterId);
+    return this.sessionStore.switchActiveCharacter(sessionId, Number(characterId));
   }
 
   /**
    * Removes a linked character from the session
    */
   public removeCharacter(sessionId: string, characterId: number): UserSession | null {
-    return this.sessionStore.removeCharacter(sessionId, characterId);
+    return this.sessionStore.removeCharacter(sessionId, Number(characterId));
   }
 
   /**

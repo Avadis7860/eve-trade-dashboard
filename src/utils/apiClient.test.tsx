@@ -9,7 +9,11 @@ import {
   fetchJson,
   getStoredSessionId,
   setStoredSessionId,
+  hasLogoutIntent,
+  setLogoutIntent,
+  clearLogoutIntent,
   SESSION_STORAGE_KEY,
+  LOGOUT_INTENT_KEY,
 } from './apiClient';
 
 describe('QueryClient Core & Request Coalescing', () => {
@@ -313,5 +317,90 @@ describe('fetchJson helper', () => {
     setStoredSessionId(null);
     expect(getStoredSessionId()).toBeNull();
     expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+  });
+
+  it('TEST-S01-06: fetchJson automatically serializes JSON objects and sets Content-Type for POST/PUT/DELETE', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({ created: true, id: 42 }),
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const result = await fetchJson<{ created: boolean; id: number }>('/api/orders/restock', {
+      method: 'POST',
+      body: { typeId: 34, quantity: 500 },
+    });
+
+    expect(result).toEqual({ created: true, id: 42 });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [, fetchInit] = mockFetch.mock.calls[0];
+    expect(fetchInit?.method).toBe('POST');
+    expect(fetchInit?.body).toBe(JSON.stringify({ typeId: 34, quantity: 500 }));
+    const headers = fetchInit?.headers as Headers;
+    expect(headers.get('Content-Type')).toBe('application/json');
+  });
+
+  it('TEST-S01-07: fetchJson respects explicit sessionId parameter overriding localStorage', async () => {
+    setStoredSessionId('default_session_id');
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({ success: true }),
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    await fetchJson('/api/auth/logout', {
+      method: 'POST',
+      sessionId: 'explicit_override_session_999',
+      body: { sessionId: 'explicit_override_session_999' },
+    });
+
+    const [, fetchInit] = mockFetch.mock.calls[0];
+    const headers = fetchInit?.headers as Headers;
+    expect(headers.get('Authorization')).toBe('Bearer explicit_override_session_999');
+    expect(headers.get('X-Session-ID')).toBe('explicit_override_session_999');
+
+    setStoredSessionId(null);
+  });
+
+  it('TEST-S01-08: fetchJson handles empty response text and HTTP 204 No Content safely', async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 204,
+      text: async () => '',
+    } as unknown as Response);
+
+    const res204 = await fetchJson('/api/resource/deleted', { method: 'DELETE' });
+    expect(res204).toBeUndefined();
+
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => '',
+    } as unknown as Response);
+
+    const resEmpty = await fetchJson('/api/empty-ok');
+    expect(resEmpty).toBeUndefined();
+  });
+
+  it('TEST-S01-09: logoutIntent helpers prevent auto-resume and are cleared when a valid session is set', () => {
+    expect(hasLogoutIntent()).toBe(false);
+
+    setLogoutIntent(true);
+    expect(hasLogoutIntent()).toBe(true);
+    expect(localStorage.getItem(LOGOUT_INTENT_KEY)).toBe('true');
+
+    // Setting a valid session must automatically clear logout intent
+    setStoredSessionId('brand_new_session_123');
+    expect(hasLogoutIntent()).toBe(false);
+    expect(localStorage.getItem(LOGOUT_INTENT_KEY)).toBeNull();
+
+    // Explicit clearLogoutIntent
+    setLogoutIntent(true);
+    expect(hasLogoutIntent()).toBe(true);
+    clearLogoutIntent();
+    expect(hasLogoutIntent()).toBe(false);
+
+    setStoredSessionId(null);
   });
 });

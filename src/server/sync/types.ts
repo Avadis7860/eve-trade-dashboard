@@ -11,7 +11,11 @@ export type SyncResourceType =
   | 'character_assets'
   | 'corporation_assets'
   | 'character_wallet'
-  | 'corporation_wallets';
+  | 'corporation_wallets'
+  | 'planetary_interaction'
+  | 'industry_jobs'
+  | 'corporation_industry_jobs'
+  | 'mining_ledger';
 
 export type SyncStatusState = 'IDLE' | 'SYNCING' | 'COMPLETE' | 'PARTIAL' | 'ERROR' | 'UNKNOWN' | 'ABSENT';
 
@@ -48,6 +52,9 @@ export interface FullCharacterSyncStatus {
   orders: SyncState;
   assets?: SyncState;
   wallet?: SyncState;
+  pi?: SyncState;
+  industry?: SyncState;
+  mining?: SyncState;
   asOf: number;
   freshness: 'FRESH' | 'STALE' | 'UNKNOWN' | 'PARTIAL';
 }
@@ -77,4 +84,7 @@ export interface SyncAllResult {
   wallet?: SyncResult;
   corpWallets?: SyncResult;
   corpAssets?: SyncResult;
+  pi?: SyncResult;
+  industry?: SyncResult;
+  mining?: SyncResult;
 }

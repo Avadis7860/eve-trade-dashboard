@@ -22,8 +22,11 @@ import type {
   LotAgeDistributionBracket,
   HubFlowSummary,
   AgeBracketId,
+  TopSalesItem,
+  TopSalesRankingsResponse,
+  TopSalesHubBreakdown,
 } from './types.ts';
-import type { ExplicitCostAllocation, FormulaProof } from '../roi/types.ts';
+import type { ExplicitCostAllocation, FormulaProof, MetricCoverageStatus } from '../roi/types.ts';
 import type { CharacterTransaction } from '../ledger/types.ts';
 import type { CharacterOrderSnapshot } from '../orders/types.ts';
 
@@ -834,6 +837,268 @@ export class AnalyticsService {
       lot_age_distribution: lotAgeDistribution,
       hub_flows: hubFlows,
       uncertainty_notes: uncertaintyNotes,
+    };
+  }
+
+  /**
+   * Generates comprehensive Top Sales rankings sorted from best to worst,
+   * without artificial limits, filterable by hub, timeframe, and search.
+   */
+  public async getTopSalesRankings(
+    options: AnalyticsQueryOptions & {
+      sortBy?: 'revenue' | 'profit' | 'units' | 'transactions' | 'roi';
+      sortDirection?: 'asc' | 'desc';
+      search?: string;
+    } = {}
+  ): Promise<TopSalesRankingsResponse> {
+    const timeframe: TimeframeOption = options.timeframe || '90d';
+    const now = options.now || new Date();
+    const characterId = options.characterId;
+    const characterIds = options.characterIds;
+    const hubFilter = options.hubId;
+    const sortBy = options.sortBy || 'revenue';
+    const sortDirection = options.sortDirection || 'desc';
+    const searchQuery = options.search ? options.search.trim().toLowerCase() : '';
+
+    // 1. Fetch all transactions
+    const effectiveCharId = characterIds && characterIds.length > 0 ? undefined : characterId;
+    const allTxs = this.ledgerRepo.getAllTransactions(effectiveCharId, characterIds);
+
+    // Find earliest date
+    let earliestTxDate: string | undefined;
+    for (const tx of allTxs) {
+      if (!earliestTxDate || new Date(tx.date).getTime() < new Date(earliestTxDate).getTime()) {
+        earliestTxDate = tx.date;
+      }
+    }
+
+    const { startDate, endDate } = this.resolveTimeRange(timeframe, earliestTxDate, now);
+
+    // 2. Filter sales transactions in timeframe and resolve hub
+    interface AggregatedSale {
+      typeId: number;
+      unitsSold: number;
+      grossRevenue: number;
+      salesCount: number;
+      txs: CharacterTransaction[];
+      hubMap: Map<string, { hubId: string; hubName: string; units: number; revenue: number }>;
+    }
+
+    const itemMap = new Map<number, AggregatedSale>();
+
+    for (const tx of allTxs) {
+      if (tx.isBuy) continue;
+      const txDate = new Date(tx.date);
+      if (txDate < startDate || txDate > endDate) continue;
+
+      const resolvedHub = this.hubsService.resolveLocationToHub(tx.locationId, tx.locationName);
+      if (hubFilter && resolvedHub.hub_id !== hubFilter) {
+        continue;
+      }
+
+      const txRev = roundIsk(tx.quantity * tx.unitPrice);
+      let agg = itemMap.get(tx.typeId);
+      if (!agg) {
+        agg = {
+          typeId: tx.typeId,
+          unitsSold: 0,
+          grossRevenue: 0,
+          salesCount: 0,
+          txs: [],
+          hubMap: new Map(),
+        };
+        itemMap.set(tx.typeId, agg);
+      }
+
+      agg.unitsSold += tx.quantity;
+      agg.grossRevenue = roundIsk(agg.grossRevenue + txRev);
+      agg.salesCount += 1;
+      agg.txs.push(tx);
+
+      let hubEntry = agg.hubMap.get(resolvedHub.hub_id);
+      if (!hubEntry) {
+        hubEntry = {
+          hubId: resolvedHub.hub_id,
+          hubName: resolvedHub.hub_name,
+          units: 0,
+          revenue: 0,
+        };
+        agg.hubMap.set(resolvedHub.hub_id, hubEntry);
+      }
+      hubEntry.units += tx.quantity;
+      hubEntry.revenue = roundIsk(hubEntry.revenue + txRev);
+    }
+
+    // 3. Fetch allocations to calculate realized profit and coverage
+    const allAllocations = this.roiRepo.listAllocations(characterId, characterIds);
+    const allocsBySellTx = new Map<number, ExplicitCostAllocation[]>();
+    for (const a of allAllocations) {
+      if (!allocsBySellTx.has(a.sell_transaction_id)) {
+        allocsBySellTx.set(a.sell_transaction_id, []);
+      }
+      allocsBySellTx.get(a.sell_transaction_id)!.push(a);
+    }
+
+    // Resolve item names in bulk
+    const typeIds = Array.from(itemMap.keys());
+    let namesMap = new Map<number, string>();
+    try {
+      namesMap = await this.universeService.resolveNames(typeIds);
+    } catch {
+      // Keep fallback
+    }
+
+    // 4. Build items list
+    const items: TopSalesItem[] = [];
+    let totalGrossRevenue = 0;
+    let totalRealizedProfit: number | null = 0;
+    let totalUnitsSold = 0;
+    let hasAnyAllocatedSales = false;
+
+    for (const agg of itemMap.values()) {
+      const typeName = namesMap.get(agg.typeId) || `Type #${agg.typeId}`;
+
+      // Check search filter
+      if (searchQuery) {
+        const matchesName = typeName.toLowerCase().includes(searchQuery);
+        const matchesId = String(agg.typeId).includes(searchQuery);
+        if (!matchesName && !matchesId) {
+          continue;
+        }
+      }
+
+      let allocatedUnits = 0;
+      let totalCogs = 0;
+      let totalSellFees = 0;
+
+      for (const tx of agg.txs) {
+        const allocs = allocsBySellTx.get(tx.transactionId) || [];
+        for (const a of allocs) {
+          allocatedUnits += a.quantity_allocated;
+          totalCogs += a.allocated_buy_cost + a.allocated_buy_fees;
+          totalSellFees += a.allocated_sell_fees;
+        }
+      }
+
+      let realizedProfitTtc: number | null = null;
+      let roiPercentTtc: number | null = null;
+      let coverageStatus: MetricCoverageStatus = 'UNKNOWN';
+
+      if (allocatedUnits > 0) {
+        hasAnyAllocatedSales = true;
+        const ratio = agg.unitsSold > 0 ? allocatedUnits / agg.unitsSold : 1;
+        const matchedRevenue = agg.grossRevenue * ratio;
+        const profit = matchedRevenue - totalCogs - totalSellFees;
+        realizedProfitTtc = roundIsk(profit);
+        roiPercentTtc = totalCogs > 0 ? Number(((profit / totalCogs) * 100).toFixed(2)) : null;
+        coverageStatus = allocatedUnits >= agg.unitsSold ? 'COMPLETE' : 'PARTIAL';
+        if (totalRealizedProfit !== null) {
+          totalRealizedProfit = roundIsk(totalRealizedProfit + realizedProfitTtc);
+        }
+      } else {
+        coverageStatus = 'UNKNOWN';
+      }
+
+      // Hubs breakdown & primary hub
+      const hubList: TopSalesHubBreakdown[] = Array.from(agg.hubMap.values())
+        .map((h) => ({
+          hub_id: h.hubId,
+          hub_name: h.hubName,
+          units_sold: h.units,
+          gross_revenue_isk: roundIsk(h.revenue),
+        }))
+        .sort((a, b) => b.gross_revenue_isk - a.gross_revenue_isk);
+
+      const primaryHub = hubList[0] || {
+        hub_id: 'unknown',
+        hub_name: 'Inconnu',
+      };
+
+      const avgPrice = agg.unitsSold > 0 ? roundIsk(agg.grossRevenue / agg.unitsSold) : 0;
+
+      totalGrossRevenue = roundIsk(totalGrossRevenue + agg.grossRevenue);
+      totalUnitsSold += agg.unitsSold;
+
+      items.push({
+        type_id: agg.typeId,
+        type_name: typeName,
+        image_url: `https://images.evetech.net/types/${agg.typeId}/icon?size=64`,
+        units_sold: agg.unitsSold,
+        gross_revenue_isk: agg.grossRevenue,
+        realized_profit_ttc_isk: realizedProfitTtc,
+        roi_percent_ttc: roiPercentTtc,
+        sales_transactions_count: agg.salesCount,
+        average_unit_sale_price_isk: avgPrice,
+        coverage_status: coverageStatus,
+        primary_hub_id: primaryHub.hub_id,
+        primary_hub_name: primaryHub.hub_name,
+        hubs: hubList,
+      });
+    }
+
+    if (!hasAnyAllocatedSales) {
+      totalRealizedProfit = null;
+    }
+
+    // 5. Sort from best to worst according to requested metric
+    items.sort((a, b) => {
+      let comparison = 0;
+      switch (sortBy) {
+        case 'revenue':
+          comparison = b.gross_revenue_isk - a.gross_revenue_isk;
+          break;
+        case 'profit':
+          comparison = (b.realized_profit_ttc_isk ?? -Infinity) - (a.realized_profit_ttc_isk ?? -Infinity);
+          break;
+        case 'units':
+          comparison = b.units_sold - a.units_sold;
+          break;
+        case 'transactions':
+          comparison = b.sales_transactions_count - a.sales_transactions_count;
+          break;
+        case 'roi':
+          comparison = (b.roi_percent_ttc ?? -Infinity) - (a.roi_percent_ttc ?? -Infinity);
+          break;
+        default:
+          comparison = b.gross_revenue_isk - a.gross_revenue_isk;
+      }
+      return sortDirection === 'asc' ? -comparison : comparison;
+    });
+
+    // 6. Resolve freshness status
+    const targetCharIds = characterIds && characterIds.length > 0
+      ? characterIds
+      : characterId !== undefined
+      ? [characterId]
+      : undefined;
+
+    const allStates = this.syncRepo.dumpData().states;
+    const syncStates = targetCharIds
+      ? allStates.filter((s) => targetCharIds.includes(s.characterId))
+      : allStates;
+
+    const hasError = syncStates.some((s) => s.status === 'ERROR');
+    const isTransitory = syncStates.some((s) => s.status === 'PARTIAL' || s.status === 'SYNCING');
+
+    let freshnessStatus: 'FRESH' | 'STALE' | 'PARTIAL' | 'EMPTY' = 'FRESH';
+    if (syncStates.length === 0) {
+      freshnessStatus = 'EMPTY';
+    } else if (hasError || isTransitory) {
+      freshnessStatus = 'PARTIAL';
+    } else {
+      freshnessStatus = 'FRESH';
+    }
+
+    return {
+      timeframe,
+      hub_id: hubFilter,
+      total_items: items.length,
+      total_gross_revenue_isk: totalGrossRevenue,
+      total_realized_profit_ttc_isk: totalRealizedProfit,
+      total_units_sold: totalUnitsSold,
+      as_of: new Date().toISOString(),
+      freshness_status: freshnessStatus,
+      items,
     };
   }
 }

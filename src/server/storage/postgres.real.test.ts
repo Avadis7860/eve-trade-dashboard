@@ -90,7 +90,17 @@ describe('Phase F04-A — Real PostgreSQL Engine Qualification & Integration Sui
   beforeEach(async () => {
     const created = createRealPostgresAdapter();
     adapter = created.adapter;
-    await adapter.init();
+    if (process.env.DATABASE_URL) {
+      await adapter.init();
+      await adapter.query(`
+        TRUNCATE TABLE transactions, journal_entries, order_snapshots, restock_items,
+        explicit_cost_allocations, opening_balances, character_assets, sync_states,
+        wallet_snapshots, sessions, session_characters, esi_sync_leases,
+        hub_location_mappings, hubs CASCADE;
+      `);
+    } else {
+      await adapter.init();
+    }
 
     ledgerRepo = new PostgresLedgerRepository(adapter);
     ordersRepo = new PostgresOrdersRepository(adapter);

@@ -332,6 +332,20 @@ describe('Level 3: HTTP API & Middleware Endpoints Exhaustive Test Suite', () =>
       expect(res.body.freshness).toBe('FRESH');
     });
 
+    it('returns full sync status including PI, industry and mining on /api/sync/status', async () => {
+      const res = await request(app)
+        .get('/api/sync/status')
+        .set('Cookie', [`eve_session_id=${sessionToken}`]);
+
+      expect(res.status).toBe(200);
+      expect(res.body.characterId).toBe(testCharId);
+      expect(res.body.transactions).toBeDefined();
+      expect(res.body.pi).toBeDefined();
+      expect(res.body.industry).toBeDefined();
+      expect(res.body.mining).toBeDefined();
+      expect(res.body.freshness).toBeDefined();
+    });
+
     it('enforces character isolation: blocks access to other character data with 403', async () => {
       const res = await request(app)
         .get(`/api/ledger/transactions?characterId=${foreignCharId}`)

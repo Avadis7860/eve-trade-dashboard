@@ -70,11 +70,13 @@ describe('Server API Endpoints', () => {
 
       const dbConnectedIdx = logs.findIndex((l) => l.includes('[Bootstrap] DB Connected'));
       const migrationsIdx = logs.findIndex((l) => l.includes('[Bootstrap] Migrations Applied'));
+      const sessionStoreHydratedIdx = logs.findIndex((l) => l.includes('[Bootstrap] SessionStore Hydrated'));
       const servicesReadyIdx = logs.findIndex((l) => l.includes('[Bootstrap] Services Ready'));
 
       expect(dbConnectedIdx).toBeGreaterThanOrEqual(0);
       expect(migrationsIdx).toBeGreaterThanOrEqual(dbConnectedIdx);
-      expect(servicesReadyIdx).toBeGreaterThanOrEqual(migrationsIdx);
+      expect(sessionStoreHydratedIdx).toBeGreaterThanOrEqual(migrationsIdx);
+      expect(servicesReadyIdx).toBeGreaterThanOrEqual(sessionStoreHydratedIdx);
     } finally {
       console.log = originalLog;
     }
@@ -93,6 +95,43 @@ describe('Server API Endpoints', () => {
     } finally {
       StorageManager.resetInstance(originalConfig);
     }
+  });
+
+  it('Phase S03 (TEST-S03-02): bootstrapApp restores persisted sessions and fleet characters into defaultSessionStore before serving', async () => {
+    const { defaultSessionStore } = await import('./src/server/auth/sessionStore.ts');
+    // Seed a session in the store
+    const session = defaultSessionStore.createSession({
+      characterId: 8881,
+      characterName: 'Fleet Admiral Alpha',
+      scopes: ['publicData'],
+      accessToken: 'token-admiral',
+      refreshToken: 'refresh-admiral',
+      expiresAt: Date.now() + 5000000,
+    });
+
+    defaultSessionStore.addOrUpdateCharacter(
+      session.sessionId,
+      {
+        characterId: 8882,
+        characterName: 'Fleet Admiral Beta',
+        scopes: ['publicData'],
+        accessToken: 'token-beta',
+        refreshToken: 'refresh-beta',
+        expiresAt: Date.now() + 5000000,
+      },
+      false
+    );
+
+    // Bootstrap app (which runs await defaultSessionStore.init())
+    const res = await bootstrapApp();
+    expect(res.app).toBeDefined();
+
+    const restoredSession = defaultSessionStore.getSession(session.sessionId);
+    expect(restoredSession).not.toBeNull();
+    expect(restoredSession?.sessionId).toBe(session.sessionId);
+    expect(restoredSession?.characterName).toBe('Fleet Admiral Alpha');
+    expect(Object.keys(restoredSession?.characters || {})).toHaveLength(2);
+    expect(restoredSession?.characters[8882]?.characterName).toBe('Fleet Admiral Beta');
   });
 });
 

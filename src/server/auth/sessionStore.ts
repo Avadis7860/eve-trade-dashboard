@@ -42,20 +42,21 @@ export class SessionStore {
             const charId = Number(charIdStr);
             try {
               characters[charId] = {
-                characterId: storedChar.characterId,
+                characterId: Number(storedChar.characterId),
                 characterName: storedChar.characterName,
                 scopes: storedChar.scopes || [],
                 accessToken: decryptToken(storedChar.encryptedAccessToken),
                 refreshToken: decryptToken(storedChar.encryptedRefreshToken),
-                expiresAt: storedChar.expiresAt,
-                createdAt: storedChar.createdAt,
+                expiresAt: Number(storedChar.expiresAt),
+                createdAt: Number(storedChar.createdAt),
               };
             } catch (err) {
               logger.warn(`[SessionStore] Could not decrypt tokens for char ${charId} in session ${sessionId}: ${(err as Error).message}`);
             }
           }
 
-          const activeChar = characters[storedSess.activeCharacterId] || Object.values(characters)[0];
+          const activeCharId = Number(storedSess.activeCharacterId);
+          const activeChar = characters[activeCharId] || Object.values(characters)[0];
           if (activeChar) {
             const userSession: UserSession = {
               sessionId: storedSess.sessionId,
@@ -66,7 +67,7 @@ export class SessionStore {
               accessToken: activeChar.accessToken,
               refreshToken: activeChar.refreshToken,
               expiresAt: activeChar.expiresAt,
-              createdAt: storedSess.createdAt,
+              createdAt: Number(storedSess.createdAt),
               characters,
             };
             this.sessions.set(sessionId, userSession);
@@ -158,6 +159,12 @@ export class SessionStore {
     } else {
       this.loadFromStorageSync();
     }
+
+    let totalCharsRestored = 0;
+    for (const session of this.sessions.values()) {
+      totalCharsRestored += Object.keys(session.characters || {}).length;
+    }
+    logger.info(`[SessionStore] Initialized: ${this.sessions.size} session(s), ${totalCharsRestored} character(s) restored`);
   }
 
   private saveSessionToStorage(session: UserSession): void {
@@ -170,19 +177,19 @@ export class SessionStore {
       for (const [charIdStr, char] of Object.entries(session.characters || {})) {
         const charId = Number(charIdStr);
         storedChars[charId] = {
-          characterId: char.characterId,
+          characterId: Number(char.characterId),
           characterName: char.characterName,
           scopes: char.scopes,
           encryptedRefreshToken: encryptToken(char.refreshToken),
           encryptedAccessToken: encryptToken(char.accessToken),
-          expiresAt: char.expiresAt,
-          createdAt: char.createdAt,
+          expiresAt: Number(char.expiresAt),
+          createdAt: Number(char.createdAt),
         };
       }
       state.sessions[session.sessionId] = {
         sessionId: session.sessionId,
-        activeCharacterId: session.activeCharacterId,
-        createdAt: session.createdAt,
+        activeCharacterId: Number(session.activeCharacterId || session.characterId),
+        createdAt: Number(session.createdAt),
         updatedAt: Date.now(),
         characters: storedChars,
       };
@@ -196,7 +203,7 @@ export class SessionStore {
              ON CONFLICT (session_id) DO UPDATE SET
                active_character_id = EXCLUDED.active_character_id,
                updated_at = EXCLUDED.updated_at`,
-            [session.sessionId, session.activeCharacterId, session.createdAt, Date.now()]
+            [session.sessionId, Number(session.activeCharacterId || session.characterId), Number(session.createdAt), Date.now()]
           );
           for (const char of Object.values(session.characters || {})) {
             const rowId = `${session.sessionId}:${char.characterId}`;
@@ -299,28 +306,29 @@ export class SessionStore {
     expiresAt: number;
     sessionId?: string;
   }): UserSession {
+    const charId = Number(sessionData.characterId);
     const sessionId = sessionData.sessionId || crypto.randomBytes(32).toString('hex');
     const linkedChar: LinkedCharacter = {
-      characterId: sessionData.characterId,
+      characterId: charId,
       characterName: sessionData.characterName,
       scopes: sessionData.scopes,
       accessToken: sessionData.accessToken,
       refreshToken: sessionData.refreshToken,
-      expiresAt: sessionData.expiresAt,
+      expiresAt: Number(sessionData.expiresAt),
       createdAt: Date.now(),
     };
 
     const session: UserSession = {
       sessionId,
-      activeCharacterId: sessionData.characterId,
-      characterId: sessionData.characterId,
+      activeCharacterId: charId,
+      characterId: charId,
       characterName: sessionData.characterName,
       scopes: sessionData.scopes,
       accessToken: sessionData.accessToken,
       refreshToken: sessionData.refreshToken,
-      expiresAt: sessionData.expiresAt,
+      expiresAt: Number(sessionData.expiresAt),
       characters: {
-        [sessionData.characterId]: linkedChar,
+        [charId]: linkedChar,
       },
       createdAt: Date.now(),
     };
@@ -348,24 +356,25 @@ export class SessionStore {
       session.characters = {};
     }
 
-    session.characters[charData.characterId] = {
-      characterId: charData.characterId,
+    const charId = Number(charData.characterId);
+    session.characters[charId] = {
+      characterId: charId,
       characterName: charData.characterName,
       scopes: charData.scopes,
       accessToken: charData.accessToken,
       refreshToken: charData.refreshToken,
-      expiresAt: charData.expiresAt,
-      createdAt: session.characters[charData.characterId]?.createdAt || Date.now(),
+      expiresAt: Number(charData.expiresAt),
+      createdAt: session.characters[charId]?.createdAt || Date.now(),
     };
 
-    if (makeActive || session.activeCharacterId === charData.characterId) {
-      session.activeCharacterId = charData.characterId;
-      session.characterId = charData.characterId;
+    if (makeActive || Number(session.activeCharacterId) === charId) {
+      session.activeCharacterId = charId;
+      session.characterId = charId;
       session.characterName = charData.characterName;
       session.scopes = charData.scopes;
       session.accessToken = charData.accessToken;
       session.refreshToken = charData.refreshToken;
-      session.expiresAt = charData.expiresAt;
+      session.expiresAt = Number(charData.expiresAt);
     }
 
     this.saveSessionToStorage(session);
@@ -374,18 +383,23 @@ export class SessionStore {
 
   public switchActiveCharacter(sessionId: string, characterId: number): UserSession | null {
     const session = this.getSession(sessionId);
-    if (!session || !session.characters || !session.characters[characterId]) {
+    if (!session || !session.characters) {
       return null;
     }
 
-    const char = session.characters[characterId];
-    session.activeCharacterId = characterId;
-    session.characterId = characterId;
+    const charId = Number(characterId);
+    if (isNaN(charId) || !session.characters[charId]) {
+      return null;
+    }
+
+    const char = session.characters[charId];
+    session.activeCharacterId = charId;
+    session.characterId = charId;
     session.characterName = char.characterName;
     session.scopes = char.scopes;
     session.accessToken = char.accessToken;
     session.refreshToken = char.refreshToken;
-    session.expiresAt = char.expiresAt;
+    session.expiresAt = Number(char.expiresAt);
 
     this.saveSessionToStorage(session);
     return session;
@@ -395,8 +409,13 @@ export class SessionStore {
     const session = this.getSession(sessionId);
     if (!session || !session.characters) return null;
 
-    delete session.characters[characterId];
-    this.removeCharacterFromStorage(sessionId, characterId);
+    const charId = Number(characterId);
+    if (isNaN(charId) || !session.characters[charId]) {
+      return null;
+    }
+
+    delete session.characters[charId];
+    this.removeCharacterFromStorage(sessionId, charId);
 
     const remainingIds = Object.keys(session.characters).map(Number);
     if (remainingIds.length === 0) {
@@ -404,7 +423,7 @@ export class SessionStore {
       return null;
     }
 
-    if (session.activeCharacterId === characterId) {
+    if (Number(session.activeCharacterId) === charId) {
       this.switchActiveCharacter(sessionId, remainingIds[0]);
     } else {
       this.saveSessionToStorage(session);
@@ -438,17 +457,17 @@ export class SessionStore {
     const session = this.sessions.get(sessionId);
     if (!session) return false;
 
-    const targetCharId = characterId || session.activeCharacterId || session.characterId;
+    const targetCharId = characterId !== undefined ? Number(characterId) : Number(session.activeCharacterId || session.characterId);
     if (session.characters && session.characters[targetCharId]) {
       session.characters[targetCharId].accessToken = accessToken;
       session.characters[targetCharId].refreshToken = refreshToken;
-      session.characters[targetCharId].expiresAt = expiresAt;
+      session.characters[targetCharId].expiresAt = Number(expiresAt);
     }
 
-    if (session.activeCharacterId === targetCharId || session.characterId === targetCharId) {
+    if (Number(session.activeCharacterId) === targetCharId || Number(session.characterId) === targetCharId) {
       session.accessToken = accessToken;
       session.refreshToken = refreshToken;
-      session.expiresAt = expiresAt;
+      session.expiresAt = Number(expiresAt);
     }
 
     this.saveSessionToStorage(session);

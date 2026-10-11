@@ -513,4 +513,195 @@ describe('PHASE-10: Product 360 & Time Series Analytics Engine', () => {
     // Must be PARTIAL, not falsely FRESH
     expect(ts.freshness_status).toBe('PARTIAL');
   });
+
+  it('calculates Top Sales rankings sorted from best to worst without limits, with hub and timeframe filters', async () => {
+    const fixedNow = new Date('2026-09-30T12:00:00Z');
+    const recentDate = new Date(fixedNow.getTime() - 2 * 24 * 3600 * 1000).toISOString();
+
+    // 1. Seed two items sold by Character 1
+    // Item 1: Tritanium (34), 100,000 units sold @ 6 ISK = 600,000 ISK at Jita
+    // Item 2: PLEX (44992), 10 units sold @ 5,000,000 ISK = 50,000,000 ISK at Amarr
+    ledgerRepo.saveTransactions([
+      {
+        id: `${CHAR_1}:3001`,
+        transactionId: 3001,
+        characterId: CHAR_1,
+        typeId: TRITANIUM_ID,
+        typeName: 'Tritanium',
+        isBuy: false,
+        isPersonal: true,
+        journalRefId: 9101,
+        clientId: 50001,
+        quantity: 100000,
+        unitPrice: 6.0,
+        totalValue: 600000,
+        locationId: JITA_44_ID,
+        locationName: 'Jita IV - Moon 4 - Caldari Navy Assembly Plant',
+        date: recentDate,
+        source: 'esi',
+        observedAt: fixedNow.getTime(),
+      },
+      {
+        id: `${CHAR_1}:3002`,
+        transactionId: 3002,
+        characterId: CHAR_1,
+        typeId: PLEX_ID,
+        typeName: 'PLEX',
+        isBuy: false,
+        isPersonal: true,
+        journalRefId: 9102,
+        clientId: 50002,
+        quantity: 10,
+        unitPrice: 5000000.0,
+        totalValue: 50000000,
+        locationId: AMARR_8_ID,
+        locationName: 'Amarr VIII (Oris) - Emperor Family Academy',
+        date: recentDate,
+        source: 'esi',
+        observedAt: fixedNow.getTime(),
+      },
+    ]);
+
+    // Seed cost allocation for Tritanium to test profit calculation
+    roiRepo.saveAllocation({
+      id: 'alloc-3001',
+      character_id: CHAR_1,
+      sell_transaction_id: 3001,
+      source_type: 'TRANSACTION',
+      type_id: TRITANIUM_ID,
+      type_name: 'Tritanium',
+      quantity_allocated: 100000,
+      unit_buy_price: 4.5,
+      allocated_buy_cost: 450000,
+      allocated_buy_fees: 5000,
+      allocated_sell_fees: 15000,
+      buy_location_id: JITA_44_ID,
+      buy_hub_id: 'hub-jita',
+      buy_hub_name: 'Jita 4-4',
+      sell_location_id: JITA_44_ID,
+      sell_hub_id: 'hub-jita',
+      sell_hub_name: 'Jita 4-4',
+      reconciliation_mode: 'FIFO_AUTOMATIC',
+      created_at: recentDate,
+      updated_at: recentDate,
+      version: 1,
+    });
+
+    // 1. Query Top Sales across all hubs (Consolidated)
+    const allHubsRankings = await analyticsService.getTopSalesRankings({
+      characterId: CHAR_1,
+      timeframe: '30d',
+      now: fixedNow,
+    });
+
+    expect(allHubsRankings.total_items).toBe(2);
+    expect(allHubsRankings.items.length).toBe(2);
+    // PLEX generated 50M ISK, Tritanium generated 600k ISK -> PLEX must be #1, Tritanium #2 (best to worst)
+    expect(allHubsRankings.items[0].type_id).toBe(PLEX_ID);
+    expect(allHubsRankings.items[0].gross_revenue_isk).toBe(50000000);
+    expect(allHubsRankings.items[0].coverage_status).toBe('UNKNOWN'); // no allocation for PLEX
+
+    expect(allHubsRankings.items[1].type_id).toBe(TRITANIUM_ID);
+    expect(allHubsRankings.items[1].gross_revenue_isk).toBe(600000);
+    expect(allHubsRankings.items[1].units_sold).toBe(100000);
+    expect(allHubsRankings.items[1].coverage_status).toBe('COMPLETE');
+    // Profit = 600,000 - 450,000 (buy cost) - 5,000 (buy fees) - 15,000 (sell fees) = 130,000 ISK
+    expect(allHubsRankings.items[1].realized_profit_ttc_isk).toBe(130000);
+
+    // 2. Query filtered by Jita Hub only
+    const jitaRankings = await analyticsService.getTopSalesRankings({
+      characterId: CHAR_1,
+      hubId: 'hub-jita',
+      timeframe: '30d',
+      now: fixedNow,
+    });
+
+    expect(jitaRankings.total_items).toBe(1);
+    expect(jitaRankings.items[0].type_id).toBe(TRITANIUM_ID);
+    expect(jitaRankings.items[0].primary_hub_id).toBe('hub-jita');
+
+    // 3. Query filtered by Amarr Hub only
+    const amarrRankings = await analyticsService.getTopSalesRankings({
+      characterId: CHAR_1,
+      hubId: 'hub-amarr',
+      timeframe: '30d',
+      now: fixedNow,
+    });
+
+    expect(amarrRankings.total_items).toBe(1);
+    expect(amarrRankings.items[0].type_id).toBe(PLEX_ID);
+    expect(amarrRankings.items[0].primary_hub_id).toBe('hub-amarr');
+  });
+
+  it('exposes GET /api/analytics/top-sales with multi-hub filtering and session isolation', async () => {
+    const fixedNow = new Date('2026-09-30T12:00:00Z');
+    const recentDate = new Date(fixedNow.getTime() - 2 * 24 * 3600 * 1000).toISOString();
+
+    // Seed transaction for Character 1
+    ledgerRepo.saveTransactions([
+      {
+        id: `${CHAR_1}:4001`,
+        transactionId: 4001,
+        characterId: CHAR_1,
+        typeId: TRITANIUM_ID,
+        typeName: 'Tritanium',
+        isBuy: false,
+        isPersonal: true,
+        journalRefId: 9201,
+        clientId: 50001,
+        quantity: 50000,
+        unitPrice: 5.5,
+        totalValue: 275000,
+        locationId: JITA_44_ID,
+        locationName: 'Jita IV - Moon 4 - Caldari Navy Assembly Plant',
+        date: recentDate,
+        source: 'esi',
+        observedAt: fixedNow.getTime(),
+      },
+    ]);
+
+    // Setup session
+    const session = sessionStore.createSession({
+      characterId: CHAR_1,
+      characterName: 'Trader One',
+      scopes: ['esi-wallet.read_character_wallet.v1'],
+      accessToken: 'test-access-token',
+      refreshToken: 'test-refresh-token',
+      expiresAt: Date.now() + 3600 * 1000,
+    });
+
+    const app = express();
+    app.use(cookieParser());
+    app.use(express.json());
+    app.use('/api/analytics', createAnalyticsRouter(analyticsService, sessionStore));
+
+    // Request without session -> 401
+    const unauthRes = await request(app).get('/api/analytics/top-sales');
+    expect(unauthRes.status).toBe(401);
+
+    // Authenticated request
+    const authRes = await request(app)
+      .get('/api/analytics/top-sales?timeframe=30d')
+      .set('Cookie', [`eve_session_id=${session.sessionId}`]);
+
+    expect(authRes.status).toBe(200);
+    expect(authRes.body.total_items).toBe(1);
+    expect(authRes.body.items[0].type_id).toBe(TRITANIUM_ID);
+    expect(authRes.body.items[0].gross_revenue_isk).toBe(275000);
+
+    // Request with hub filter
+    const jitaRes = await request(app)
+      .get('/api/analytics/top-sales?hub_id=hub-jita')
+      .set('Cookie', [`eve_session_id=${session.sessionId}`]);
+
+    expect(jitaRes.status).toBe(200);
+    expect(jitaRes.body.total_items).toBe(1);
+
+    const nonMatchingHubRes = await request(app)
+      .get('/api/analytics/top-sales?hub_id=hub-dodixie')
+      .set('Cookie', [`eve_session_id=${session.sessionId}`]);
+
+    expect(nonMatchingHubRes.status).toBe(200);
+    expect(nonMatchingHubRes.body.total_items).toBe(0);
+  });
 });

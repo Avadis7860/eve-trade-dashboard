@@ -3,11 +3,12 @@
  */
 
 export type PhysicalStockClassification =
-  | 'COMMITTED_SELL_ORDER' // In active sell order
-  | 'FREE_HUB_STOCK'       // Free at a recognized trading hub station
-  | 'REMOTE_DORMANT_STOCK' // Outside configured hubs or without movement > 30 days
-  | 'IN_TRANSIT_STOCK'     // In ship cargo hold, fleet hangar, deliveries, or courier
-  | 'UNRECONCILED_STOCK';  // Physical stock with unknown purchase cost
+  | 'COMMITTED_SELL_ORDER'   // In active sell order
+  | 'FREE_HUB_STOCK'         // Free at a recognized trading hub station
+  | 'REMOTE_DORMANT_STOCK'   // Outside configured hubs or without movement > 30 days
+  | 'IN_TRANSIT_STOCK'       // In ship cargo hold, fleet hangar, deliveries, or courier
+  | 'PLANETARY_COLONY_STOCK' // Materials in planetary silos and spaceports (Phase P03)
+  | 'UNRECONCILED_STOCK';    // Physical stock with unknown purchase cost
 
 export type CostBasisStatus = 'KNOWN' | 'PARTIAL' | 'UNKNOWN';
 
@@ -46,6 +47,8 @@ export interface MonetaryCapitalSummary {
   
   // Informational / Notional ask value (NEVER included in netRealCapitalIsk)
   notionalMarketAskValueIsk: number;  // NOTIONAL_MARKET_ASK_VALUE (sum of remaining volume * price on sell orders)
+  planetaryStockValueIsk?: number;    // Estimated value of planetary colony stocks (Phase P03)
+  wipInventoryCapitalIsk?: number;    // WIP_INVENTORY_CAPITAL: Capital in active manufacturing & reactions (Phase P04)
   
   // Statuses & counts
   unreconciledStockUnitsCount: number; // Physical units without purchase cost
@@ -75,6 +78,7 @@ export interface PhysicalStockPosition {
   freeHubStockQuantity: number;
   remoteDormantStockQuantity: number;
   inTransitQuantity: number;
+  planetaryColonyQuantity?: number;
   
   // Classification
   primaryClassification: PhysicalStockClassification;
@@ -100,6 +104,7 @@ export interface PhysicalStockPosition {
     freeHub: number;
     remoteDormant: number;
     inTransit: number;
+    planetaryColony?: number;
     isSumExact: boolean;
   };
 }
@@ -113,6 +118,7 @@ export interface PhysicalSummaryMetrics {
   freeHubStockUnits: number;
   remoteDormantStockUnits: number;
   inTransitStockUnits: number;
+  planetaryColonyStockUnits?: number;
   unreconciledCostUnits: number;
 }
 

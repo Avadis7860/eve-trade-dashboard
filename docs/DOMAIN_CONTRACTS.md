@@ -92,8 +92,24 @@ Pour tout article dans une station ou structure donnée :
   2. `opportunity_cost_isk = ESTIMATED_EXTRACTION_VALUE` : Coût d'opportunité économique d'extraction (valeur marchande au moment ou au lieu d'extraction).
 - **Statut de provenance** : Tout lot issu du minage ou de l'extraction porte impérativement `provenance: 'FARMED'` (distinct de `'MARKET_PURCHASE'` et `'OPENING_BALANCE'`).
 - **Séparation des indicateurs** : Le ROI commercial d'arbitrage est calculé par rapport au coût d'opportunité des intrants. Le bénéfice brut de farm (génération de trésorerie nette de temps de jeu) est calculé séparément.
+- **Invariance des valeurs inconnues** : Si le coût d'opportunité n'est pas connu, `estimated_unit_value` et `opportunity_cost_isk` sont strictement `null` avec statut `costBasisStatus: 'UNKNOWN'`. Ils ne sont JAMAIS coercés à 0.00 ISK.
+- **Herméticité du grand livre de trésorerie** : Le grand livre minier est persisté dans la table dédiée `mining_ledger` et n'altère ni n'importe jamais la table `transactions` ni les réconciliations fiscales de trésorerie.
 
-## 11. Traçabilité de l'Arbre Industriel BOM & Propagation FIFO Multi-Niveaux (Phases P04 & P05)
+## 11. Invariance des Colonies Planétaires & Flux de Matières PI (Phase P03)
+- **État de Capital Physique `PLANETARY_COLONY_STOCK`** :
+  - Les matières premières (P0) et produits transformés (P1 à P4) situés dans les silos de stockage et spatioports des colonies planétaires sont classés sous l'état mutuellement exclusif `PLANETARY_COLONY_STOCK`.
+  - Cet inventaire est hermétiquement séparé des actifs de station (`GET /characters/{id}/assets`), éliminant tout risque de double comptage physique.
+  - Preuve arithmétique d'invariance : $\text{Total Physique} = \text{Ordres Vente} + \text{Libre Hub} + \text{Dormant} + \text{Transit} + \text{Colonies PI}$.
+- **Imputation Déterministe des Taxes Douanières POCO** :
+  - Les frais d'exportation orbitale perçus au bureau de douane (POCO) sont régis par :
+    $$\text{Taxe Export ISK} = \text{Base Customs Value}(Tier) \times (\text{SCC Rate} + \text{POCO Corp Rate}) \times \text{Quantité}$$
+  - Les prélèvements réels du journal de portefeuille (`ref_type: 'planetary_export_tax'`) sont rapprochés et imputés proportionnellement aux lots exportés pour constituer le coût de revient unitaire TTC débarqué.
+- **Vérité des Valeurs & Cadences** :
+  - Si un matériau planétaire ne dispose pas de prix de référence fiable, son coût unitaire et sa valeur totale sont strictement `null` avec statut `UNKNOWN` (jamais 0.00 ISK).
+  - Les cadences horaires d'extraction ($m^3/\text{h}$, $\text{unités}/\text{h}$) et de production industrielle d'usines sont calculées strictement à partir des schémas et durées de cycle ESI.
+  - Le délai d'épuisement prévisionnel des silos tampons est calculé à partir du débit net ($\text{production} - \text{consommation}$).
+
+## 12. Traçabilité de l'Arbre Industriel BOM & Propagation FIFO Multi-Niveaux (Phases P04 & P05)
 - **Nomenclature et lignée (Lineage)** : Tout lot de fabrication (`MANUFACTURED`) ou de transformation planétaire (`PLANETARY_TRANSFORMED`) conserve la traçabilité intégrale de son `job_id` source et de la liste ordonnée des lots d'intrants consommés (`inputLotAllocations`).
 - **Formule de propagation sans rupture** :
   $$C_{\text{unitaire}}(L_{\text{produit}}) = \frac{\sum_{i} (Q_{\text{entrant}, i} \times C_{\text{entrant}, i}) + \text{Frais Job ISK} + \text{Taxes Douanières POCO ISK}}{Q_{\text{sortant}}}$$

@@ -65,6 +65,7 @@ class MockPostgresDatabaseAdapter implements IDatabaseAdapter {
       'character_assets',
       'sync_states',
       'esi_sync_leases',
+      'industry_jobs',
     ];
     for (const name of tableNames) {
       if (!this.tables.has(name)) {

@@ -9,6 +9,10 @@ import { HubsService, hubsService as defaultHubsService } from '../hubs/service.
 import { UniverseService, defaultUniverseService } from '../universe/service.ts';
 import type { IWalletRepository } from '../ledger/walletRepository.ts';
 import { defaultWalletRepository } from '../ledger/walletRepository.ts';
+import type { IPiRepository } from '../pi/repository.ts';
+import { defaultPiRepository } from '../pi/repository.ts';
+import type { IIndustryRepository } from '../industry/repository.ts';
+import { defaultIndustryRepository } from '../industry/repository.ts';
 import { roundIsk } from '../roi/calculator.ts';
 import type {
   PhysicalStockClassification,
@@ -46,7 +50,9 @@ export class CapitalService {
     private roiRepo: RoiRepository = defaultRoiRepository,
     private hubsService: HubsService = defaultHubsService,
     private universeService: UniverseService = defaultUniverseService,
-    private walletRepo: IWalletRepository = defaultWalletRepository
+    private walletRepo: IWalletRepository = defaultWalletRepository,
+    private piRepo: IPiRepository = defaultPiRepository,
+    private industryRepo: IIndustryRepository = defaultIndustryRepository
   ) {}
 
   /**
@@ -327,7 +333,50 @@ export class CapitalService {
           freeHub: freeHubStockQuantity,
           remoteDormant: remoteDormantStockQuantity,
           inTransit: inTransitQuantity,
+          planetaryColony: 0,
           isSumExact,
+        },
+      });
+    }
+
+    // Intégration faiblement couplée des stocks en colonies planétaires (PLANETARY_COLONY_STOCK)
+    const piStocks = this.piRepo.getAggregatedStocksByCharacter(characterId, characterIds);
+    for (const piStock of piStocks) {
+      const typeName = this.universeService.getNameSync(piStock.typeId, 'Type') || piStock.typeName;
+      positions.push({
+        id: `pi:${piStock.characterId}:${piStock.planetId}:${piStock.pinId}:${piStock.typeId}`,
+        characterId: piStock.characterId,
+        typeId: piStock.typeId,
+        typeName,
+        locationId: piStock.planetId,
+        locationName: `Planet #${piStock.planetId}`,
+        locationType: 'planet',
+        locationFlag: 'planetary_storage',
+        hubId: 'planetary',
+        hubName: 'Planetary Colony',
+        isConfiguredHub: false,
+        totalPhysicalQuantity: piStock.quantity,
+        committedSellOrderQuantity: 0,
+        freeHubStockQuantity: 0,
+        remoteDormantStockQuantity: 0,
+        inTransitQuantity: 0,
+        planetaryColonyQuantity: piStock.quantity,
+        primaryClassification: 'PLANETARY_COLONY_STOCK',
+        daysInactive: 0,
+        isDormant: false,
+        unitCostIsk: piStock.estimatedUnitValue,
+        costBasisStatus: piStock.valuationStatus,
+        totalCostBasisIsk: piStock.estimatedTotalValue,
+        activeSellOrdersCount: 0,
+        sellOrderNotionalValueIsk: 0,
+        decompositionProof: {
+          totalPhysical: piStock.quantity,
+          committedSell: 0,
+          freeHub: 0,
+          remoteDormant: 0,
+          inTransit: 0,
+          planetaryColony: piStock.quantity,
+          isSumExact: true,
         },
       });
     }
@@ -488,12 +537,21 @@ export class CapitalService {
         ? 'PARTIAL'
         : 'UNKNOWN';
 
+    // 5. Active industry jobs WIP capital (Phase P04)
+    const activeJobs = this.industryRepo.getActiveJobs(characterId, characterIds);
+    let wipInventoryCapitalIsk = 0;
+    for (const job of activeJobs) {
+      wipInventoryCapitalIsk += (job.cost || 0);
+    }
+    wipInventoryCapitalIsk = roundIsk(wipInventoryCapitalIsk);
+
     return {
       liquidWalletBalanceIsk,
       marketBuyEscrowIsk,
       inventoryCostValueIsk,
       netRealCapitalIsk,
       notionalMarketAskValueIsk,
+      wipInventoryCapitalIsk,
       unreconciledStockUnitsCount,
       unreconciledStockEstimatedValueStatus,
       walletSnapshots,
@@ -519,6 +577,8 @@ export class CapitalService {
     let freeHubStockUnits = 0;
     let remoteDormantStockUnits = 0;
     let inTransitStockUnits = 0;
+    let planetaryColonyStockUnits = 0;
+    let planetaryStockValueIsk = 0;
     let unreconciledCostUnits = 0;
 
     let dormantItemsCount = 0;
@@ -534,6 +594,12 @@ export class CapitalService {
       freeHubStockUnits += pos.freeHubStockQuantity;
       remoteDormantStockUnits += pos.remoteDormantStockQuantity;
       inTransitStockUnits += pos.inTransitQuantity;
+      if (pos.primaryClassification === 'PLANETARY_COLONY_STOCK') {
+        planetaryColonyStockUnits += pos.totalPhysicalQuantity;
+        if (pos.totalCostBasisIsk !== null) {
+          planetaryStockValueIsk += pos.totalCostBasisIsk;
+        }
+      }
 
       if (pos.costBasisStatus === 'UNKNOWN') {
         unreconciledCostUnits += pos.totalPhysicalQuantity;
@@ -564,8 +630,13 @@ export class CapitalService {
       freeHubStockUnits,
       remoteDormantStockUnits,
       inTransitStockUnits,
+      planetaryColonyStockUnits,
       unreconciledCostUnits,
     };
+
+    if (planetaryStockValueIsk > 0) {
+      monetary.planetaryStockValueIsk = roundIsk(planetaryStockValueIsk);
+    }
 
     const dormantSummary: DormantSummaryMetrics = {
       dormantItemsCount,

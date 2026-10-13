@@ -136,6 +136,12 @@ export const CapitalView: React.FC<CapitalViewProps> = ({
             <Truck className="w-3 h-3" /> En Transit
           </span>
         );
+      case 'PLANETARY_COLONY_STOCK':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-teal-500/10 text-teal-300 border border-teal-500/20">
+            <Layers className="w-3 h-3" /> Stock Planétaire
+          </span>
+        );
       case 'UNRECONCILED_STOCK':
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-purple-500/10 text-purple-300 border border-purple-500/20">
@@ -381,6 +387,13 @@ export const CapitalView: React.FC<CapitalViewProps> = ({
               {physical?.inTransitStockUnits?.toLocaleString() || 0}
             </span>
           </div>
+          <div className="hidden sm:flex items-center gap-2 border-l border-slate-800 pl-4">
+            <div className="w-2.5 h-2.5 rounded-full bg-teal-400" />
+            <span className="text-xs text-slate-400">Planétaire :</span>
+            <span className="text-xs font-mono text-teal-300">
+              {physical?.planetaryColonyStockUnits?.toLocaleString() || 0}
+            </span>
+          </div>
         </div>
 
         <button
@@ -425,6 +438,7 @@ export const CapitalView: React.FC<CapitalViewProps> = ({
             <option value="FREE_HUB_STOCK">Stock Libre au Hub</option>
             <option value="REMOTE_DORMANT_STOCK">Stock Dormant / Éloigné</option>
             <option value="IN_TRANSIT_STOCK">Stock en Transit</option>
+            <option value="PLANETARY_COLONY_STOCK">Stock en Colonie Planétaire (PI)</option>
             <option value="UNRECONCILED_STOCK">Coût Inconnu (Non rapproché)</option>
           </select>
 
@@ -569,6 +583,11 @@ export const CapitalView: React.FC<CapitalViewProps> = ({
                           {pos.inTransitQuantity > 0 && (
                             <span className="px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30" title="En soute / transit">
                               {pos.inTransitQuantity.toLocaleString()} trs
+                            </span>
+                          )}
+                          {pos.planetaryColonyQuantity && pos.planetaryColonyQuantity > 0 && (
+                            <span className="px-1.5 py-0.5 rounded bg-teal-500/20 text-teal-300 border border-teal-500/30" title="Stock en colonie planétaire">
+                              {pos.planetaryColonyQuantity.toLocaleString()} pi
                             </span>
                           )}
                         </div>

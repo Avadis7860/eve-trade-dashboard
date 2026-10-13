@@ -1,7 +1,7 @@
 # Phase P02 — Registre Minier & Coûts d'Opportunité Farm / Mining
 
 ## 1. Statut
-`PLANIFIÉE`
+`TERMINÉE`
 
 ## 2. Objectif
 Ingérer et structurer les données d'extraction de ressources (`GET /characters/{character_id}/mining/`) dans un module dédié et résoudre la règle comptable fondamentale d'EVE Online : **les matières premières farmées ou minées ne coûtent jamais 0.00 ISK**. Établir une comptabilisation hermétique distinguant la trésorerie décaissée (nulle) du coût d'opportunité économique d'extraction (`ESTIMATED_EXTRACTION_VALUE`), sans polluer le Grand Livre de trésorerie (`ledger`).
@@ -79,7 +79,7 @@ Structure d'une entrée ESI brute :
 * `METRICS.md` : formalisation mathématique de `ESTIMATED_EXTRACTION_VALUE` et de la rentabilité duale (Cash vs Opportunité).
 
 ## 10. Critères d'Acceptation & Qualification
-* [ ] Le journal d'extraction est ingéré et persisté de façon idempotente sans doublons pour tous les personnages de la flotte.
-* [ ] Aucun lot farmé n'est injecté avec un coût d'opportunité indéfini ou coercé silencieusement à 0.00 ISK sans statut `UNKNOWN`.
-* [ ] Le module `src/server/mining/` fonctionne de manière autonome sans importer ni modifier la table `transactions`.
-* [ ] La suite de tests `src/server/mining/mining.test.ts` valide la conservation stricte des deux dimensions (trésorerie vs opportunité).
+* [x] Le journal d'extraction est ingéré et persisté de façon idempotente sans doublons pour tous les personnages de la flotte.
+* [x] Aucun lot farmé n'est injecté avec un coût d'opportunité indéfini ou coercé silencieusement à 0.00 ISK sans statut `UNKNOWN`.
+* [x] Le module `src/server/mining/` fonctionne de manière autonome sans importer ni modifier la table `transactions`.
+* [x] La suite de tests `src/server/mining/mining.test.ts` valide la conservation stricte des deux dimensions (trésorerie vs opportunité).

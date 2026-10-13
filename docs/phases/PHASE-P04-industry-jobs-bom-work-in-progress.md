@@ -1,7 +1,7 @@
 # Phase P04 — Grand Livre Industriel & Bill of Materials (BOM) : Jobs & Encours (WIP)
 
 ## 1. Statut
-`PLANIFIÉE`
+`TERMINÉE`
 
 ## 2. Objectif
 Construire le Grand Livre Industriel d'EVE Trade Dashboard : suivi complet des lignes de fabrication, de réactions chimiques et de recherche (personnages et divisions de corporation), traçabilité de l'arbre des composants (Bill of Materials / BOM), modélisation des encours de production (Work-in-Progress / WIP) et corrélation exacte des frais d'installation de jobs avec les écritures du journal de portefeuille.
@@ -67,7 +67,7 @@ Structure d'un job industriel CCP :
 * `METRICS.md` : formule de valorisation des encours industriels et agrégation des frais de pose.
 
 ## 10. Critères d'Acceptation & Qualification
-* [ ] Les jobs de personnages et de corporations sont collectés, typés et persistés avec succès.
-* [ ] Les matières engagées dans un job en cours sont valorisées et présentées sous l'état `WIP_INVENTORY_CAPITAL`.
-* [ ] Les frais d'installation de job sont corrélés avec les débits de portefeuille sans double comptage.
-* [ ] La suite de tests `src/server/industry/industry.test.ts` prouve la réconciliation d'un job de fabrication de bout en bout (lancement -> WIP -> livraison).
+* [x] Les jobs de personnages et de corporations sont collectés, typés et persistés avec succès.
+* [x] Les matières engagées dans un job en cours sont valorisées et présentées sous l'état `WIP_INVENTORY_CAPITAL`.
+* [x] Les frais d'installation de job sont corrélés avec les débits de portefeuille sans double comptage.
+* [x] La suite de tests `src/server/industry/industry.test.ts` prouve la réconciliation d'un job de fabrication de bout en bout (lancement -> WIP -> livraison).

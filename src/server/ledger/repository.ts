@@ -1790,3 +1790,4 @@ export const defaultLedgerRepository = StorageManager.getInstance().getConfig().
   ? new PostgresLedgerRepository(StorageManager.getInstance().getAdapter())
   : new PersistentLedgerRepository(StorageManager.getInstance().getAdapter());
 export const ledgerRepository = defaultLedgerRepository;
+export { PersistentLedgerRepository as LedgerRepository };

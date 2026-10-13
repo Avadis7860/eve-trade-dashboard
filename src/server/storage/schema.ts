@@ -1,6 +1,6 @@
 import type { SchemaMigration } from './types.ts';
 
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 13;
 
 export const INITIAL_MIGRATION_SQL = `
 -- Hubs Table
@@ -352,6 +352,139 @@ export const MIGRATIONS: SchemaMigration[] = [
 
       CREATE UNIQUE INDEX IF NOT EXISTS idx_jn_canonical_id ON journal_entries (canonical_id);
       CREATE INDEX IF NOT EXISTS idx_jn_corp_div ON journal_entries (corporation_id, division);
+    `,
+  },
+  {
+    version: 11,
+    name: '011_mining_ledger_table',
+    upSql: `
+      CREATE TABLE IF NOT EXISTS mining_ledger (
+        id SERIAL PRIMARY KEY,
+        character_id BIGINT NOT NULL,
+        date TEXT NOT NULL,
+        solar_system_id INTEGER NOT NULL,
+        type_id INTEGER NOT NULL,
+        quantity BIGINT NOT NULL,
+        estimated_unit_value NUMERIC(18, 4),
+        opportunity_cost_isk NUMERIC(18, 4),
+        created_at BIGINT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_mining_entry ON mining_ledger (character_id, date, solar_system_id, type_id);
+      CREATE INDEX IF NOT EXISTS idx_mining_char_date ON mining_ledger (character_id, date);
+      CREATE INDEX IF NOT EXISTS idx_mining_type ON mining_ledger (type_id);
+      CREATE INDEX IF NOT EXISTS idx_mining_system ON mining_ledger (solar_system_id);
+    `,
+  },
+  {
+    version: 12,
+    name: '012_planetary_colonies_pins_and_routes',
+    upSql: `
+      CREATE TABLE IF NOT EXISTS pi_colonies (
+        character_id BIGINT NOT NULL,
+        planet_id INTEGER NOT NULL,
+        solar_system_id INTEGER NOT NULL,
+        planet_type TEXT NOT NULL,
+        upgrade_level INTEGER NOT NULL,
+        num_pins INTEGER NOT NULL,
+        last_update TEXT NOT NULL,
+        observed_at BIGINT NOT NULL,
+        PRIMARY KEY (character_id, planet_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_pi_col_char ON pi_colonies (character_id);
+      CREATE INDEX IF NOT EXISTS idx_pi_col_system ON pi_colonies (solar_system_id);
+
+      CREATE TABLE IF NOT EXISTS pi_pins (
+        character_id BIGINT NOT NULL,
+        planet_id INTEGER NOT NULL,
+        pin_id BIGINT NOT NULL,
+        type_id INTEGER NOT NULL,
+        type_name TEXT,
+        category TEXT NOT NULL,
+        schematic_id INTEGER,
+        cycle_time INTEGER,
+        quantity_per_cycle INTEGER,
+        product_type_id INTEGER,
+        contents TEXT,
+        expiry_time TEXT,
+        last_cycle_start TEXT,
+        install_time TEXT,
+        latitude NUMERIC(10, 6),
+        longitude NUMERIC(10, 6),
+        observed_at BIGINT NOT NULL,
+        PRIMARY KEY (character_id, planet_id, pin_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_pi_pins_char_planet ON pi_pins (character_id, planet_id);
+      CREATE INDEX IF NOT EXISTS idx_pi_pins_category ON pi_pins (category);
+
+      CREATE TABLE IF NOT EXISTS pi_routes (
+        character_id BIGINT NOT NULL,
+        planet_id INTEGER NOT NULL,
+        route_id BIGINT NOT NULL,
+        source_pin_id BIGINT NOT NULL,
+        destination_pin_id BIGINT NOT NULL,
+        content_type_id INTEGER NOT NULL,
+        quantity NUMERIC(18, 4) NOT NULL,
+        waypoints TEXT,
+        observed_at BIGINT NOT NULL,
+        PRIMARY KEY (character_id, planet_id, route_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_pi_routes_char_planet ON pi_routes (character_id, planet_id);
+
+      CREATE TABLE IF NOT EXISTS pi_customs_offices (
+        office_id BIGINT PRIMARY KEY,
+        solar_system_id INTEGER NOT NULL,
+        corporation_tax_rate NUMERIC(10, 4),
+        alliance_tax_rate NUMERIC(10, 4),
+        standing_tax_rate NUMERIC(10, 4),
+        observed_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_pi_poco_system ON pi_customs_offices (solar_system_id);
+    `,
+  },
+  {
+    version: 13,
+    name: '013_industry_jobs_table',
+    upSql: `
+      CREATE TABLE IF NOT EXISTS industry_jobs (
+        job_id BIGINT PRIMARY KEY,
+        installer_id BIGINT NOT NULL,
+        installer_name TEXT,
+        facility_id BIGINT NOT NULL,
+        station_id BIGINT NOT NULL,
+        activity_id INTEGER NOT NULL,
+        activity_name TEXT NOT NULL,
+        blueprint_id BIGINT NOT NULL,
+        blueprint_type_id INTEGER NOT NULL,
+        blueprint_type_name TEXT,
+        blueprint_location_id BIGINT NOT NULL,
+        output_location_id BIGINT NOT NULL,
+        product_type_id INTEGER,
+        product_type_name TEXT,
+        status TEXT NOT NULL,
+        duration INTEGER NOT NULL,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        pause_date TEXT,
+        completed_date TEXT,
+        completed_character_id BIGINT,
+        runs INTEGER NOT NULL,
+        successful_runs INTEGER,
+        cost NUMERIC(20, 2),
+        licensed_runs INTEGER,
+        probability NUMERIC(10, 4),
+        source TEXT NOT NULL,
+        character_id BIGINT NOT NULL,
+        corporation_id BIGINT,
+        matched_journal_id BIGINT,
+        reconciliation_status TEXT,
+        observed_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_industry_jobs_char ON industry_jobs (character_id);
+      CREATE INDEX IF NOT EXISTS idx_industry_jobs_corp ON industry_jobs (corporation_id);
+      CREATE INDEX IF NOT EXISTS idx_industry_jobs_installer ON industry_jobs (installer_id);
+      CREATE INDEX IF NOT EXISTS idx_industry_jobs_status ON industry_jobs (status);
+      CREATE INDEX IF NOT EXISTS idx_industry_jobs_product ON industry_jobs (product_type_id);
+      CREATE INDEX IF NOT EXISTS idx_industry_jobs_end_date ON industry_jobs (end_date);
     `,
   },
 ];

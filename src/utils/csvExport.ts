@@ -307,6 +307,7 @@ export function positionsToCsv(positions: Array<{
   freeHubStockQuantity: number;
   remoteDormantStockQuantity: number;
   inTransitQuantity: number;
+  planetaryColonyQuantity?: number;
   daysInactive: number;
   isDormant: boolean;
   unitCostIsk: number | null;
@@ -326,6 +327,7 @@ export function positionsToCsv(positions: Array<{
     'FreeHubStockQuantity',
     'RemoteDormantStockQuantity',
     'InTransitQuantity',
+    'PlanetaryColonyQuantity',
     'DaysInactive',
     'IsDormant',
     'UnitCostISK',
@@ -346,6 +348,7 @@ export function positionsToCsv(positions: Array<{
     escapeCsvField(p.freeHubStockQuantity),
     escapeCsvField(p.remoteDormantStockQuantity),
     escapeCsvField(p.inTransitQuantity),
+    escapeCsvField(p.planetaryColonyQuantity ?? 0),
     escapeCsvField(p.daysInactive),
     escapeCsvField(p.isDormant ? 'Oui' : 'Non'),
     escapeCsvField(p.unitCostIsk !== null ? p.unitCostIsk : 'UNKNOWN'),

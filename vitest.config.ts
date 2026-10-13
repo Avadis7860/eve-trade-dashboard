@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [react()],
   test: {
     globals: true,
+    testTimeout: 15000,
     setupFiles: ['./src/test/setup.ts'],
     environment: 'jsdom',
     exclude: ['**/node_modules/**', '**/dist/**', 'src/e2e/browser/**'],

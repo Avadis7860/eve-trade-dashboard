@@ -398,6 +398,24 @@ export class AuthService {
   }
 
   /**
+   * Retrieves a valid (non-expired) access token for a given character in a session.
+   * Refreshes the token automatically if needed.
+   */
+  public async getValidAccessTokenForCharacter(sessionId: string, characterId: number): Promise<string | null> {
+    const session = await this.getValidSession(sessionId);
+    if (!session) return null;
+
+    const charRecord = session.characters?.[characterId];
+    if (!charRecord) return null;
+
+    if (Date.now() >= charRecord.expiresAt - 60000 && charRecord.refreshToken) {
+      return this.refreshCharacterTokens(sessionId, characterId);
+    }
+
+    return charRecord.accessToken;
+  }
+
+  /**
    * Exports fleet credentials for all characters in the session, encrypted with the user's password.
    */
   public exportFleetBackup(sessionId: string, password: string): { encryptedData: string; fleetCount: number } {

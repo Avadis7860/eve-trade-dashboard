@@ -23,7 +23,7 @@ describe('Server API Endpoints', () => {
 
     const infoRes = await request(app).get('/api/info');
     expect(infoRes.status).toBe(200);
-    expect(infoRes.body.phase).toBe('PHASE-G04-corp-deduplication-backup-probes');
+    expect(infoRes.body.phase).toBe('PHASE-P04-industry-jobs-bom-work-in-progress');
 
     const liveRes = await request(app).get('/health/live');
     expect(liveRes.status).toBe(200);

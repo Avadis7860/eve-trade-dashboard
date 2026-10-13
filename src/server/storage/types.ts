@@ -5,6 +5,15 @@ import type { ExplicitCostAllocation, OpeningBalanceLot } from '../roi/types.ts'
 import type { CharacterAsset } from '../assets/types.ts';
 import type { SyncState } from '../sync/types.ts';
 import type { WalletBalanceSnapshot } from '../capital/types.ts';
+import type { MiningLedgerEntry } from '../mining/types.ts';
+import type { RawEsiPlanet, RawEsiPlanetDetail, RawEsiCustomsOffice } from '../esi/types.ts';
+import type { IndustryJob } from '../industry/types.ts';
+
+export interface StoredPiData {
+  colonies: RawEsiPlanet[];
+  planetDetails: Record<string, RawEsiPlanetDetail>; // key: `${characterId}:${planetId}`
+  customsOffices?: RawEsiCustomsOffice[];
+}
 
 export interface AppBackupData {
   ledger: {
@@ -29,6 +38,13 @@ export interface AppBackupData {
   };
   sync: {
     states: SyncState[];
+  };
+  mining?: {
+    entries: MiningLedgerEntry[];
+  };
+  pi?: StoredPiData;
+  industry?: {
+    jobs: IndustryJob[];
   };
 }
 

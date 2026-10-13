@@ -120,11 +120,19 @@ Toutes les métriques produites par l'application sont déterministes, auditable
 
 ## 5. Métriques de Production, Farm & PI (Série P)
 
-### 5.1. Valeur Estimée d'Extraction & Coût d'Opportunité ($ESTIMATED\_EXTRACTION\_VALUE$)
-- **Principe d'Invariance** : Tout minerai extrait possède une valeur économique non nulle.
-- **Formule** :
-  $$\text{Coût d'Opportunité Unit.} = \text{Prix Moyen Marché}(Type, \text{Date}) \quad \text{ou} \quad \text{Valeur Minérale Standard}$$
+### 5.1. Valeur Estimée d'Extraction, Coût d'Opportunité & Rentabilité Duale
+- **Principe d'Invariance** : Tout minerai extrait possède une valeur économique non nulle. Si la valeur unitaire est introuvable, elle est strictement `null` avec statut `UNKNOWN` (ne vaut jamais 0.00 ISK).
+- **Coût d'Opportunité Unitaire & Total** :
+  $$\text{Coût d'Opportunité Unit.} = \text{Prix Référence}(Type) \quad \text{ou} \quad \text{Valeur Minérale Standard}$$
   $$\text{Coût d'Opportunité Total} = \text{Quantité Extraite} \times \text{Coût d'Opportunité Unit.}$$
+- **Double Rentabilité (Arbitrage Commercial vs Marge de Farm)** :
+  1. **ROI Commercial Pur** (mesure de la rentabilité économique d'arbitrage face à la vente directe de brut) :
+     $$\text{Profit Commercial ISK} = \text{Prix Vente} - \text{Coût d'Opportunité} - \text{Taxes}$$
+     $$\text{ROI Commercial \%} = \left(\frac{\text{Profit Commercial ISK}}{\text{Coût d'Opportunité}}\right) \times 100 \quad (\text{si Coût d'Opportunité} > 0)$$
+  2. **Marge de Trésorerie Brute de Farm** (mesure de la liquidité nette générée par le temps de jeu) :
+     $$\text{Sortie Trésorerie Décaissée} = 0.00\text{ ISK}$$
+     $$\text{Marge Trésorerie Farm ISK} = \text{Prix Vente} - \text{Taxes}$$
+     $$\text{Marge Trésorerie \%} = 100\%$$
 
 ### 5.2. Capital en Encours de Fabrication ($WIP\_INVENTORY\_CAPITAL$)
 - **Formule** :
@@ -137,4 +145,20 @@ Toutes les métriques produites par l'application sont déterministes, auditable
 ### 5.4. Cadence Horaire PI ($Debit_{PI\_horaire}$)
 - **Formule Extraction** : $\text{Taux horaire} = \sum_{\text{extracteurs}} \frac{\text{Quantité par cycle} \times 3600}{\text{Durée cycle (secondes)}}$
 - **Formule Production** : Taux de transformation horaire selon schématique P1, P2, P3, P4 active.
+
+### 5.5. Valorisation des Stocks Planétaires ($Cap_{stock\_pi}$)
+- **Formule** :
+  $$Cap_{stock\_pi} = \sum_{p \in \text{pins (silos, spatioports)}} \sum_{i \in p.\text{contents}} \left( Q_i \times \text{Valeur Unitaire Estimée}(Type_i) \right)$$
+- **Invariance** : Si la valeur unitaire est introuvable, elle est strictement `null` avec statut `UNKNOWN` (ne vaut jamais 0.00 ISK).
+
+### 5.6. Taxes Douanières POCO & SCC d'Exportation Orbitale ($Tax_{POCO}$)
+- **Formule Taxe Théorique** :
+  $$\text{Taxe Export ISK} = \text{Base Customs Value}(Tier) \times (\tau_{SCC} + \tau_{POCO}) \times Q_{\text{export}}$$
+  avec $\tau_{SCC} = 10\%$ et $\tau_{POCO} = \text{Taux corpo bureau de douane}$.
+- **Attribution Réelle** : Rapprochement au prorata des débits `planetary_export_tax` du journal de portefeuille.
+
+### 5.7. Délai d'Épuisement Prévisionnel des Silos ($T_{\text{épuisement}}$)
+- **Formule** :
+  $$T_{\text{épuisement}} = \frac{Q_{\text{stock\_actuel}}}{\text{Consommation Horaire Net}} \quad (\text{si Débit Net} < 0)$$
+
 

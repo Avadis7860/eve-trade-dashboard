@@ -677,4 +677,149 @@ describe('Level 3: HTTP API & Middleware Endpoints Exhaustive Test Suite', () =>
       expect(res.body.error).toContain('Accès refusé');
     });
   });
+
+  describe('14. Mining Ledger & Opportunity Costs API (/api/mining)', () => {
+    it('returns mining ledger on GET /api/mining/ledger', async () => {
+      const res = await request(app)
+        .get('/api/mining/ledger')
+        .set('Cookie', [`eve_session_id=${sessionToken}`]);
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.entries)).toBe(true);
+      expect(res.body.total).toBeDefined();
+    });
+
+    it('returns mining summary on GET /api/mining/summary', async () => {
+      const res = await request(app)
+        .get('/api/mining/summary')
+        .set('Cookie', [`eve_session_id=${sessionToken}`]);
+
+      expect(res.status).toBe(200);
+      expect(res.body.totalQuantity).toBeDefined();
+      expect(res.body.valuationStatus).toBeDefined();
+      expect(Array.isArray(res.body.byType)).toBe(true);
+    });
+
+    it('enforces 403 on /api/mining/ledger for foreign character', async () => {
+      const res = await request(app)
+        .get('/api/mining/ledger?character_id=999999')
+        .set('Cookie', [`eve_session_id=${sessionToken}`]);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain('Accès refusé');
+    });
+
+    it('returns opportunity costs list on GET /api/mining/opportunity-costs', async () => {
+      const res = await request(app)
+        .get('/api/mining/opportunity-costs')
+        .set('Cookie', [`eve_session_id=${sessionToken}`]);
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+    });
+  });
+
+  describe('14. Planetary Interaction (PI) Routes (Phase P03)', () => {
+    it('returns 401 when unauthenticated on GET /api/pi/colonies', async () => {
+      const res = await request(app).get('/api/pi/colonies');
+      expect(res.status).toBe(401);
+    });
+
+    it('returns colonies list on GET /api/pi/colonies with session', async () => {
+      const res = await request(app)
+        .get('/api/pi/colonies')
+        .set('Cookie', [`eve_session_id=${sessionToken}`]);
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.colonies)).toBe(true);
+      expect(res.body.total).toBeDefined();
+    });
+
+    it('returns planetary stocks on GET /api/pi/stocks', async () => {
+      const res = await request(app)
+        .get('/api/pi/stocks')
+        .set('Cookie', [`eve_session_id=${sessionToken}`]);
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.stocks)).toBe(true);
+    });
+
+    it('returns production rates report on GET /api/pi/production-rates', async () => {
+      const res = await request(app)
+        .get('/api/pi/production-rates')
+        .set('Cookie', [`eve_session_id=${sessionToken}`]);
+
+      expect(res.status).toBe(200);
+      expect(res.body.totalColoniesCount).toBeDefined();
+      expect(res.body.stockValuationStatus).toBeDefined();
+    });
+
+    it('enforces 403 on GET /api/pi/colonies for foreign character', async () => {
+      const res = await request(app)
+        .get(`/api/pi/colonies?character_id=${foreignCharId}`)
+        .set('Cookie', [`eve_session_id=${sessionToken}`]);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain('Accès refusé');
+    });
+  });
+
+  describe('15. Industry Jobs & BOM Routes (Phase P04)', () => {
+    it('returns 401 when unauthenticated on GET /api/industry/jobs', async () => {
+      const res = await request(app).get('/api/industry/jobs');
+      expect(res.status).toBe(401);
+    });
+
+    it('returns jobs list on GET /api/industry/jobs with session', async () => {
+      const res = await request(app)
+        .get('/api/industry/jobs')
+        .set('Cookie', [`eve_session_id=${sessionToken}`]);
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.jobs)).toBe(true);
+      expect(res.body.total).toBeDefined();
+    });
+
+    it('returns industry summary on GET /api/industry/summary', async () => {
+      const res = await request(app)
+        .get('/api/industry/summary')
+        .set('Cookie', [`eve_session_id=${sessionToken}`]);
+
+      expect(res.status).toBe(200);
+      expect(res.body.totalJobsCount).toBeDefined();
+      expect(res.body.wipSummary).toBeDefined();
+      expect(res.body.reconciliationSummary).toBeDefined();
+    });
+
+    it('returns WIP capital on GET /api/industry/wip-capital', async () => {
+      const res = await request(app)
+        .get('/api/industry/wip-capital')
+        .set('Cookie', [`eve_session_id=${sessionToken}`]);
+
+      expect(res.status).toBe(200);
+      expect(res.body.totalWipCommittedIsk).toBeDefined();
+      expect(res.body.wipStatus).toBeDefined();
+      expect(Array.isArray(res.body.jobs)).toBe(true);
+    });
+
+    it('returns BOM details on GET /api/industry/bom/:blueprintTypeId', async () => {
+      const res = await request(app)
+        .get('/api/industry/bom/688')
+        .set('Cookie', [`eve_session_id=${sessionToken}`]);
+
+      expect(res.status).toBe(200);
+      expect(res.body.found).toBe(true);
+      expect(res.body.blueprint.blueprintTypeId).toBe(688);
+      expect(Array.isArray(res.body.blueprint.materials)).toBe(true);
+    });
+
+    it('enforces 403 on GET /api/industry/jobs for foreign character', async () => {
+      const res = await request(app)
+        .get(`/api/industry/jobs?character_id=${foreignCharId}`)
+        .set('Cookie', [`eve_session_id=${sessionToken}`]);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain('Accès refusé');
+    });
+  });
 });

@@ -23,7 +23,10 @@ import { defaultWalletRepository } from '../ledger/walletRepository.ts';
 import type { WalletBalanceSnapshot, WalletSyncMode } from '../capital/types.ts';
 import { PiCollector } from '../pi/collector.ts';
 import { IndustryCollector } from '../industry/collector.ts';
+import { IndustryService, defaultIndustryService } from '../industry/service.ts';
 import { MiningCollector } from '../mining/collector.ts';
+import { MiningService, defaultMiningService } from '../mining/service.ts';
+import { logger } from '../utils/logger.ts';
 
 export interface RawEsiTransaction {
   transaction_id: number;
@@ -65,7 +68,9 @@ export class SyncService {
   private coordinator: SyncCoordinator;
   private piCollector: PiCollector;
   private industryCollector: IndustryCollector;
+  private industryService: IndustryService;
   private miningCollector: MiningCollector;
+  private miningService: MiningService;
   private inaccessibleCorpCharacters: Set<number> = new Set();
 
   constructor(
@@ -79,7 +84,9 @@ export class SyncService {
     walletRepo: IWalletRepository = defaultWalletRepository,
     piCollector?: PiCollector,
     industryCollector?: IndustryCollector,
-    miningCollector?: MiningCollector
+    miningCollector?: MiningCollector,
+    miningService?: MiningService,
+    industryService?: IndustryService
   ) {
     this.esiClient = esiClient;
     this.ledgerRepo = ledgerRepo;
@@ -94,7 +101,9 @@ export class SyncService {
     this.walletRepo = walletRepo;
     this.piCollector = piCollector ?? new PiCollector(this.esiClient, this.esiClient.getRateLimiter());
     this.industryCollector = industryCollector ?? new IndustryCollector(this.esiClient);
+    this.industryService = industryService ?? defaultIndustryService;
     this.miningCollector = miningCollector ?? new MiningCollector(this.esiClient);
+    this.miningService = miningService ?? defaultMiningService;
   }
 
   public getCoordinator(): SyncCoordinator {
@@ -111,6 +120,10 @@ export class SyncService {
 
   public getMiningCollector(): MiningCollector {
     return this.miningCollector;
+  }
+
+  public getMiningService(): MiningService {
+    return this.miningService;
   }
 
   /**
@@ -1869,6 +1882,16 @@ export class SyncService {
         signal,
       });
 
+      let newPersisted = 0;
+      if (res.characterJobs && res.characterJobs.length > 0) {
+        try {
+          const ingestRes = await this.industryService.ingestRawJobs(characterId, res.characterJobs, 'CHARACTER');
+          newPersisted = ingestRes.inserted;
+        } catch (ingestErr) {
+          logger.warn(`[SyncService] Failed to persist industry jobs for character ${characterId}: ${(ingestErr as Error).message}`);
+        }
+      }
+
       const syncStatus: SyncStatusState = res.status;
       await this.syncRepo.updateSyncStateAsync(characterId, resource, {
         status: syncStatus,
@@ -1876,7 +1899,7 @@ export class SyncService {
         lastSyncCompletedAt: Date.now(),
         totalRecords: res.totalJobs,
         itemsCount: res.totalJobs,
-        newRecordsInLastSync: res.totalJobs,
+        newRecordsInLastSync: newPersisted,
         errorMessage: res.error,
       });
 
@@ -1886,7 +1909,7 @@ export class SyncService {
         status: syncStatus,
         coverageStatus: res.status,
         itemsFetched: res.totalJobs,
-        newItemsPersisted: res.totalJobs,
+        newItemsPersisted: newPersisted,
         totalPersisted: res.totalJobs,
         durationMs: Date.now() - startTime,
         error: res.error,
@@ -1920,6 +1943,16 @@ export class SyncService {
         signal,
       });
 
+      let newPersisted = 0;
+      if (res.entries && res.entries.length > 0) {
+        try {
+          const ingestResult = await this.miningService.ingestRawMiningEntries(characterId, res.entries);
+          newPersisted = ingestResult.inserted;
+        } catch (ingestErr) {
+          logger.warn(`[SyncService] Failed to persist mining entries for character ${characterId}: ${(ingestErr as Error).message}`);
+        }
+      }
+
       const syncStatus: SyncStatusState = res.status;
       await this.syncRepo.updateSyncStateAsync(characterId, resource, {
         status: syncStatus,
@@ -1927,7 +1960,7 @@ export class SyncService {
         lastSyncCompletedAt: Date.now(),
         totalRecords: res.entries.length,
         itemsCount: res.entries.length,
-        newRecordsInLastSync: res.entries.length,
+        newRecordsInLastSync: newPersisted,
         errorMessage: res.error,
       });
 
@@ -1937,7 +1970,7 @@ export class SyncService {
         status: syncStatus,
         coverageStatus: res.status,
         itemsFetched: res.entries.length,
-        newItemsPersisted: res.entries.length,
+        newItemsPersisted: newPersisted,
         totalPersisted: res.entries.length,
         durationMs: Date.now() - startTime,
         error: res.error,

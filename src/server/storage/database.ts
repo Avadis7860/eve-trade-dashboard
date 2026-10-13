@@ -68,6 +68,9 @@ export class DurableFileDatabaseAdapter implements IDatabaseAdapter {
         roi: { allocations: [], openingBalances: [] },
         assets: { assets: [] },
         sync: { states: [] },
+        mining: { entries: [] },
+        pi: { colonies: [], planetDetails: {}, customsOffices: [] },
+        industry: { jobs: [] },
       },
       sessions: {},
     };
@@ -227,6 +230,11 @@ export class DurableFileDatabaseAdapter implements IDatabaseAdapter {
     if (ledgerAny.walletSnapshots) {
       ledgerAny.walletSnapshots = ledgerAny.walletSnapshots.filter(
         (w) => w.characterId !== characterId && w.observedByCharacterId !== characterId
+      );
+    }
+    if (this.state.data.mining?.entries) {
+      this.state.data.mining.entries = this.state.data.mining.entries.filter(
+        (m) => m.characterId !== characterId
       );
     }
     if (this.state.sessions) {
@@ -460,6 +468,7 @@ export class PostgresDatabaseAdapter implements IDatabaseAdapter {
           await client.query('DELETE FROM character_assets WHERE character_id = $1', [characterId]);
           await client.query('DELETE FROM sync_states WHERE character_id = $1', [characterId]);
           await client.query('DELETE FROM wallet_snapshots WHERE character_id = $1 OR observed_by_character_id = $1', [characterId]);
+          await client.query('DELETE FROM mining_ledger WHERE character_id = $1', [characterId]);
           await client.query('DELETE FROM session_characters WHERE character_id = $1', [characterId]);
         },
         transaction: async <R>(nestedFn: (a: IDatabaseAdapter) => Promise<R>) => nestedFn(txAdapter),

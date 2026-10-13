@@ -46,9 +46,9 @@ Un seul chantier actif, une phase, une branche, un PR. Jamais sur main. Petits l
 | S02 | Sélection & Invariance du Personnage Principal | S01 | Terminé |
 | S03 | Pérennité des Flottes & Résilience Iframe AI Studio | S01, S02 | Terminé |
 | P01 | Ingestion ESI Dédiée & Régulation Débit : PI, Industrie & Minage | S01–S03 | Terminé |
-| P02 | Registre Minier & Coûts d'Opportunité Farm / Mining | P01 | Planifié |
-| P03 | Colonies Planétaires & Flux de Matières PI | P01 | Planifié |
-| P04 | Grand Livre Industriel & Bill of Materials (BOM) : Jobs & Encours WIP | P01, P02 | Planifié |
+| P02 | Registre Minier & Coûts d'Opportunité Farm / Mining | P01 | Terminé |
+| P03 | Colonies Planétaires & Flux de Matières PI | P01 | Terminé |
+| P04 | Grand Livre Industriel & Bill of Materials (BOM) : Jobs & Encours WIP | P01, P02 | Terminé |
 | P05 | Moteur de Propagation Déterministe des Coûts (FIFO Multi-Niveaux & Chaîne de Valeur) | P01–P04 | Planifié |
 
 Les spécifications des phases actives sont consultables dans [`docs/phases/`](phases/README.md). L'historique complet des phases antérieures et des audits clos est archivé dans [`docs/archive/`](archive/README.md).

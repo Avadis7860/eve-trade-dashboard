@@ -1,7 +1,7 @@
 # Phase P03 — Colonies Planétaires & Flux de Matières PI
 
 ## 1. Statut
-`PLANIFIÉE`
+`TERMINÉE`
 
 ## 2. Objectif
 Modéliser l'infrastructure industrielle planétaire (Planetary Interaction / PI) pour chaque personnage de la flotte : extraction de matières premières P0, transformation en P1/P2/P3/P4, inventaire immobilisé dans les spatioports et silos planétaires, cadences horaires de production et prise en compte des taxes de douanes des bureaux de douane (POCO - Planetary Customs Offices).
@@ -57,7 +57,7 @@ Modéliser l'infrastructure industrielle planétaire (Planetary Interaction / PI
 * `METRICS.md` : formule de valorisation des stocks planétaires et décomposition des cadences de flux horaire ($m^3/\text{heure}$, $\text{ISK}/\text{jour}$).
 
 ## 10. Critères d'Acceptation & Qualification
-* [ ] Toutes les colonies et tous les pins d'une flotte de 11 personnages sont modélisés et mis à jour sous respect du cache.
-* [ ] Les stocks contenus dans les silos et spatioports sont correctement quantifiés et valorisés sans doublon avec les actifs de station.
-* [ ] La décomposition du capital intègre la valeur notionnelle et le coût des stocks planétaires sous `PLANETARY_COLONY_STOCK`.
-* [ ] La suite de tests `src/server/pi/pi.test.ts` valide le calcul des cadences et l'imputation des taxes de douane POCO.
+* [x] Toutes les colonies et tous les pins d'une flotte de 11 personnages sont modélisés et mis à jour sous respect du cache.
+* [x] Les stocks contenus dans les silos et spatioports sont correctement quantifiés et valorisés sans doublon avec les actifs de station.
+* [x] La décomposition du capital intègre la valeur notionnelle et le coût des stocks planétaires sous `PLANETARY_COLONY_STOCK`.
+* [x] La suite de tests `src/server/pi/pi.test.ts` valide le calcul des cadences et l'imputation des taxes de douane POCO.

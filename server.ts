@@ -20,6 +20,9 @@ import { createOperationsRouter } from './src/server/operations/router.ts';
 import { createBackupRouter } from './src/server/storage/router.ts';
 import { createSystemRouter } from './src/server/system/router.ts';
 import { createSyncRouter } from './src/server/sync/router.ts';
+import { createMiningRouter } from './src/server/mining/router.ts';
+import { createPiRouter } from './src/server/pi/router.ts';
+import { createIndustryRouter } from './src/server/industry/router.ts';
 import { requestContextMiddleware } from './src/server/middleware/context.ts';
 import { securityHeadersMiddleware, csrfProtectionMiddleware } from './src/server/middleware/security.ts';
 
@@ -84,7 +87,7 @@ export async function createApp() {
     res.json({
       name: 'EVE Trade Dashboard',
       description: 'EVE Online trade dashboard',
-      phase: 'PHASE-G04-corp-deduplication-backup-probes',
+      phase: 'PHASE-P04-industry-jobs-bom-work-in-progress',
       status: 'operational',
     });
   });
@@ -140,6 +143,15 @@ export async function createApp() {
 
   // Dedicated Sync Router (Phase P01)
   app.use('/api/sync', createSyncRouter());
+
+  // Mining Farm Ledger & Opportunity Cost Router (Phase P02)
+  app.use('/api/mining', createMiningRouter());
+
+  // Planetary Interaction Colonies & Materials Flow Router (Phase P03)
+  app.use('/api/pi', createPiRouter());
+
+  // Industry Jobs & BOM Router (Phase P04)
+  app.use('/api/industry', createIndustryRouter());
 
   // Vite middleware in dev or static serving in prod
   if (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test' && !process.env.VITEST) {

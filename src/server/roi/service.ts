@@ -8,6 +8,7 @@ import {
   UnsoldInventoryItem,
   AutoReconciliationResult,
   AutoReconciliationParams,
+  LotSourceType,
 } from './types';
 import { defaultLedgerRepository, type ILedgerRepository } from '../ledger/repository';
 import { hubsService } from '../hubs/service';
@@ -15,12 +16,14 @@ import { RoiCalculator, roundIsk } from './calculator';
 import type { CharacterTransaction } from '../ledger/types';
 import type { AssetsService } from '../assets/service';
 import { defaultAssetsService } from '../assets/service';
+import { defaultProductionRepository, type IProductionRepository } from '../production/repository';
 
 export class RoiService {
   constructor(
     private repo: RoiRepository = roiRepository,
     private assetsService: AssetsService = defaultAssetsService,
-    private ledgerRepo: ILedgerRepository = defaultLedgerRepository
+    private ledgerRepo: ILedgerRepository = defaultLedgerRepository,
+    private productionRepo: IProductionRepository = defaultProductionRepository
   ) {}
 
   /**
@@ -401,7 +404,7 @@ export class RoiService {
 
     // 3. Fetch Candidate Purchase Stocks: Transactions + Opening Balances
     interface CandidateLot {
-      sourceType: 'TRANSACTION' | 'OPENING_BALANCE';
+      sourceType: LotSourceType;
       sourceId: number | string;
       characterId: number;
       typeId: number;
@@ -466,6 +469,40 @@ export class RoiService {
           locationId: ob.location_id,
           locationName: ob.location_name,
           initialQty: ob.quantity,
+          availableQty: available,
+          totalFees: 0,
+        });
+      }
+    }
+
+    // 3.3 Manufactured lots from productionRepository
+    const prodAllocs = this.productionRepo.listAllocations(params.characterId, params.characterIds, params.typeId);
+    for (const alloc of prodAllocs) {
+      if (params.typeId !== undefined && alloc.outputTypeId !== params.typeId) continue;
+      const manualAllocs = this.repo
+        .listAllocations(params.characterId, params.characterIds)
+        .filter(
+          (a) =>
+            (a.production_allocation_id === alloc.id ||
+              a.lot_id === alloc.outputLotId ||
+              (alloc.jobId !== undefined && a.job_id === alloc.jobId)) &&
+            a.reconciliation_mode === 'MANUAL'
+        );
+      const manualQty = manualAllocs.reduce((acc, a) => acc + a.quantity_allocated, 0);
+      const available = Math.max(0, alloc.outputQuantity - manualQty);
+
+      if (available > 0) {
+        candidateLots.push({
+          sourceType: alloc.provenance,
+          sourceId: alloc.outputLotId,
+          characterId: alloc.characterId,
+          typeId: alloc.outputTypeId,
+          typeName: alloc.outputTypeName,
+          unitPrice: alloc.unitCostIsk || 0,
+          date: alloc.allocatedAt,
+          locationId: 0,
+          locationName: 'Production Facility',
+          initialQty: alloc.outputQuantity,
           availableQty: available,
           totalFees: 0,
         });
@@ -571,7 +608,9 @@ export class RoiService {
             a.sell_transaction_id === sale.transactionId &&
             (lot.sourceType === 'TRANSACTION'
               ? a.buy_transaction_id === Number(lot.sourceId)
-              : a.opening_balance_id === String(lot.sourceId)) &&
+              : lot.sourceType === 'OPENING_BALANCE'
+              ? a.opening_balance_id === String(lot.sourceId)
+              : (a.production_allocation_id === String(lot.sourceId) || a.lot_id === String(lot.sourceId))) &&
             a.quantity_allocated === allocQty
         );
 
@@ -582,6 +621,8 @@ export class RoiService {
         const updatedAt = existingAlloc?.updated_at || (sale.date || new Date().toISOString());
         const allocatedBuyCost = roundIsk(allocQty * lot.unitPrice);
 
+        const isManufactured = lot.sourceType === 'MANUFACTURED' || lot.sourceType === 'PLANETARY_TRANSFORMED';
+
         const record: ExplicitCostAllocation = {
           id: allocId,
           character_id: sale.characterId,
@@ -591,6 +632,8 @@ export class RoiService {
           source_type: lot.sourceType,
           buy_transaction_id: lot.sourceType === 'TRANSACTION' ? Number(lot.sourceId) : undefined,
           opening_balance_id: lot.sourceType === 'OPENING_BALANCE' ? String(lot.sourceId) : undefined,
+          production_allocation_id: isManufactured ? String(lot.sourceId) : undefined,
+          lot_id: String(lot.sourceId),
           type_id: sale.typeId,
           type_name: sale.typeName || `Type #${sale.typeId}`,
           quantity_allocated: allocQty,
@@ -667,6 +710,11 @@ export class RoiService {
       sales_with_asset_stock_identified: salesWithAssetStock,
       asset_stock_available_units: totalAssetStockFound,
       message,
+      allocationsCreated,
+      totalQuantityReconciled,
+      salesFullyMatched,
+      salesPartiallyMatched,
+      salesUnmatched,
     };
   }
 

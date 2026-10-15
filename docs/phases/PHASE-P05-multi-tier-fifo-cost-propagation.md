@@ -1,7 +1,7 @@
 # Phase P05 — Moteur de Propagation Déterministe des Coûts (FIFO Multi-Niveaux & Chaîne de Valeur)
 
 ## 1. Statut
-`PLANIFIÉE`
+`TERMINÉE`
 
 ## 2. Objectif
 Construire le moteur de propagation continue des coûts de revient à travers l'arbre de transformation multi-niveaux (P0 $\rightarrow$ P1 $\rightarrow$ P2 $\rightarrow$ P3 $\rightarrow$ P4 en PI, et Minerais $\rightarrow$ Minéraux $\rightarrow$ Composants T2 $\rightarrow$ Coques en Industrie), garantissant qu'aucun lot de produit fini ne subisse de rupture de traçabilité FIFO, tout en isolant formellement ce calcul dans un sous-moteur dédié pour éviter toute surcharge de `roi/calculator.ts`.
@@ -64,9 +64,9 @@ Sans propagation de bout en bout :
 * `METRICS.md` : formule de calcul du coût de revient manufacturé TTC.
 
 ## 9. Critères d'Acceptation & Qualification
-* [ ] Une vente de produit fini (ex: Croiseur) assemblé à partir de minerais farmés et de composants achetés génère un ROI TTC 100% auditable sans statut `UNKNOWN` indu.
-* [ ] La consommation des intrants décrémente fidèlement les stocks physiques respectifs au prorata des runs exécutés.
-* [ ] La formule de calcul intègre les frais d'installation de job et les taxes POCO sans double comptage.
-* [ ] L'algorithme est isolé dans `src/server/production/` sans surcharger `src/server/roi/calculator.ts`.
-* [ ] Les preuves arithmétiques `FormulaProof` détaillent l'arbre généalogique complet du lot.
-* [ ] 100 % des tests unitaires et d'intégration passent au vert.
+* [x] Une vente de produit fini (ex: Croiseur) assemblé à partir de minerais farmés et de composants achetés génère un ROI TTC 100% auditable sans statut `UNKNOWN` indu.
+* [x] La consommation des intrants décrémente fidèlement les stocks physiques respectifs au prorata des runs exécutés.
+* [x] La formule de calcul intègre les frais d'installation de job et les taxes POCO sans double comptage.
+* [x] L'algorithme est isolé dans `src/server/production/` sans surcharger `src/server/roi/calculator.ts`.
+* [x] Les preuves arithmétiques `FormulaProof` détaillent l'arbre généalogique complet du lot.
+* [x] 100 % des tests unitaires et d'intégration passent au vert.

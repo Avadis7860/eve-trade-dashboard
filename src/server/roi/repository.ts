@@ -10,6 +10,7 @@ import { hubsService } from '../hubs/service.ts';
 import { roundIsk } from './calculator.ts';
 import { StorageManager, DurableFileDatabaseAdapter } from '../storage/database.ts';
 import type { IDatabaseAdapter } from '../storage/types.ts';
+import { defaultProductionRepository, type IProductionRepository } from '../production/repository.ts';
 
 export interface IRoiRepository {
   init?(): Promise<void>;
@@ -46,7 +47,8 @@ export class PersistentRoiRepository implements IRoiRepository {
 
   constructor(
     private ledgerRepo: ILedgerRepository = defaultLedgerRepository,
-    private adapter: IDatabaseAdapter | null = null
+    private adapter: IDatabaseAdapter | null = null,
+    private productionRepo: IProductionRepository = defaultProductionRepository
   ) {
     if (this.adapter) {
       this.loadFromStorage();
@@ -405,6 +407,50 @@ export class PersistentRoiRepository implements IRoiRepository {
       });
     }
 
+    // 3. Manufactured Lots from Production Repository
+    try {
+      const prodAllocs = this.productionRepo.listAllocations(characterId, characterIds, typeId);
+      for (const alloc of prodAllocs) {
+        const existingAllocations = Array.from(this.allocations.values()).filter(
+          (a) =>
+            a.production_allocation_id === alloc.id ||
+            a.lot_id === alloc.outputLotId ||
+            (alloc.jobId !== undefined && a.job_id === alloc.jobId)
+        );
+        const allocatedQty = existingAllocations.reduce((acc, a) => acc + a.quantity_allocated, 0);
+        const remainingQty = Math.max(0, alloc.outputQuantity - allocatedQty);
+        const unitCost = alloc.unitCostIsk || 0;
+        const totalCost = alloc.totalCostIsk || roundIsk(alloc.outputQuantity * unitCost);
+
+        lots.push({
+          lot_id: alloc.outputLotId,
+          character_id: alloc.characterId,
+          source_type: alloc.provenance,
+          source_id: alloc.jobId || alloc.id,
+          provenance: alloc.provenance,
+          lineage: alloc.lineage,
+          type_id: alloc.outputTypeId,
+          type_name: alloc.outputTypeName,
+          acquisition_date: alloc.allocatedAt,
+          initial_quantity: alloc.outputQuantity,
+          allocated_quantity: allocatedQty,
+          remaining_quantity: remainingQty,
+          unit_cost_isk: unitCost,
+          total_cost_isk: totalCost,
+          remaining_cost_isk: roundIsk(remainingQty * unitCost),
+          initial_buy_fees_isk: 0,
+          remaining_buy_fees_isk: 0,
+          location_id: 0,
+          location_name: 'Production Facility',
+          hub_id: 'UNKNOWN_HUB',
+          hub_name: 'Hub Inconnu',
+          justification: `Lot fabriqué via Job #${alloc.jobId || 'N/A'} (Lignée: ${alloc.lineage?.lineageId || 'N/A'})`,
+        });
+      }
+    } catch {
+      // production repo fallback
+    }
+
     return lots;
   }
 
@@ -417,6 +463,8 @@ export class PersistentRoiRepository implements IRoiRepository {
         source_type: lot.source_type,
         buy_transaction_id: lot.source_type === 'TRANSACTION' ? Number(lot.source_id) : undefined,
         opening_balance_id: lot.source_type === 'OPENING_BALANCE' ? String(lot.source_id) : undefined,
+        job_id: (lot.source_type === 'MANUFACTURED' || lot.source_type === 'PLANETARY_TRANSFORMED') && typeof lot.source_id === 'number' ? lot.source_id : undefined,
+        production_allocation_id: (lot.source_type === 'MANUFACTURED' || lot.source_type === 'PLANETARY_TRANSFORMED') ? lot.lot_id : undefined,
         type_id: lot.type_id,
         type_name: lot.type_name,
         buy_date: lot.acquisition_date,
@@ -505,7 +553,8 @@ export class InMemoryRoiRepository extends PersistentRoiRepository {}
 export class PostgresRoiRepository implements IRoiRepository {
   constructor(
     private ledgerRepo: ILedgerRepository = defaultLedgerRepository,
-    private adapter: IDatabaseAdapter
+    private adapter: IDatabaseAdapter,
+    private productionRepo: IProductionRepository = defaultProductionRepository
   ) {}
 
   private mapRowToAlloc(row: Record<string, unknown>): ExplicitCostAllocation {
@@ -1102,6 +1151,50 @@ export class PostgresRoiRepository implements IRoiRepository {
       });
     }
 
+    // 3. Manufactured Lots from Production Repository
+    try {
+      const prodAllocs = this.productionRepo.listAllocations(characterId, characterIds, typeId);
+      for (const alloc of prodAllocs) {
+        const existingAllocations = allocations.filter(
+          (a: ExplicitCostAllocation) =>
+            a.production_allocation_id === alloc.id ||
+            a.lot_id === alloc.outputLotId ||
+            (alloc.jobId !== undefined && a.job_id === alloc.jobId)
+        );
+        const allocatedQty = existingAllocations.reduce((acc: number, a: ExplicitCostAllocation) => acc + a.quantity_allocated, 0);
+        const remainingQty = Math.max(0, alloc.outputQuantity - allocatedQty);
+        const unitCost = alloc.unitCostIsk || 0;
+        const totalCost = alloc.totalCostIsk || roundIsk(alloc.outputQuantity * unitCost);
+
+        lots.push({
+          lot_id: alloc.outputLotId,
+          character_id: alloc.characterId,
+          source_type: alloc.provenance,
+          source_id: alloc.jobId || alloc.id,
+          provenance: alloc.provenance,
+          lineage: alloc.lineage,
+          type_id: alloc.outputTypeId,
+          type_name: alloc.outputTypeName,
+          acquisition_date: alloc.allocatedAt,
+          initial_quantity: alloc.outputQuantity,
+          allocated_quantity: allocatedQty,
+          remaining_quantity: remainingQty,
+          unit_cost_isk: unitCost,
+          total_cost_isk: totalCost,
+          remaining_cost_isk: roundIsk(remainingQty * unitCost),
+          initial_buy_fees_isk: 0,
+          remaining_buy_fees_isk: 0,
+          location_id: 0,
+          location_name: 'Production Facility',
+          hub_id: 'UNKNOWN_HUB',
+          hub_name: 'Hub Inconnu',
+          justification: `Lot fabriqué via Job #${alloc.jobId || 'N/A'} (Lignée: ${alloc.lineage?.lineageId || 'N/A'})`,
+        });
+      }
+    } catch {
+      // production repo fallback
+    }
+
     return lots;
   }
 
@@ -1118,6 +1211,8 @@ export class PostgresRoiRepository implements IRoiRepository {
         source_type: lot.source_type,
         buy_transaction_id: lot.source_type === 'TRANSACTION' ? Number(lot.source_id) : undefined,
         opening_balance_id: lot.source_type === 'OPENING_BALANCE' ? String(lot.source_id) : undefined,
+        job_id: (lot.source_type === 'MANUFACTURED' || lot.source_type === 'PLANETARY_TRANSFORMED') && typeof lot.source_id === 'number' ? lot.source_id : undefined,
+        production_allocation_id: (lot.source_type === 'MANUFACTURED' || lot.source_type === 'PLANETARY_TRANSFORMED') ? lot.lot_id : undefined,
         type_id: lot.type_id,
         type_name: lot.type_name,
         buy_date: lot.acquisition_date,

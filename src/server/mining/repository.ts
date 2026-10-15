@@ -26,6 +26,8 @@ export interface IMiningRepository {
   setOpportunityReference(ref: MiningOpportunityReference): void;
   getOpportunityReference(typeId: number): MiningOpportunityReference | undefined;
   getAllOpportunityReferences(): MiningOpportunityReference[];
+  getEntries(filters?: MiningLedgerFilterOptions): MiningLedgerEntry[];
+  saveEntries(entries: MiningLedgerEntry[]): void;
 }
 
 export class MiningRepository implements IMiningRepository {
@@ -247,6 +249,27 @@ export class MiningRepository implements IMiningRepository {
   public getAllOpportunityReferences(): MiningOpportunityReference[] {
     return Array.from(this.opportunityReferences.values());
   }
+
+  public getEntries(filters?: MiningLedgerFilterOptions): MiningLedgerEntry[] {
+    return this.getMiningEntries(filters);
+  }
+
+  public saveEntries(entries: MiningLedgerEntry[]): void {
+    for (const item of entries) {
+      const key = this.makeUniqueKey(item.characterId, item.date, item.solarSystemId, item.typeId);
+      const existing = this.inMemoryEntries.get(key);
+      const entry: MiningLedgerEntry = {
+        ...item,
+        id: item.id ?? existing?.id ?? this.currentNextId++,
+        provenance: 'FARMED',
+        realizedCashCostIsk: 0,
+        createdAt: item.createdAt ?? existing?.createdAt ?? Date.now(),
+      };
+      this.inMemoryEntries.set(key, entry);
+    }
+    this.syncToStorage();
+  }
 }
 
 export const defaultMiningRepository = new MiningRepository();
+export { MiningRepository as PersistentMiningRepository };

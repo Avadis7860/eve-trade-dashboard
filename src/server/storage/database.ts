@@ -71,6 +71,7 @@ export class DurableFileDatabaseAdapter implements IDatabaseAdapter {
         mining: { entries: [] },
         pi: { colonies: [], planetDetails: {}, customsOffices: [] },
         industry: { jobs: [] },
+        production: { allocations: [] },
       },
       sessions: {},
     };
@@ -93,6 +94,9 @@ export class DurableFileDatabaseAdapter implements IDatabaseAdapter {
           const parsed = JSON.parse(raw) as DurableDatabaseState;
           if (parsed && parsed.data) {
             this.state = parsed;
+            if (!this.state.data.production) {
+              this.state.data.production = { allocations: [] };
+            }
           } else {
             throw new Error('Invalid database file structure: missing data property');
           }

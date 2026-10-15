@@ -1,6 +1,11 @@
 export type MetricCoverageStatus = 'COMPLETE' | 'PARTIAL' | 'UNKNOWN' | 'EMPTY';
 
-export type LotSourceType = 'TRANSACTION' | 'OPENING_BALANCE';
+export type LotSourceType =
+  | 'TRANSACTION'
+  | 'OPENING_BALANCE'
+  | 'MANUFACTURED'
+  | 'PLANETARY_TRANSFORMED'
+  | 'FARMED';
 
 export interface OpeningBalanceLot {
   id: string;
@@ -27,7 +32,9 @@ export interface InventoryLot {
   lot_id: string;
   character_id: number;
   source_type: LotSourceType;
-  source_id: number | string; // transaction_id or opening_balance_id
+  source_id: number | string; // transaction_id or opening_balance_id or job_id
+  provenance?: 'PURCHASED' | 'OPENING' | 'MANUFACTURED' | 'PLANETARY_TRANSFORMED' | 'FARMED';
+  lineage?: import('../production/types.ts').ProductionLineage;
   type_id: number;
   type_name: string;
   acquisition_date: string;
@@ -55,6 +62,8 @@ export interface ExplicitCostAllocation {
   source_type: LotSourceType;
   buy_transaction_id?: number;
   opening_balance_id?: string;
+  job_id?: number;
+  production_allocation_id?: string;
   lot_id?: string;
   type_id: number;
   type_name: string;
@@ -160,6 +169,8 @@ export interface UnsoldInventoryItem {
   source_type: LotSourceType;
   buy_transaction_id?: number;
   opening_balance_id?: string;
+  job_id?: number;
+  production_allocation_id?: string;
   type_id: number;
   type_name: string;
   buy_date: string;
@@ -248,4 +259,9 @@ export interface AutoReconciliationResult {
   sales_with_asset_stock_identified?: number;
   asset_stock_available_units?: number;
   message?: string;
+  allocationsCreated?: number;
+  totalQuantityReconciled?: number;
+  salesFullyMatched?: number;
+  salesPartiallyMatched?: number;
+  salesUnmatched?: number;
 }

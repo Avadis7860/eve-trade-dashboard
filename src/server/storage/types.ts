@@ -46,6 +46,9 @@ export interface AppBackupData {
   industry?: {
     jobs: IndustryJob[];
   };
+  production?: {
+    allocations: import('../production/types.ts').ProductionCostAllocation[];
+  };
 }
 
 export interface AppBackupSnapshot {

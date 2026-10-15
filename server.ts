@@ -23,6 +23,7 @@ import { createSyncRouter } from './src/server/sync/router.ts';
 import { createMiningRouter } from './src/server/mining/router.ts';
 import { createPiRouter } from './src/server/pi/router.ts';
 import { createIndustryRouter } from './src/server/industry/router.ts';
+import { createProductionRouter } from './src/server/production/router.ts';
 import { requestContextMiddleware } from './src/server/middleware/context.ts';
 import { securityHeadersMiddleware, csrfProtectionMiddleware } from './src/server/middleware/security.ts';
 
@@ -152,6 +153,9 @@ export async function createApp() {
 
   // Industry Jobs & BOM Router (Phase P04)
   app.use('/api/industry', createIndustryRouter());
+
+  // Production Multi-Tier FIFO Cost Propagation Router (Phase P05)
+  app.use('/api/production', createProductionRouter());
 
   // Vite middleware in dev or static serving in prod
   if (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test' && !process.env.VITEST) {

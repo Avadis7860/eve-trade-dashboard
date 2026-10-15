@@ -333,7 +333,7 @@ export class PersistentLedgerRepository implements ILedgerRepository {
     const txKey = this.makeTxKey(tx.characterId, tx.transactionId);
     const taxRec = this.taxReconciliations.get(txKey);
     const brokerFeeRec = this.brokerFeeReconciliations.get(txKey);
-    const { tax, brokerFee } = this.getJournalEntriesForTransaction(
+    const { tax: jnTax, brokerFee: jnBrokerFee } = this.getJournalEntriesForTransaction(
       tx.characterId,
       tx.transactionId,
       tx.journalRefId,
@@ -341,6 +341,8 @@ export class PersistentLedgerRepository implements ILedgerRepository {
       tx.totalValue,
       tx.isBuy
     );
+    const tax = this.journalEntries.size > 0 ? jnTax : (tx.tax !== undefined ? tx.tax : jnTax);
+    const brokerFee = this.journalEntries.size > 0 ? jnBrokerFee : (tx.brokerFee !== undefined ? tx.brokerFee : jnBrokerFee);
     const netValue = tx.isBuy
       ? Math.round(((tx.totalValue + brokerFee) + Number.EPSILON) * 100) / 100
       : Math.round(((tx.totalValue - tax - brokerFee) + Number.EPSILON) * 100) / 100;

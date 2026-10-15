@@ -215,3 +215,4 @@ export class IndustryRepository implements IIndustryRepository {
 }
 
 export const defaultIndustryRepository = new IndustryRepository();
+export { IndustryRepository as PersistentIndustryRepository };

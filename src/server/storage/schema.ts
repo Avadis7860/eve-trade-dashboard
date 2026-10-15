@@ -1,6 +1,6 @@
 import type { SchemaMigration } from './types.ts';
 
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 14;
 
 export const INITIAL_MIGRATION_SQL = `
 -- Hubs Table
@@ -485,6 +485,35 @@ export const MIGRATIONS: SchemaMigration[] = [
       CREATE INDEX IF NOT EXISTS idx_industry_jobs_status ON industry_jobs (status);
       CREATE INDEX IF NOT EXISTS idx_industry_jobs_product ON industry_jobs (product_type_id);
       CREATE INDEX IF NOT EXISTS idx_industry_jobs_end_date ON industry_jobs (end_date);
+    `,
+  },
+  {
+    version: 14,
+    name: '014_production_cost_allocations_table',
+    upSql: `
+      CREATE TABLE IF NOT EXISTS production_cost_allocations (
+        id TEXT PRIMARY KEY,
+        character_id BIGINT NOT NULL,
+        job_id BIGINT,
+        output_lot_id TEXT NOT NULL,
+        output_type_id INTEGER NOT NULL,
+        output_type_name TEXT,
+        output_quantity NUMERIC(18, 4) NOT NULL,
+        unit_cost_isk NUMERIC(20, 2),
+        total_cost_isk NUMERIC(20, 2),
+        installation_cost_isk NUMERIC(20, 2),
+        customs_tax_isk NUMERIC(20, 2),
+        inputs_cost_isk NUMERIC(20, 2),
+        cost_basis_status TEXT NOT NULL,
+        provenance TEXT NOT NULL,
+        lineage_json TEXT NOT NULL,
+        allocated_at TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1
+      );
+      CREATE INDEX IF NOT EXISTS idx_prod_alloc_char ON production_cost_allocations (character_id);
+      CREATE INDEX IF NOT EXISTS idx_prod_alloc_job ON production_cost_allocations (job_id);
+      CREATE INDEX IF NOT EXISTS idx_prod_alloc_type ON production_cost_allocations (output_type_id);
+      CREATE INDEX IF NOT EXISTS idx_prod_alloc_lot ON production_cost_allocations (output_lot_id);
     `,
   },
 ];

@@ -12,11 +12,13 @@ import {
   Table as TableIcon,
   BarChart2,
   Download,
+  Hammer,
 } from 'lucide-react';
 import type {
   Product360Response,
   TimeframeOption,
 } from '../server/analytics/types';
+import type { MultiTierCostBreakdown, CostBreakdownNode } from '../server/production/types';
 import type { UserPreferences } from '../utils/preferences';
 import { formatIskValue } from '../utils/preferences';
 import { timeSeriesToCsv, triggerCsvDownload, escapeCsvField } from '../utils/csvExport';
@@ -36,7 +38,7 @@ export const Product360Modal: React.FC<Product360ModalProps> = ({
   characterIds,
 }) => {
   const [timeframe, setTimeframe] = useState<TimeframeOption>('90d');
-  const [activeTab, setActiveTab] = useState<'charts' | 'stocks' | 'orders' | 'transactions'>('charts');
+  const [activeTab, setActiveTab] = useState<'charts' | 'stocks' | 'orders' | 'transactions' | 'bom'>('charts');
   
   // Accessible table toggles for visualizations
   const [showActivityTable, setShowActivityTable] = useState(false);
@@ -63,6 +65,15 @@ export const Product360Modal: React.FC<Product360ModalProps> = ({
       return fetchJson<Product360Response>(`/api/analytics/product/${typeId}?${params.toString()}`, { signal });
     },
     { enabled: !!typeId, ttl: 30_000 }
+  );
+
+  const {
+    data: bomData,
+    isLoading: bomLoading,
+  } = useApiQuery<MultiTierCostBreakdown>(
+    ['production', 'breakdown', typeId],
+    async (signal) => fetchJson<MultiTierCostBreakdown>(`/api/production/breakdown/${typeId}`, { signal }),
+    { enabled: !!typeId, ttl: 60_000 }
   );
 
   const error = queryError ? queryError.message : null;
@@ -393,6 +404,17 @@ export const Product360Modal: React.FC<Product360ModalProps> = ({
                   >
                     <Calendar className="w-3.5 h-3.5" />
                     <span>Grand Livre &amp; Preuves ({data.transactions_history.length})</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('bom')}
+                    className={`pb-3 px-3 text-xs font-semibold border-b-2 transition-colors flex items-center space-x-1.5 ${
+                      activeTab === 'bom'
+                        ? 'border-amber-400 text-amber-300'
+                        : 'border-transparent text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <Hammer className="w-3.5 h-3.5" />
+                    <span>Chaîne de Valeur &amp; BOM</span>
                   </button>
                 </div>
 
@@ -1065,6 +1087,221 @@ export const Product360Modal: React.FC<Product360ModalProps> = ({
                       </tbody>
                     </table>
                   </div>
+                </div>
+              )}
+
+              {/* TAB 5: CHAÎNE DE VALEUR & ARBRE BOM (PHASE P05) */}
+              {activeTab === 'bom' && (
+                <div className="space-y-6">
+                  {bomLoading && !bomData ? (
+                    <div className="py-16 text-center text-slate-400 space-y-2">
+                      <div className="w-8 h-8 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto" />
+                      <p className="text-xs font-mono">Calcul et propagation de la chaîne de valeur...</p>
+                    </div>
+                  ) : !bomData || !bomData.nodes || bomData.nodes.length === 0 ? (
+                    <div className="py-16 text-center text-slate-500 bg-slate-950/40 border border-slate-800 rounded-xl space-y-2">
+                      <Hammer className="w-10 h-10 mx-auto text-slate-600" />
+                      <p className="text-sm font-medium text-slate-300">Aucune nomenclature industrielle trouvée</p>
+                      <p className="text-xs text-slate-500">
+                        Cet article ne possède pas d&apos;étapes de fabrication ou de transformation planétaire répertoriées.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-6">
+                      {/* Summary KPI Cards */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-1">
+                          <span className="text-xs font-mono text-slate-400">Coût Unitaire Hérité</span>
+                          <div className="text-lg font-bold font-mono text-amber-300">
+                            {bomData.unitCostIsk !== null
+                              ? formatIskValue(bomData.unitCostIsk, preferences.iskDisplayMode)
+                              : 'UNKNOWN'}
+                          </div>
+                          <span className="text-[11px] text-slate-500">Revient calculé au prorata</span>
+                        </div>
+
+                        <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-1">
+                          <span className="text-xs font-mono text-slate-400">Intrants Matières</span>
+                          <div className="text-lg font-bold font-mono text-white">
+                            {bomData.materialsTotalIsk !== null
+                              ? formatIskValue(bomData.materialsTotalIsk, preferences.iskDisplayMode)
+                              : 'UNKNOWN'}
+                          </div>
+                          <span className="text-[11px] text-slate-500">Matières &amp; composants</span>
+                        </div>
+
+                        <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-1">
+                          <span className="text-xs font-mono text-slate-400">Pose &amp; Douanes POCO</span>
+                          <div className="text-lg font-bold font-mono text-blue-300">
+                            {formatIskValue(
+                              (bomData.installationTotalIsk || 0) + (bomData.customsTotalIsk || 0),
+                              preferences.iskDisplayMode
+                            )}
+                          </div>
+                          <span className="text-[11px] text-slate-500">Frais industriels TTC</span>
+                        </div>
+
+                        <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-1">
+                          <span className="text-xs font-mono text-slate-400">Statut de Traçabilité</span>
+                          <div className="pt-1">
+                            <span
+                              className={`px-2.5 py-1 rounded text-xs font-bold font-mono border ${
+                                bomData.costBasisStatus === 'KNOWN'
+                                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                  : bomData.costBasisStatus === 'PARTIAL'
+                                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                                  : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                              }`}
+                            >
+                              {bomData.costBasisStatus}
+                            </span>
+                          </div>
+                          <span className="text-[11px] text-slate-500">Propagation sans rupture</span>
+                        </div>
+                      </div>
+
+                      {/* Hierarchical Tree of Materials and Sub-Assemblies */}
+                      <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-4 sm:p-5 space-y-4">
+                        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                          <div className="flex items-center space-x-2">
+                            <Hammer className="w-4 h-4 text-amber-400" />
+                            <h3 className="text-sm font-semibold text-white">
+                              Arbre de Décomposition Multi-Niveaux (BOM)
+                            </h3>
+                          </div>
+                          <span className="text-xs font-mono text-slate-400">
+                            Quantité : {bomData.quantity.toLocaleString()} unités
+                          </span>
+                        </div>
+
+                        <div className="space-y-3">
+                          {bomData.nodes.map((rootNode) => (
+                            <div key={`root-${rootNode.typeId}`} className="space-y-2">
+                              {/* Recursive node function */}
+                              {(function renderNode(node: CostBreakdownNode): React.ReactNode {
+                                return (
+                                  <div key={`${node.level}-${node.typeId}`} className="space-y-2">
+                                    <div
+                                      className={`p-3 rounded-xl border flex flex-wrap items-center justify-between gap-2 transition-colors ${
+                                        node.level === 0
+                                          ? 'bg-amber-950/20 border-amber-500/30 shadow-md'
+                                          : node.level === 1
+                                          ? 'bg-slate-900/80 border-slate-700 ml-4 sm:ml-6'
+                                          : node.level === 2
+                                          ? 'bg-slate-950/80 border-slate-800 ml-8 sm:ml-12'
+                                          : 'bg-slate-950/50 border-slate-800/80 ml-12 sm:ml-16'
+                                      }`}
+                                    >
+                                      <div className="flex items-center space-x-3 min-w-[200px]">
+                                        <img
+                                          src={`https://images.evetech.net/types/${node.typeId}/icon?size=32`}
+                                          alt={node.typeName}
+                                          className="w-8 h-8 rounded-lg bg-slate-900 border border-slate-700 p-0.5 object-contain shrink-0"
+                                          onError={(e) => {
+                                            (e.target as HTMLElement).style.display = 'none';
+                                          }}
+                                        />
+                                        <div>
+                                          <div className="flex items-center space-x-2">
+                                            <span className="text-sm font-semibold text-white">{node.typeName}</span>
+                                            <span className="text-[11px] font-mono text-slate-500">#{node.typeId}</span>
+                                            {node.level > 0 && (
+                                              <span className="text-[10px] font-mono text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded">
+                                                Niveau {node.level}
+                                              </span>
+                                            )}
+                                          </div>
+                                          <p className="text-xs text-slate-400">{node.sourceDescription}</p>
+                                        </div>
+                                      </div>
+
+                                      <div className="flex items-center space-x-2 sm:space-x-4">
+                                        <div className="text-right">
+                                          <span className="text-xs text-slate-400">Quantité : </span>
+                                          <span className="text-xs font-mono font-bold text-slate-200">
+                                            {node.quantityRequired.toLocaleString()}
+                                          </span>
+                                        </div>
+
+                                        <div className="text-right min-w-[100px]">
+                                          <span className="text-xs text-slate-400">Coût Unit. : </span>
+                                          <span className="text-xs font-mono font-semibold text-amber-300">
+                                            {node.unitCostIsk !== null
+                                              ? formatIskValue(node.unitCostIsk, preferences.iskDisplayMode)
+                                              : 'UNKNOWN'}
+                                          </span>
+                                        </div>
+
+                                        <div className="text-right min-w-[110px]">
+                                          <span className="text-xs text-slate-400">Total : </span>
+                                          <span className="text-xs font-mono font-bold text-white">
+                                            {node.totalCostIsk !== null
+                                              ? formatIskValue(node.totalCostIsk, preferences.iskDisplayMode)
+                                              : 'UNKNOWN'}
+                                          </span>
+                                        </div>
+
+                                        <div className="flex items-center space-x-1.5">
+                                          <span
+                                            className={`px-1.5 py-0.5 rounded text-[10px] font-mono border ${
+                                              node.provenance === 'MANUFACTURED'
+                                                ? 'bg-blue-500/10 text-blue-300 border-blue-500/20'
+                                                : node.provenance === 'FARMED'
+                                                ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
+                                                : node.provenance === 'PURCHASED'
+                                                ? 'bg-purple-500/10 text-purple-300 border-purple-500/20'
+                                                : node.provenance === 'PLANETARY_TRANSFORMED'
+                                                ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/20'
+                                                : 'bg-amber-500/10 text-amber-300 border-amber-500/20'
+                                            }`}
+                                          >
+                                            {node.provenance}
+                                          </span>
+                                          <span
+                                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                                              node.costBasisStatus === 'KNOWN'
+                                                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                                                : node.costBasisStatus === 'PARTIAL'
+                                                ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+                                                : 'bg-rose-500/20 text-rose-400 border-rose-500/30'
+                                            }`}
+                                          >
+                                            {node.costBasisStatus}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {node.children && node.children.length > 0 && (
+                                      <div className="space-y-2 relative border-l border-slate-800 ml-4 pl-2">
+                                        {node.children.map((c) => renderNode(c))}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })(rootNode)}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Formula Proof Section */}
+                      {bomData.proof && (
+                        <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-4 sm:p-5 space-y-2 font-mono text-xs">
+                          <div className="flex items-center space-x-2 text-amber-400 font-bold">
+                            <ShieldCheck className="w-4 h-4" />
+                            <span>Preuve Arithmétique Formelle d&apos;Héritage de Coût (Phase P05)</span>
+                          </div>
+                          <p className="text-slate-300 leading-relaxed text-[11px]">
+                            {bomData.proof.formula_expression}
+                          </p>
+                          <div className="text-slate-500 text-[10px]">
+                            Horodatage : {bomData.proof.as_of} • Numérateur : {bomData.proof.numerator_isk?.toLocaleString()} ISK • Dénominateur : {bomData.proof.denominator_isk?.toLocaleString()} unités
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </>
